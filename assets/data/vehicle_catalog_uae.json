@@ -1,0 +1,44 @@
+{
+  "makes": [
+    {
+      "name": "Toyota",
+      "models": ["Camry", "Corolla", "Land Cruiser", "Prado", "RAV4", "Yaris"]
+    },
+    {
+      "name": "Nissan",
+      "models": ["Altima", "Maxima", "Patrol", "Sunny", "X-Trail"]
+    },
+    {
+      "name": "Hyundai",
+      "models": ["Accent", "Elantra", "Santa Fe", "Sonata", "Tucson"]
+    },
+    {
+      "name": "Kia",
+      "models": ["Cerato", "K5", "Seltos", "Sorento", "Sportage"]
+    },
+    {
+      "name": "Mitsubishi",
+      "models": ["ASX", "Attrage", "Lancer", "Montero Sport", "Pajero"]
+    },
+    {
+      "name": "Lexus",
+      "models": ["ES", "GX", "IS", "LX", "RX"]
+    },
+    {
+      "name": "BMW",
+      "models": ["3 Series", "5 Series", "7 Series", "X3", "X5"]
+    },
+    {
+      "name": "Mercedes-Benz",
+      "models": ["A-Class", "C-Class", "E-Class", "G-Class", "GLC"]
+    },
+    {
+      "name": "Audi",
+      "models": ["A3", "A4", "A6", "Q5", "Q7"]
+    },
+    {
+      "name": "Ford",
+      "models": ["Edge", "Explorer", "Mustang", "Ranger", "Territory"]
+    }
+  ]
+}

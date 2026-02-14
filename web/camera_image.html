@@ -1,0 +1,151 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Auto Scope Camera</title>
+  <style>
+    body { margin: 0; font-family: Arial, sans-serif; background: #0b0f14; color: white; }
+    .wrap { padding: 14px; }
+    .card { border: 1px solid rgba(255,255,255,.12); border-radius: 12px; overflow: hidden; background: #111827; }
+    video { width: 100%; height: 360px; background: black; object-fit: cover; display: block; }
+    canvas { display:none; }
+    .row { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+    button {
+      flex: 1; padding: 10px 12px; border-radius: 10px;
+      border: 1px solid rgba(255,255,255,.18);
+      background: rgba(255,255,255,.08);
+      color: white; font-weight: 700; cursor: pointer;
+      min-width: 140px;
+    }
+    button.primary { background: #2563eb; border-color: #2563eb; }
+    button.danger { background: #ef4444; border-color: #ef4444; }
+    button:disabled { opacity: .6; cursor: not-allowed; }
+    .hint { margin-top: 10px; font-size: 12px; opacity: .85; line-height: 1.35; }
+    .err { margin-top: 10px; color: #fecaca; font-size: 12px; }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <h3 style="margin: 6px 0 12px;">Auto Scope Camera</h3>
+
+    <div class="card">
+      <video id="video" autoplay playsinline muted></video>
+    </div>
+
+    <canvas id="canvas"></canvas>
+
+    <div class="row">
+      <button id="cancelBtn">Cancel</button>
+      <button id="captureBtn" class="primary" disabled>Capture</button>
+      <button id="useBtn" class="primary" disabled>Use Photo</button>
+    </div>
+
+    <div class="hint">
+      If preview is blank, allow camera permission for this site.
+    </div>
+
+    <div id="err" class="err"></div>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const reqId = params.get("id") || "";
+
+    const videoEl = document.getElementById("video");
+    const canvas = document.getElementById("canvas");
+    const captureBtn = document.getElementById("captureBtn");
+    const useBtn = document.getElementById("useBtn");
+    const cancelBtn = document.getElementById("cancelBtn");
+    const err = document.getElementById("err");
+
+    let stream = null;
+    let capturedBlob = null;
+
+    function send(type, payload) {
+      if (window.opener) {
+        const origin = window.location.origin;
+        window.opener.postMessage(
+          { source: "autoscope_camera", id: reqId, type, ...payload },
+          origin
+        );
+      }
+    }
+
+    async function startCamera() {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" } },
+          audio: false
+        });
+        videoEl.srcObject = stream;
+        await videoEl.play();
+        captureBtn.disabled = false;
+      } catch (e) {
+        err.textContent = "Camera error: " + (e && e.message ? e.message : e);
+        send("error", { message: err.textContent });
+      }
+    }
+
+    function stopCamera() {
+      if (stream) {
+        stream.getTracks().forEach(t => t.stop());
+        stream = null;
+      }
+    }
+
+    captureBtn.addEventListener("click", async () => {
+      try {
+        capturedBlob = null;
+
+        const vw = videoEl.videoWidth || 1280;
+        const vh = videoEl.videoHeight || 720;
+
+        canvas.width = vw;
+        canvas.height = vh;
+
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(videoEl, 0, 0, vw, vh);
+
+        canvas.toBlob((b) => {
+          capturedBlob = b;
+          useBtn.disabled = !capturedBlob;
+        }, "image/jpeg", 0.92);
+      } catch (e) {
+        err.textContent = "Capture failed: " + (e && e.message ? e.message : e);
+        send("error", { message: err.textContent });
+      }
+    });
+
+    useBtn.addEventListener("click", () => {
+      try {
+        if (!capturedBlob) return;
+
+        const fileName = `damage-${Date.now()}.jpg`;
+        const contentType = capturedBlob.type || "image/jpeg";
+
+        send("image_captured", { fileName, contentType, blob: capturedBlob });
+
+        stopCamera();
+        window.close();
+      } catch (e) {
+        err.textContent = "Use photo failed: " + (e && e.message ? e.message : e);
+        send("error", { message: err.textContent });
+      }
+    });
+
+    cancelBtn.addEventListener("click", () => {
+      send("cancel", {});
+      stopCamera();
+      window.close();
+    });
+
+    window.addEventListener("beforeunload", () => {
+      stopCamera();
+    });
+
+    startCamera();
+  </script>
+</body>
+</html>
