@@ -1325,7 +1325,7 @@ Dummy Terms & Conditions
 
   String _requestTypeForApi(String type) {
     final pt = _normalizeToProductType(type);
-    if (pt == 'inspection_and_valuation') return 'car inspection and valuation';
+    if (pt == 'inspection_and_valuation') return 'car valuation';
     return 'car inspection';
   }
 

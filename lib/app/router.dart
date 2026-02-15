@@ -33,6 +33,8 @@ import '../features/dashboards/admin/inspectors/inspectors_page.dart';
 import '../features/dashboards/admin/inspections/inspection_requests_page.dart';
 import '../features/dashboards/admin/checklists/checklist_templates_page.dart';
 
+import '../features/dashboards/admin/vehicle_catalog_page.dart';
+
 import '../features/profile/profile_page.dart';
 
 GoRouter buildRouter() {
@@ -99,6 +101,11 @@ GoRouter buildRouter() {
       GoRoute(path: '/dashboard/admin/inspectors', builder: (c, s) => const InspectorsPage()),
       GoRoute(path: '/dashboard/admin/inspections', builder: (c, s) => const InspectionRequestsPage()),
       GoRoute(path: '/dashboard/admin/checklists', builder: (c, s) => const ChecklistTemplatesPage()),
+
+      GoRoute(
+        path: '/dashboard/admin/vehicle-catalog',
+        builder: (context, state) => const VehicleCatalogPage(),
+      ),
 
       GoRoute(path: '/dashboard/user/requests/:id', builder: (c, s) { 
           final id = s.pathParameters['id'] ?? '';

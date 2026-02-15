@@ -1182,33 +1182,6 @@ class LandingPage extends StatelessWidget {
         titleMedium: base.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
       ),
     );
-
-    // return Theme(
-    //   data: themed,
-    //   child: Scaffold(
-    //     appBar: const PublicNavBar(),
-    //     body: SingleChildScrollView(
-    //       child: Column(
-    //         // ✅ Client requested order:
-    //         // 1) About company
-    //         // 2) Services
-    //         // 3) Book service CTA
-    //         // 4) Then the rest
-    //         children: const [
-    //           _AboutUsSection(),
-    //           _ServicesIntroSection(),
-    //           _InspectionSection(),
-    //           _BookServiceCtaSection(),
-    //           _WhyAutoScopeSection(),
-    //           _TestimonialsSection(),
-    //           // _HowItWorksSection(),
-    //           // _ContactUsSection(),
-    //           _Footer(),
-    //         ],
-    //       ),
-    //     ),
-    //   ),
-    // );
     return Theme(
       data: themed,
       child: Scaffold(
@@ -1290,41 +1263,6 @@ class _AboutUsSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final w = MediaQuery.sizeOf(context).width;
     final isMobile = w < 900;
-
-    // return _SectionShell(
-    //   bg: const Color(0xFFF6F8FC),
-    //   child: Column(
-    //     crossAxisAlignment: CrossAxisAlignment.start,
-    //     children: [
-    //       // Text('About Auto Scope', style: Theme.of(context).textTheme.headlineMedium),
-    //       // const SizedBox(height: 10),
-    //       const Text(
-    //         'Auto Scope is a UAE-based services company specializing in vehicle inspection and valuation support.\n'
-    //         'We were founded with a clear objective: to bring clarity, transparency, and professionalism to the used car buying and selling process.\n'
-    //         'With years of hands-on experience in the vehicle remarketing industry, our team understands how vehicles are evaluated, priced, and traded in real market conditions — not just on paper.',
-    //         style: TextStyle(color: Colors.black54, height: 1.65),
-    //       ),
-    //       const SizedBox(height: 18),
-    //       if (isMobile)
-    //         Column(
-    //           children: const [
-    //             _AboutImage(),
-    //             SizedBox(height: 14),
-    //             _AboutCards(),
-    //           ],
-    //         )
-    //       else
-    //         const Row(
-    //           crossAxisAlignment: CrossAxisAlignment.start,
-    //           children: [
-    //             Expanded(flex: 6, child: _AboutImage()),
-    //             SizedBox(width: 18),
-    //             Expanded(flex: 6, child: _AboutCards()),
-    //           ],
-    //         ),
-    //     ],
-    //   ),
-    // );
     return Container(
   // keep same spacing as _SectionShell
       padding: const EdgeInsets.symmetric(vertical: 10),

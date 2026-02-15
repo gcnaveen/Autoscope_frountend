@@ -629,6 +629,14 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         icon: Icons.playlist_add_check_outlined,
                         onTap: () => context.go('/dashboard/admin/checklists'),
                       ),
+
+                      _KpiActionCard(
+                        kpiTitle: 'Vehicle Catalog',
+                        kpiValue: 'Manage',
+                        kpiSubtitle: 'Makes & Models',
+                        icon: Icons.directions_car_filled_outlined,
+                        onTap: () => context.go('/dashboard/admin/vehicle-catalog'),
+                      ),
                     ],
                   ),
 

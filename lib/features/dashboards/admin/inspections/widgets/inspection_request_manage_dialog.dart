@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../../../../../models/app_user.dart';
 import '../../../../../services/service_locator.dart';
 import '../../../../shared/top_snackbar.dart';
@@ -22,12 +23,10 @@ class InspectionRequestManageDialog extends StatefulWidget {
   bool get alreadyAssigned => assignedInspectorId != null;
 
   @override
-  State<InspectionRequestManageDialog> createState() =>
-      _InspectionRequestManageDialogState();
+  State<InspectionRequestManageDialog> createState() => _InspectionRequestManageDialogState();
 }
 
-class _InspectionRequestManageDialogState
-    extends State<InspectionRequestManageDialog> {
+class _InspectionRequestManageDialogState extends State<InspectionRequestManageDialog> {
   AppUser? _selected;
   AppUser? _currentInspector;
   bool _saving = false;
@@ -56,7 +55,7 @@ class _InspectionRequestManageDialogState
       firstName: obj['firstName']?.toString(),
       lastName: obj['lastName']?.toString(),
       role: 'inspector',
-      status: 'active',
+      status: (obj['status'] ?? 'active').toString(),
       phone: obj['phone']?.toString(),
       availableStatus: obj['availableStatus']?.toString(),
       isAssigned: obj['is_assigned'] == true,
@@ -70,23 +69,17 @@ class _InspectionRequestManageDialogState
     final all = await usersService.listUsers();
 
     final inspectors = all
-        .where((u) =>
-            u.role.toLowerCase() == 'inspector' &&
-            u.status.toLowerCase() == 'active')
+        .where((u) => u.role.toLowerCase() == 'inspector' && u.status.toLowerCase() == 'active')
         .toList();
 
     // fallback: if current inspector missing, match by id
     if (_currentInspector == null && widget.assignedInspectorId != null) {
       try {
-        _currentInspector =
-            inspectors.firstWhere((u) => u.id == widget.assignedInspectorId);
+        _currentInspector = inspectors.firstWhere((u) => u.id == widget.assignedInspectorId);
       } catch (_) {}
     }
 
-    // sort
-    inspectors.sort((a, b) =>
-        a.fullName.toLowerCase().compareTo(b.fullName.toLowerCase()));
-
+    inspectors.sort((a, b) => a.fullName.toLowerCase().compareTo(b.fullName.toLowerCase()));
     return inspectors;
   }
 
@@ -105,10 +98,9 @@ class _InspectionRequestManageDialogState
       );
 
       if (!mounted) return;
+
       _snack(
-        widget.alreadyAssigned
-            ? 'Inspector reassigned successfully'
-            : 'Inspector assigned successfully',
+        widget.alreadyAssigned ? 'Inspector reassigned successfully' : 'Inspector assigned successfully',
         'success',
       );
 
@@ -195,16 +187,13 @@ class _InspectionRequestManageDialogState
                   Expanded(
                     child: Text(
                       'Manage • ${widget.requestDisplayId}',
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleLarge
-                          ?.copyWith(fontWeight: FontWeight.w900),
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
                     ),
                   ),
                   IconButton(
                     icon: const Icon(Icons.close),
                     onPressed: _saving ? null : () => Navigator.pop(context, false),
-                  )
+                  ),
                 ],
               ),
 
@@ -213,8 +202,10 @@ class _InspectionRequestManageDialogState
 
               Align(
                 alignment: Alignment.centerLeft,
-                child: Text('Assigned Inspector',
-                    style: const TextStyle(fontWeight: FontWeight.w800)),
+                child: Text(
+                  'Assigned Inspector',
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
               ),
               const SizedBox(height: 8),
               _assignedInspectorCard(),
@@ -223,8 +214,7 @@ class _InspectionRequestManageDialogState
 
               Align(
                 alignment: Alignment.centerLeft,
-                child: Text(title,
-                    style: const TextStyle(fontWeight: FontWeight.w800)),
+                child: Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
               ),
               const SizedBox(height: 10),
 
@@ -259,7 +249,7 @@ class _InspectionRequestManageDialogState
                           ),
                         )
                         .toList(),
-                    onChanged: (v) => setState(() => _selected = v),
+                    onChanged: _saving ? null : (v) => setState(() => _selected = v),
                     decoration: const InputDecoration(
                       labelText: 'Select Inspector',
                       border: OutlineInputBorder(),
@@ -282,11 +272,13 @@ class _InspectionRequestManageDialogState
                   Expanded(
                     child: FilledButton(
                       onPressed: _saving || _selected == null ? null : _submit,
-                      child: Text(_saving
-                          ? 'Saving...'
-                          : widget.alreadyAssigned
-                              ? 'Reassign'
-                              : 'Assign'),
+                      child: Text(
+                        _saving
+                            ? 'Saving...'
+                            : widget.alreadyAssigned
+                                ? 'Reassign'
+                                : 'Assign',
+                      ),
                     ),
                   ),
                 ],

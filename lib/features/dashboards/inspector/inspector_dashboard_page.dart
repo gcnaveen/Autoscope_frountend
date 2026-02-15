@@ -102,12 +102,19 @@ class _InspectorDashboardPageState extends State<InspectorDashboardPage> {
     return Colors.black.withOpacity(0.14);
   }
 
+  // void _openRequest(Map<String, dynamic> r) {
+  //   final id = _idOf(r);
+  //   if (id.isEmpty) return;
+
+  //   // ✅ Update this route if your router differs
+  //   context.go('/dashboard/inspector/requests/$id/start');
+  // }
   void _openRequest(Map<String, dynamic> r) {
     final id = _idOf(r);
     if (id.isEmpty) return;
 
-    // ✅ Update this route if your router differs
-    context.go('/dashboard/inspector/requests/$id/start');
+    // ✅ Step 2: open details page (NOT start)
+    context.push('/dashboard/inspector/requests/$id');
   }
 
   @override
