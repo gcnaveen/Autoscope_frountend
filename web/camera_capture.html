@@ -1,0 +1,429 @@
+<!-- <!-- <!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Camera Capture</title>
+    <style>
+      body { margin: 0; font-family: Arial, sans-serif; background: #0b1220; color: #fff; }
+      .wrap { padding: 12px; }
+      video { width: 100%; border-radius: 12px; background: #000; }
+      .row { display: flex; gap: 10px; margin-top: 12px; }
+      button {
+        flex: 1; padding: 12px; border-radius: 12px; border: 0;
+        font-weight: 700; cursor: pointer;
+      }
+      .primary { background: #1E5EFF; color: #fff; }
+      .danger { background: #ff3b30; color: #fff; }
+      .ghost { background: rgba(255,255,255,0.12); color: #fff; }
+      .hint { opacity: 0.75; font-size: 13px; margin-top: 8px; }
+    </style>
+  </head>
+
+  <body>
+    <div class="wrap">
+      <h3 id="title">Camera</h3>
+      <video id="preview" autoplay playsinline></video>
+
+      <div class="row" id="photoControls" style="display:none;">
+        <button class="primary" id="btnCapturePhoto">Capture Photo</button>
+        <button class="ghost" id="btnCancel1">Cancel</button>
+      </div>
+
+      <div class="row" id="videoControls" style="display:none;">
+        <button class="primary" id="btnStart">Start Recording</button>
+        <button class="danger" id="btnStop" disabled>Stop</button>
+        <button class="ghost" id="btnCancel2">Cancel</button>
+      </div>
+
+      <div class="hint" id="hint"></div>
+    </div>
+
+    <script>
+      const params = new URLSearchParams(location.search);
+      const mode = (params.get("mode") || "photo").toLowerCase(); // photo | video
+      const preview = document.getElementById("preview");
+      const title = document.getElementById("title");
+      const hint = document.getElementById("hint");
+
+      const photoControls = document.getElementById("photoControls");
+      const videoControls = document.getElementById("videoControls");
+
+      const btnCapturePhoto = document.getElementById("btnCapturePhoto");
+      const btnCancel1 = document.getElementById("btnCancel1");
+      const btnStart = document.getElementById("btnStart");
+      const btnStop = document.getElementById("btnStop");
+      const btnCancel2 = document.getElementById("btnCancel2");
+
+      let stream = null;
+      let recorder = null;
+      let chunks = [];
+
+      function postBytes(media, contentType, fileName, arrayBuffer) {
+        // Transfer arrayBuffer to opener (fast, no base64)
+        window.opener?.postMessage(
+          {
+            kind: "autoscopecapture",
+            media,
+            contentType,
+            fileName,
+            buffer: arrayBuffer,
+          },
+          window.location.origin,
+          [arrayBuffer]
+        );
+      }
+
+      async function startCamera() {
+        title.textContent = (mode === "video") ? "Record Video" : "Capture Photo";
+        hint.textContent = (mode === "video")
+          ? "Press Start Recording, then Stop when done."
+          : "Align and press Capture Photo.";
+
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment" },
+          audio: (mode === "video"),
+        });
+
+        preview.srcObject = stream;
+
+        if (mode === "video") {
+          videoControls.style.display = "flex";
+        } else {
+          photoControls.style.display = "flex";
+        }
+      }
+
+      function stopTracks() {
+        if (!stream) return;
+        stream.getTracks().forEach(t => t.stop());
+        stream = null;
+      }
+
+      btnCancel1.onclick = () => { stopTracks(); window.close(); };
+      btnCancel2.onclick = () => { stopTracks(); window.close(); };
+
+      btnCapturePhoto.onclick = async () => {
+        try {
+          const video = preview;
+          const canvas = document.createElement("canvas");
+          canvas.width = video.videoWidth || 1280;
+          canvas.height = video.videoHeight || 720;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+          const blob = await new Promise(res => canvas.toBlob(res, "image/jpeg", 0.92));
+          const buf = await blob.arrayBuffer();
+
+          const fileName = `photo_${Date.now()}.jpg`;
+          postBytes("photo", blob.type || "image/jpeg", fileName, buf);
+
+          stopTracks();
+          window.close();
+        } catch (e) {
+          alert("Photo capture failed: " + e);
+        }
+      };
+
+      btnStart.onclick = () => {
+        try {
+          chunks = [];
+          // Browser usually records webm (not mp4). Send actual contentType to backend.
+          recorder = new MediaRecorder(stream, { mimeType: "video/webm" });
+          recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+          recorder.onstop = async () => {
+            const blob = new Blob(chunks, { type: recorder.mimeType || "video/webm" });
+            const buf = await blob.arrayBuffer();
+            const ext = (blob.type.includes("webm")) ? "webm" : "mp4";
+            const fileName = `video_${Date.now()}.${ext}`;
+            postBytes("video", blob.type || "video/webm", fileName, buf);
+            stopTracks();
+            window.close();
+          };
+
+          recorder.start();
+          btnStart.disabled = true;
+          btnStop.disabled = false;
+        } catch (e) {
+          alert("Video recording failed: " + e);
+        }
+      };
+
+      btnStop.onclick = () => {
+        try {
+          btnStop.disabled = true;
+          recorder?.stop();
+        } catch (e) {
+          alert("Stop failed: " + e);
+        }
+      };
+
+      startCamera().catch(err => {
+        alert("Camera permission / start failed: " + err);
+      });
+    </script>
+  </body>
+</html> -->
+
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Camera Capture</title>
+    <style>
+      body { margin: 0; font-family: Arial, sans-serif; background: #0b1220; color: #fff; }
+      .wrap { padding: 12px; }
+      video { width: 100%; border-radius: 12px; background: #000; }
+      .row { display: flex; gap: 10px; margin-top: 12px; }
+      button {
+        flex: 1; padding: 12px; border-radius: 12px; border: 0;
+        font-weight: 700; cursor: pointer;
+      }
+      .primary { background: #1E5EFF; color: #fff; }
+      .danger { background: #ff3b30; color: #fff; }
+      .ghost { background: rgba(255,255,255,0.12); color: #fff; }
+      .hint { opacity: 0.75; font-size: 13px; margin-top: 8px; }
+      .err { margin-top: 10px; color: #ffb4b4; white-space: pre-wrap; font-size: 13px; }
+      .ok { color: #a8ffb0; }
+    </style>
+  </head>
+
+  <body>
+    <div class="wrap">
+      <h3 id="title">Camera</h3>
+      <video id="preview" autoplay playsinline muted></video>
+
+      <div class="row" id="photoControls" style="display:none;">
+        <button class="primary" id="btnCapturePhoto">Capture Photo</button>
+        <button class="ghost" id="btnCancel1">Cancel</button>
+      </div>
+
+      <div class="row" id="videoControls" style="display:none;">
+        <button class="primary" id="btnStart">Start Recording</button>
+        <button class="danger" id="btnStop" disabled>Stop</button>
+        <button class="ghost" id="btnCancel2">Cancel</button>
+      </div>
+
+      <div class="hint" id="hint"></div>
+      <div class="err" id="err"></div>
+    </div>
+
+    <script>
+      const params = new URLSearchParams(location.search);
+      const mode = (params.get("mode") || "photo").toLowerCase(); // photo | video
+      const preview = document.getElementById("preview");
+      const title = document.getElementById("title");
+      const hint = document.getElementById("hint");
+      const errEl = document.getElementById("err");
+
+      const photoControls = document.getElementById("photoControls");
+      const videoControls = document.getElementById("videoControls");
+
+      const btnCapturePhoto = document.getElementById("btnCapturePhoto");
+      const btnCancel1 = document.getElementById("btnCancel1");
+      const btnStart = document.getElementById("btnStart");
+      const btnStop = document.getElementById("btnStop");
+      const btnCancel2 = document.getElementById("btnCancel2");
+
+      let stream = null;
+      let recorder = null;
+      let chunks = [];
+
+      function setErr(msg) {
+        errEl.textContent = msg || "";
+      }
+
+      function postBytes(media, contentType, fileName, arrayBuffer) {
+        // Use '*' to avoid localhost/127.0.0.1 mismatch and port mismatch in dev.
+        window.opener?.postMessage(
+          {
+            kind: "autoscopecapture",
+            media,
+            contentType,
+            fileName,
+            buffer: arrayBuffer,
+          },
+          "*",
+          [arrayBuffer]
+        );
+      }
+
+      function pickMimeType() {
+        // Best supported options for Chrome/Edge
+        const candidates = [
+          "video/webm;codecs=vp9,opus",
+          "video/webm;codecs=vp8,opus",
+          "video/webm"
+        ];
+        if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) return null;
+        for (const c of candidates) {
+          if (MediaRecorder.isTypeSupported(c)) return c;
+        }
+        return null;
+      }
+
+      async function startCamera() {
+        title.textContent = (mode === "video") ? "Record Video" : "Capture Photo";
+        hint.textContent = (mode === "video")
+          ? "Press Start Recording, then Stop when done."
+          : "Align and press Capture Photo.";
+
+        setErr("");
+
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment" },
+          audio: (mode === "video"),
+        });
+
+        preview.srcObject = stream;
+
+        // Make sure preview plays (muted helps autoplay when audio track exists)
+        await preview.play().catch(() => { /* ignore */ });
+
+        if (mode === "video") {
+          videoControls.style.display = "flex";
+        } else {
+          photoControls.style.display = "flex";
+        }
+      }
+
+      function stopTracks() {
+        if (!stream) return;
+        stream.getTracks().forEach(t => t.stop());
+        stream = null;
+      }
+
+      btnCancel1.onclick = () => { stopTracks(); window.close(); };
+      btnCancel2.onclick = () => { stopTracks(); window.close(); };
+
+      btnCapturePhoto.onclick = async () => {
+        try {
+          setErr("");
+
+          const video = preview;
+          const canvas = document.createElement("canvas");
+          canvas.width = video.videoWidth || 1280;
+          canvas.height = video.videoHeight || 720;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+          const blob = await new Promise(res => canvas.toBlob(res, "image/jpeg", 0.92));
+          const buf = await blob.arrayBuffer();
+
+          const fileName = `photo_${Date.now()}.jpg`;
+          postBytes("photo", blob.type || "image/jpeg", fileName, buf);
+
+          stopTracks();
+          window.close();
+        } catch (e) {
+          setErr("Photo capture failed:\n" + e);
+        }
+      };
+
+      btnStart.onclick = () => {
+        try {
+          setErr("");
+          if (!stream) throw new Error("Camera stream not ready");
+          if (!window.MediaRecorder) throw new Error("MediaRecorder not supported");
+
+          chunks = [];
+
+          const mt = pickMimeType(); // may be null
+          recorder = mt ? new MediaRecorder(stream, { mimeType: mt }) : new MediaRecorder(stream);
+
+          recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+
+          recorder.onerror = (e) => {
+            setErr("Recorder error:\n" + (e?.error?.message || e));
+          };
+
+          recorder.onstop = async () => {
+            try {
+              const type = recorder.mimeType || (mt || "video/webm");
+              const blob = new Blob(chunks, { type });
+              const buf = await blob.arrayBuffer();
+
+              const ext = (blob.type.includes("webm")) ? "webm" : "bin";
+              const fileName = `video_${Date.now()}.${ext}`;
+
+              postBytes("video", blob.type || type, fileName, buf);
+              stopTracks();
+              window.close();
+            } catch (e) {
+              setErr("Finalize failed:\n" + e);
+            }
+          };
+
+          // timeslice helps chunk flushing in some browsers
+          recorder.start(1000);
+
+          btnStart.disabled = true;
+          btnStop.disabled = false;
+          hint.textContent = "Recording... press Stop when done.";
+          hint.classList.add("ok");
+        } catch (e) {
+          setErr("Video recording failed:\n" + e);
+        }
+      };
+
+      btnStop.onclick = () => {
+        try {
+          btnStop.disabled = true;
+          recorder?.stop();
+        } catch (e) {
+          setErr("Stop failed:\n" + e);
+        }
+      };
+
+      startCamera().catch(err => {
+        setErr("Camera permission / start failed:\n" + err);
+      });
+    </script>
+  </body>
+</html> -->
+
+
+<script>
+  function pickMime() {
+    const candidates = [
+      "video/webm;codecs=vp9,opus",
+      "video/webm;codecs=vp8,opus",
+      "video/webm"
+    ];
+    for (const c of candidates) {
+      if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(c)) return c;
+    }
+    return ""; // let browser decide
+  }
+
+  btnStart.onclick = () => {
+    try {
+      chunks = [];
+
+      const mime = pickMime();
+      recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+
+      recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+
+      recorder.onstop = async () => {
+        const blob = new Blob(chunks, { type: recorder.mimeType || "video/webm" });
+        const buf = await blob.arrayBuffer();
+        const baseType = (blob.type || "video/webm").split(";")[0].trim();
+        const ext = baseType.includes("webm") ? "webm" : "mp4";
+        const fileName = `video_${Date.now()}.${ext}`;
+        postBytes("video", blob.type || "video/webm", fileName, buf);
+        stopTracks();
+        window.close();
+      };
+
+      recorder.start();
+      btnStart.disabled = true;
+      btnStop.disabled = false;
+      hint.textContent = "Recording... press Stop when done.";
+      hint.style.color = "#7CFF7C";
+    } catch (e) {
+      alert("Video recording failed: " + e);
+    }
+  };
+</script>
