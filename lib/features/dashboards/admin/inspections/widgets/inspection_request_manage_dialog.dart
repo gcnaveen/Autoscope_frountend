@@ -241,6 +241,7 @@ class _InspectionRequestManageDialogState extends State<InspectionRequestManageD
 
                   return DropdownButtonFormField<AppUser>(
                     value: _selected,
+                    autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
                     items: options
                         .map(
                           (u) => DropdownMenuItem(

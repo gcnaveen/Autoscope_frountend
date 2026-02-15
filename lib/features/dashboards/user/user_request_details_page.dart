@@ -376,6 +376,7 @@ class _UserRequestDetailsPageState extends State<UserRequestDetailsPage> {
                                     const SizedBox(height: 12),
                                     TextFormField(
                                       controller: preferredTimeCtrl,
+                                      autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
                                       decoration: const InputDecoration(
                                         labelText: 'Preferred Time',
                                         border: OutlineInputBorder(),
@@ -404,6 +405,7 @@ class _UserRequestDetailsPageState extends State<UserRequestDetailsPage> {
                           child: _editing
                               ? TextFormField(
                                   controller: notesCtrl,
+                                  autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
                                   maxLines: 4,
                                   decoration: const InputDecoration(
                                     labelText: 'Notes',
@@ -501,16 +503,19 @@ class _VehicleEditForm extends StatelessWidget {
       children: [
         f(TextFormField(
           controller: makeCtrl,
+          autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
           decoration: const InputDecoration(labelText: 'Make', border: OutlineInputBorder()),
           validator: (v) => (v == null || v.trim().isEmpty) ? 'Make is required' : null,
         )),
         f(TextFormField(
           controller: modelCtrl,
+          autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
           decoration: const InputDecoration(labelText: 'Model', border: OutlineInputBorder()),
           validator: (v) => (v == null || v.trim().isEmpty) ? 'Model is required' : null,
         )),
         f(TextFormField(
           controller: yearCtrl,
+          autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
           keyboardType: TextInputType.number,
           decoration: const InputDecoration(labelText: 'Year', border: OutlineInputBorder()),
           validator: (v) {
@@ -522,19 +527,23 @@ class _VehicleEditForm extends StatelessWidget {
         )),
         f(TextFormField(
           controller: vinCtrl,
+          autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
           decoration: const InputDecoration(labelText: 'VIN', border: OutlineInputBorder()),
         )),
         f(TextFormField(
           controller: plateCtrl,
+          autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
           decoration: const InputDecoration(labelText: 'License Plate', border: OutlineInputBorder()),
         )),
         f(TextFormField(
           controller: mileageCtrl,
+          autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
           keyboardType: TextInputType.number,
           decoration: const InputDecoration(labelText: 'Mileage', border: OutlineInputBorder()),
         )),
         TextFormField(
           controller: colorCtrl,
+          autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
           decoration: const InputDecoration(labelText: 'Color', border: OutlineInputBorder()),
         ),
       ],
@@ -563,20 +572,24 @@ class _LocationEditForm extends StatelessWidget {
       children: [
         f(TextFormField(
           controller: addressCtrl,
+          autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
           decoration: const InputDecoration(labelText: 'Address', border: OutlineInputBorder()),
           validator: (v) => (v == null || v.trim().isEmpty) ? 'Address is required' : null,
         )),
         f(TextFormField(
           controller: cityCtrl,
+          autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
           decoration: const InputDecoration(labelText: 'City', border: OutlineInputBorder()),
           validator: (v) => (v == null || v.trim().isEmpty) ? 'City is required' : null,
         )),
         f(TextFormField(
           controller: stateCtrl,
+          autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
           decoration: const InputDecoration(labelText: 'State', border: OutlineInputBorder()),
         )),
         TextFormField(
           controller: zipCtrl,
+          autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
           decoration: const InputDecoration(labelText: 'Zip Code', border: OutlineInputBorder()),
         ),
       ],

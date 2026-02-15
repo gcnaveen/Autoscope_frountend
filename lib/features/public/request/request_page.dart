@@ -947,16 +947,41 @@
 //   }
 // }
 
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'
-    show rootBundle, FilteringTextInputFormatter, LengthLimitingTextInputFormatter, TextInputFormatter;
+    show
+        FilteringTextInputFormatter,
+        LengthLimitingTextInputFormatter,
+        TextInputFormatter;
 import 'package:go_router/go_router.dart';
 
 import '../../../services/service_locator.dart';
 import '../../shared/top_snackbar.dart';
 import '../widgets/public_navbar.dart';
+
+/// ✅ Forces ALL user-typed text to UPPERCASE
+class UpperCaseTextFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final upper = newValue.text.toUpperCase();
+
+    final base = newValue.selection.baseOffset > upper.length
+        ? upper.length
+        : newValue.selection.baseOffset;
+    final extent = newValue.selection.extentOffset > upper.length
+        ? upper.length
+        : newValue.selection.extentOffset;
+
+    return newValue.copyWith(
+      text: upper,
+      selection: TextSelection(baseOffset: base, extentOffset: extent),
+      composing: TextRange.empty,
+    );
+  }
+}
 
 class RequestPage extends StatefulWidget {
   const RequestPage({super.key});
@@ -1009,23 +1034,35 @@ class _RequestPageState extends State<RequestPage> {
   // 'inspection' | 'inspection_and_valuation'
   String _productType = 'inspection';
 
-  // ✅ Make/Model from LOCAL JSON
+  // ✅ Make/Model from API (same style as StartInspection)
   bool loadingMakes = false;
   bool loadingModels = false;
 
-  // Make -> models map
-  final Map<String, List<String>> _catalog = {};
-
-  // Dropdown state
+  // what user sees
   List<String> makes = [];
   List<String> models = [];
-  String? selectedMake;
-  String? selectedModel;
+
+  String? selectedMake; // MAKE NAME (UPPERCASE)
+  String? selectedMakeId; // MAKE ID (backend)
+  String? selectedModel; // MODEL NAME (UPPERCASE)
+
+  // mapping MAKE_NAME -> makeId
+  final Map<String, String> _makeIdByName = {};
+
+  bool _makeIsOther = false;
+  bool _modelIsOther = false;
+  final otherMakeCtrl = TextEditingController();
+  final otherModelCtrl = TextEditingController();
+
+  // ✅ Uppercase formatter
+  final _upper = UpperCaseTextFormatter();
 
   @override
   void initState() {
     super.initState();
-    _loadCatalogFromAsset();
+
+    // ✅ Load makes from API once
+    _loadMakes();
 
     if (phoneCtrl.text.isEmpty) phoneCtrl.text = UaEPhoneInputFormatter.prefix;
   }
@@ -1053,6 +1090,10 @@ class _RequestPageState extends State<RequestPage> {
     zipCtrl.dispose();
 
     notesCtrl.dispose();
+
+    otherMakeCtrl.dispose();
+    otherModelCtrl.dispose();
+
     super.dispose();
   }
 
@@ -1113,13 +1154,20 @@ Dummy Terms & Conditions
     return null;
   }
 
+  // ✅ UPDATED: basic validation that allows ONLY .com or .in
   String? _emailValidator(String? v) {
     final r = _req(v, msg: 'Email is required');
     if (r != null) return r;
 
     final s = v!.trim();
-    final ok = RegExp(r"^[^\s@]+@[^\s@]+\.[^\s@]+$").hasMatch(s);
-    if (!ok) return 'Enter a valid email address';
+    final ok = RegExp(
+      r'^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.(com|in)$',
+      caseSensitive: false,
+    ).hasMatch(s);
+
+    if (!ok) {
+      return 'Enter a valid email like name@domain.com or name@domain.in';
+    }
     return null;
   }
 
@@ -1148,7 +1196,9 @@ Dummy Terms & Conditions
     final year = int.tryParse(v!.trim());
     if (year == null) return 'Year must be a number';
     final now = DateTime.now().year;
-    if (year < 1980 || year > now + 1) return 'Enter a valid year (1980 - ${now + 1})';
+    if (year < 1980 || year > now + 1) {
+      return 'Enter a valid year (1980 - ${now + 1})';
+    }
     return null;
   }
 
@@ -1202,93 +1252,194 @@ Dummy Terms & Conditions
     return null;
   }
 
+  // ✅ for make/model OTHER textboxes (allow A4, X-TRAIL, etc.)
+  String? _vehicleTextValidator(String? v, {required String fieldName, int min = 2}) {
+    final r = _req(v, msg: '$fieldName is required');
+    if (r != null) return r;
+
+    final s = v!.trim();
+    if (s.length < min) return '$fieldName must be at least $min characters';
+    if (!RegExp(r"^[A-Za-z0-9\s'./-]+$").hasMatch(s)) {
+      return '$fieldName contains invalid characters';
+    }
+    return null;
+  }
+
   // -----------------------------
   // ✅ Input formatters
   // -----------------------------
   List<TextInputFormatter> _nameFormatters({int max = 40}) => [
         LengthLimitingTextInputFormatter(max),
         FilteringTextInputFormatter.allow(RegExp(r"[A-Za-z\s'.-]")),
+        _upper,
       ];
 
   List<TextInputFormatter> _yearFormatters() => [
         LengthLimitingTextInputFormatter(4),
         FilteringTextInputFormatter.digitsOnly,
+        _upper,
       ];
 
   List<TextInputFormatter> _vinFormatters() => [
         LengthLimitingTextInputFormatter(17),
         FilteringTextInputFormatter.allow(RegExp(r"[A-Za-z0-9]")),
+        _upper,
       ];
 
   List<TextInputFormatter> _plateFormatters() => [
         LengthLimitingTextInputFormatter(7),
         FilteringTextInputFormatter.allow(RegExp(r"[A-Za-z0-9\-]")),
+        _upper,
       ];
 
   List<TextInputFormatter> _mileageFormatters() => [
         LengthLimitingTextInputFormatter(7),
         FilteringTextInputFormatter.digitsOnly,
+        _upper,
       ];
 
   List<TextInputFormatter> _colorFormatters() => [
         LengthLimitingTextInputFormatter(20),
         FilteringTextInputFormatter.allow(RegExp(r"[A-Za-z\s]")),
+        _upper,
       ];
 
   List<TextInputFormatter> _zipFormatters() => [
         LengthLimitingTextInputFormatter(10),
         FilteringTextInputFormatter.allow(RegExp(r"[0-9\-]")),
+        _upper,
+      ];
+
+  List<TextInputFormatter> _vehicleFreeTextFormatters({int max = 40}) => [
+        LengthLimitingTextInputFormatter(max),
+        FilteringTextInputFormatter.allow(RegExp(r"[A-Za-z0-9\s'./-]")),
+        _upper,
       ];
 
   // -----------------------------
-  // ✅ Load catalog from asset JSON
+  // ✅ MAKE / MODEL API (same approach as StartInspection)
   // -----------------------------
-  Future<void> _loadCatalogFromAsset() async {
+  Future<void> _loadMakes() async {
     setState(() {
       loadingMakes = true;
-      loadingModels = false;
+
+      makes = [];
+      models = [];
+
+      selectedMake = null;
+      selectedMakeId = null;
+      selectedModel = null;
+
+      _makeIdByName.clear();
+
+      _makeIsOther = false;
+      _modelIsOther = false;
+      otherMakeCtrl.text = '';
+      otherModelCtrl.text = '';
+
+      makeCtrl.text = '';
+      modelCtrl.text = '';
     });
 
     try {
-      final raw = await rootBundle.loadString('assets/data/vehicle_catalog_uae.json');
-      final data = jsonDecode(raw) as Map<String, dynamic>;
-      final list = (data['makes'] as List).cast<Map<String, dynamic>>();
+      final detailed = await inspectionRequestsService.listVehicleMakesDetailed();
 
-      _catalog.clear();
-      for (final item in list) {
-        final name = (item['name'] ?? '').toString().trim();
-        final m = (item['models'] as List).map((e) => e.toString().trim()).where((x) => x.isNotEmpty).toList();
-        if (name.isNotEmpty) _catalog[name] = m;
+      for (final m in detailed) {
+        final name = (m['name'] ?? '').toString().trim().toUpperCase();
+        final id = (m['id'] ?? m['_id'] ?? '').toString().trim();
+        if (name.isNotEmpty) _makeIdByName[name] = id;
       }
 
-      final makeList = _catalog.keys.toList()..sort();
+      final names = _makeIdByName.keys.toList()
+        ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+
       if (!mounted) return;
-      setState(() => makes = makeList);
+      setState(() {
+        makes = [...names, 'OTHER'];
+        if (makes.isEmpty) makes = const ['OTHER'];
+      });
     } catch (e) {
       if (!mounted) return;
-      showTopSnack(context, 'Failed to load vehicle catalog JSON: $e', variant: 'error');
+      showTopSnack(context, 'Failed to load makes (API): $e', variant: 'error');
+      setState(() => makes = const ['OTHER']);
     } finally {
       if (mounted) setState(() => loadingMakes = false);
     }
   }
 
-  Future<void> _loadModelsForMakeLocal(String make) async {
+  Future<void> _loadModelsForMakeId(String makeId) async {
     setState(() {
       loadingModels = true;
       models = [];
       selectedModel = null;
+      _modelIsOther = false;
+      otherModelCtrl.text = '';
       modelCtrl.text = '';
     });
 
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+    try {
+      final list = await inspectionRequestsService.listVehicleModels(makeId);
 
-    final list = (_catalog[make] ?? []).toList()..sort();
-    if (!mounted) return;
+      if (!mounted) return;
+      setState(() {
+        models = [...list.map((e) => e.toString().trim().toUpperCase()), 'OTHER'];
+        if (models.isEmpty) models = const ['OTHER'];
+      });
+    } catch (e) {
+      if (!mounted) return;
+      showTopSnack(context, 'Failed to load models (API): $e', variant: 'error');
+      setState(() {
+        models = const ['OTHER'];
+        selectedModel = 'OTHER';
+        _modelIsOther = true;
+      });
+    } finally {
+      if (mounted) setState(() => loadingModels = false);
+    }
+  }
 
-    setState(() {
-      models = list;
-      loadingModels = false;
-    });
+  bool _applyMakeModelToControllersNoNetwork() {
+    // MAKE
+    String make = '';
+    if (_makeIsOther) {
+      make = otherMakeCtrl.text.trim().toUpperCase();
+    } else {
+      make = (selectedMake ?? '').trim().toUpperCase();
+    }
+
+    if (make.isEmpty) {
+      showTopSnack(context, 'Make is required', variant: 'warning');
+      return false;
+    }
+
+    final makeErr = _vehicleTextValidator(make, fieldName: 'Make', min: 2);
+    if (makeErr != null) {
+      showTopSnack(context, makeErr, variant: 'warning');
+      return false;
+    }
+
+    // MODEL
+    String model = '';
+    if (_modelIsOther) {
+      model = otherModelCtrl.text.trim().toUpperCase();
+    } else {
+      model = (selectedModel ?? '').trim().toUpperCase();
+    }
+
+    if (model.isEmpty) {
+      showTopSnack(context, 'Model is required', variant: 'warning');
+      return false;
+    }
+
+    final modelErr = _vehicleTextValidator(model, fieldName: 'Model', min: 1);
+    if (modelErr != null) {
+      showTopSnack(context, modelErr, variant: 'warning');
+      return false;
+    }
+
+    makeCtrl.text = make;
+    modelCtrl.text = model;
+    return true;
   }
 
   // -----------------------------
@@ -1320,7 +1471,9 @@ Dummy Terms & Conditions
   }
 
   String _toUrlType(String productType) {
-    return productType == 'inspection_and_valuation' ? 'inspection_and_valuation' : 'inspection';
+    return productType == 'inspection_and_valuation'
+        ? 'inspection_and_valuation'
+        : 'inspection';
   }
 
   String _requestTypeForApi(String type) {
@@ -1361,6 +1514,9 @@ Dummy Terms & Conditions
   }
 
   Future<void> _submit(String type) async {
+    // ✅ keep make/model synced before validation
+    if (!_applyMakeModelToControllersNoNetwork()) return;
+
     final valid = _formKey.currentState?.validate() ?? false;
     if (!valid) {
       showTopSnack(context, 'Please fix the highlighted fields.', variant: 'warning');
@@ -1373,7 +1529,8 @@ Dummy Terms & Conditions
     }
 
     if (!_agreeTerms) {
-      showTopSnack(context, 'Please accept Privacy Policy & Terms and Conditions.', variant: 'warning');
+      showTopSnack(context, 'Please accept Privacy Policy & Terms and Conditions.',
+          variant: 'warning');
       return;
     }
 
@@ -1458,7 +1615,8 @@ Dummy Terms & Conditions
           Icon(icon, size: 18, color: Colors.black87),
           const SizedBox(width: 8),
         ],
-        Text(title, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14)),
+        Text(title,
+            style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14)),
       ],
     );
   }
@@ -1468,10 +1626,17 @@ Dummy Terms & Conditions
       width: width,
       child: DropdownButtonFormField<String>(
         value: _productType,
-        decoration: _dec(label: 'Service Type', hint: 'Select Service type', icon: Icons.shopping_bag_outlined),
+        autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
+        decoration: _dec(
+          label: 'Service Type',
+          hint: 'Select Service type',
+          icon: Icons.shopping_bag_outlined,
+        ),
         items: const [
           DropdownMenuItem(value: 'inspection', child: Text('Inspection')),
-          DropdownMenuItem(value: 'inspection_and_valuation', child: Text('Inspection and Valuation')),
+          DropdownMenuItem(
+              value: 'inspection_and_valuation',
+              child: Text('Inspection and Valuation')),
         ],
         onChanged: (v) {
           if (v == null) return;
@@ -1489,7 +1654,12 @@ Dummy Terms & Conditions
       width: width,
       child: DropdownButtonFormField<String>(
         value: _reason,
-        decoration: _dec(label: 'Reason (optional)', hint: 'Select reason', icon: Icons.help_outline),
+        autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
+        decoration: _dec(
+          label: 'Reason (optional)',
+          hint: 'Select reason',
+          icon: Icons.help_outline,
+        ),
         items: const [
           DropdownMenuItem(value: 'sell', child: Text('Sell')),
           DropdownMenuItem(value: 'purchase', child: Text('Purchase')),
@@ -1534,14 +1704,18 @@ Dummy Terms & Conditions
                           children: [
                             const Text(
                               "Request Vehicle Inspection Service",
-                              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
+                              style: TextStyle(
+                                  fontSize: 22, fontWeight: FontWeight.w900),
                             ),
                             const SizedBox(height: 6),
                             Wrap(
                               spacing: 10,
                               runSpacing: 8,
                               children: [
-                                _Pill(icon: _iconFor(type), text: 'Service: ${_labelFor(type)}'),
+                                _Pill(
+                                  icon: _iconFor(type),
+                                  text: 'Service: ${_labelFor(type)}',
+                                ),
                               ],
                             ),
                           ],
@@ -1574,15 +1748,17 @@ Dummy Terms & Conditions
                             final gap = 14.0;
                             final fieldW = isWide ? (w - gap) / 2 : w;
 
-                            Widget field(Widget child) => SizedBox(width: fieldW, child: child);
+                            Widget field(Widget child) =>
+                                SizedBox(width: fieldW, child: child);
 
                             return Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                _sectionTitle('Service', icon: Icons.shopping_bag_outlined),
+                                _sectionTitle('Service',
+                                    icon: Icons.shopping_bag_outlined),
                                 const SizedBox(height: 10),
 
-                                // ✅ UPDATED: two fields side-by-side on wide screens
+                                // two fields side-by-side on wide screens
                                 Wrap(
                                   spacing: gap,
                                   runSpacing: gap,
@@ -1596,7 +1772,8 @@ Dummy Terms & Conditions
                                 Divider(color: Colors.black.withOpacity(0.08)),
                                 const SizedBox(height: 18),
 
-                                _sectionTitle('Owner Details', icon: Icons.person_outline),
+                                _sectionTitle('Owner Details',
+                                    icon: Icons.person_outline),
                                 const SizedBox(height: 10),
                                 Wrap(
                                   spacing: gap,
@@ -1605,22 +1782,35 @@ Dummy Terms & Conditions
                                     field(
                                       TextFormField(
                                         controller: firstNameCtrl,
+                                        autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
                                         inputFormatters: _nameFormatters(),
-                                        decoration: _dec(label: 'First Name', hint: 'John', icon: Icons.person_outline),
-                                        validator: (v) => _nameValidator(v, fieldName: 'First name'),
+                                        decoration: _dec(
+                                          label: 'First Name',
+                                          hint: 'JOHN',
+                                          icon: Icons.person_outline,
+                                        ),
+                                        validator: (v) =>
+                                            _nameValidator(v, fieldName: 'First name'),
                                       ),
                                     ),
                                     field(
                                       TextFormField(
                                         controller: lastNameCtrl,
+                                        autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
                                         inputFormatters: _nameFormatters(),
-                                        decoration: _dec(label: 'Last Name', hint: 'Doe', icon: Icons.person_outline),
-                                        validator: (v) => _nameValidator(v, fieldName: 'Last name'),
+                                        decoration: _dec(
+                                          label: 'Last Name',
+                                          hint: 'DOE',
+                                          icon: Icons.person_outline,
+                                        ),
+                                        validator: (v) =>
+                                            _nameValidator(v, fieldName: 'Last name'),
                                       ),
                                     ),
                                     field(
                                       TextFormField(
                                         controller: phoneCtrl,
+                                        autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
                                         keyboardType: TextInputType.phone,
                                         decoration: _dec(
                                           label: 'Phone',
@@ -1633,8 +1823,12 @@ Dummy Terms & Conditions
                                         validator: _uaePhoneValidator,
                                         onTap: () {
                                           if (phoneCtrl.text.isEmpty) {
-                                            phoneCtrl.text = UaEPhoneInputFormatter.prefix;
-                                            phoneCtrl.selection = TextSelection.collapsed(offset: phoneCtrl.text.length);
+                                            phoneCtrl.text =
+                                                UaEPhoneInputFormatter.prefix;
+                                            phoneCtrl.selection =
+                                                TextSelection.collapsed(
+                                              offset: phoneCtrl.text.length,
+                                            );
                                           }
                                         },
                                       ),
@@ -1642,8 +1836,20 @@ Dummy Terms & Conditions
                                     field(
                                       TextFormField(
                                         controller: emailCtrl,
+                                        autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
                                         keyboardType: TextInputType.emailAddress,
-                                        decoration: _dec(label: 'Email', hint: 'you@example.com', icon: Icons.email_outlined),
+                                        inputFormatters: [
+                                          LengthLimitingTextInputFormatter(64),
+                                          FilteringTextInputFormatter.deny(RegExp(r'\s')),
+                                          FilteringTextInputFormatter.allow(
+                                              RegExp(r"[A-Za-z0-9@._%+\-]")),
+                                          _upper,
+                                        ],
+                                        decoration: _dec(
+                                          label: 'Email',
+                                          hint: 'NAME@DOMAIN.COM',
+                                          icon: Icons.email_outlined,
+                                        ),
                                         validator: _emailValidator,
                                       ),
                                     ),
@@ -1654,7 +1860,8 @@ Dummy Terms & Conditions
                                 Divider(color: Colors.black.withOpacity(0.08)),
                                 const SizedBox(height: 18),
 
-                                _sectionTitle('Vehicle Info', icon: Icons.directions_car_outlined),
+                                _sectionTitle('Vehicle Info',
+                                    icon: Icons.directions_car_outlined),
                                 const SizedBox(height: 10),
                                 Wrap(
                                   spacing: gap,
@@ -1663,51 +1870,165 @@ Dummy Terms & Conditions
                                     field(
                                       DropdownButtonFormField<String>(
                                         value: selectedMake,
-                                        items: makes.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
+                                        autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
+                                        items: makes
+                                            .map((m) => DropdownMenuItem(
+                                                value: m, child: Text(m)))
+                                            .toList(),
                                         onChanged: loadingMakes
                                             ? null
                                             : (v) async {
                                                 if (v == null) return;
+
+                                                // OTHER make
+                                                if (v == 'OTHER') {
+                                                  setState(() {
+                                                    selectedMake = 'OTHER';
+                                                    selectedMakeId = null;
+                                                    _makeIsOther = true;
+
+                                                    otherMakeCtrl.text = '';
+                                                    makeCtrl.text = '';
+
+                                                    models = const ['OTHER'];
+                                                    selectedModel = 'OTHER';
+                                                    _modelIsOther = true;
+
+                                                    otherModelCtrl.text = '';
+                                                    modelCtrl.text = '';
+                                                  });
+                                                  return;
+                                                }
+
+                                                // NORMAL make
+                                                final mkName = v.trim().toUpperCase();
+                                                final mkId =
+                                                    _makeIdByName[mkName] ?? '';
+
                                                 setState(() {
-                                                  selectedMake = v;
-                                                  makeCtrl.text = v;
+                                                  selectedMake = mkName;
+                                                  selectedMakeId = mkId;
+
+                                                  _makeIsOther = false;
+                                                  otherMakeCtrl.text = '';
+                                                  makeCtrl.text = mkName;
+
                                                   selectedModel = null;
+                                                  _modelIsOther = false;
+                                                  otherModelCtrl.text = '';
                                                   modelCtrl.text = '';
                                                   models = [];
                                                 });
-                                                await _loadModelsForMakeLocal(v);
+
+                                                if (mkId.isNotEmpty) {
+                                                  await _loadModelsForMakeId(mkId);
+                                                } else {
+                                                  showTopSnack(context,
+                                                      'makeId missing for selected make',
+                                                      variant: 'error');
+                                                  setState(() {
+                                                    models = const ['OTHER'];
+                                                    selectedModel = 'OTHER';
+                                                    _modelIsOther = true;
+                                                  });
+                                                }
                                               },
                                         decoration: _dec(
                                           label: 'Make',
-                                          hint: loadingMakes ? 'Loading makes…' : 'Select make',
+                                          hint: loadingMakes
+                                              ? 'Loading makes…'
+                                              : 'Select make',
                                           icon: Icons.directions_car_outlined,
                                         ),
-                                        validator: (v) => v == null ? 'Make is required' : null,
+                                        validator: (v) =>
+                                            v == null ? 'Make is required' : null,
                                       ),
                                     ),
+
+                                    if (_makeIsOther)
+                                      field(
+                                        TextFormField(
+                                          controller: otherMakeCtrl,
+                                          autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
+                                          inputFormatters:
+                                              _vehicleFreeTextFormatters(max: 40),
+                                          decoration: _dec(
+                                            label: 'Other Make',
+                                            hint: 'ENTER MAKE',
+                                            icon: Icons.edit_outlined,
+                                          ),
+                                          validator: (v) => _vehicleTextValidator(
+                                            v,
+                                            fieldName: 'Other Make',
+                                            min: 2,
+                                          ),
+                                        ),
+                                      ),
+
                                     field(
                                       DropdownButtonFormField<String>(
                                         value: selectedModel,
-                                        items: models.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
-                                        onChanged: (selectedMake == null || loadingModels)
+                                        autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
+                                        items: models
+                                            .map((m) => DropdownMenuItem(
+                                                value: m, child: Text(m)))
+                                            .toList(),
+                                        onChanged: (selectedMake == null ||
+                                                loadingModels)
                                             ? null
                                             : (v) {
                                                 if (v == null) return;
+
+                                                if (v == 'OTHER') {
+                                                  setState(() {
+                                                    selectedModel = 'OTHER';
+                                                    _modelIsOther = true;
+                                                    otherModelCtrl.text = '';
+                                                    modelCtrl.text = '';
+                                                  });
+                                                  return;
+                                                }
+
                                                 setState(() {
-                                                  selectedModel = v;
-                                                  modelCtrl.text = v;
+                                                  selectedModel = v.toUpperCase();
+                                                  _modelIsOther = false;
+                                                  otherModelCtrl.text = '';
+                                                  modelCtrl.text = v.toUpperCase();
                                                 });
                                               },
                                         decoration: _dec(
                                           label: 'Model',
                                           hint: selectedMake == null
                                               ? 'Select make first'
-                                              : (loadingModels ? 'Loading models…' : 'Select model'),
+                                              : (loadingModels
+                                                  ? 'Loading models…'
+                                                  : 'Select model'),
                                           icon: Icons.car_repair_outlined,
                                         ),
-                                        validator: (v) => v == null ? 'Model is required' : null,
+                                        validator: (v) =>
+                                            v == null ? 'Model is required' : null,
                                       ),
                                     ),
+
+                                    if (_modelIsOther)
+                                      field(
+                                        TextFormField(
+                                          controller: otherModelCtrl,
+                                          autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
+                                          inputFormatters:
+                                              _vehicleFreeTextFormatters(max: 40),
+                                          decoration: _dec(
+                                            label: 'Other Model',
+                                            hint: 'ENTER MODEL',
+                                            icon: Icons.edit_outlined,
+                                          ),
+                                          validator: (v) => _vehicleTextValidator(
+                                            v,
+                                            fieldName: 'Other Model',
+                                            min: 1,
+                                          ),
+                                        ),
+                                      ),
                                   ],
                                 ),
 
@@ -1715,7 +2036,8 @@ Dummy Terms & Conditions
                                 Divider(color: Colors.black.withOpacity(0.08)),
                                 const SizedBox(height: 18),
 
-                                _sectionTitle('Preferred Slot', icon: Icons.event_available_outlined),
+                                _sectionTitle('Preferred Slot',
+                                    icon: Icons.event_available_outlined),
                                 const SizedBox(height: 10),
                                 Wrap(
                                   spacing: gap,
@@ -1743,6 +2065,7 @@ Dummy Terms & Conditions
                                     field(
                                       DropdownButtonFormField<String>(
                                         value: preferredTimeCtrl.text,
+                                        autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
                                         items: const [
                                           '09:00 AM',
                                           '10:00 AM',
@@ -1755,12 +2078,20 @@ Dummy Terms & Conditions
                                           '05:00 PM',
                                           '06:00 PM',
                                           '07:00 PM',
-                                        ].map((t) => DropdownMenuItem(value: t, child: Text(t))).toList(),
+                                        ]
+                                            .map((t) => DropdownMenuItem(
+                                                value: t, child: Text(t)))
+                                            .toList(),
                                         onChanged: (v) {
                                           if (v == null) return;
-                                          setState(() => preferredTimeCtrl.text = v);
+                                          setState(() =>
+                                              preferredTimeCtrl.text = v);
                                         },
-                                        decoration: _dec(label: 'Preferred Time', hint: 'Select time', icon: Icons.schedule_outlined),
+                                        decoration: _dec(
+                                          label: 'Preferred Time',
+                                          hint: 'Select time',
+                                          icon: Icons.schedule_outlined,
+                                        ),
                                       ),
                                     ),
                                   ],
@@ -1770,7 +2101,8 @@ Dummy Terms & Conditions
                                 Divider(color: Colors.black.withOpacity(0.08)),
                                 const SizedBox(height: 18),
 
-                                _sectionTitle('Location', icon: Icons.location_on_outlined),
+                                _sectionTitle('Location',
+                                    icon: Icons.location_on_outlined),
                                 const SizedBox(height: 10),
                                 Wrap(
                                   spacing: gap,
@@ -1779,32 +2111,61 @@ Dummy Terms & Conditions
                                     field(
                                       TextFormField(
                                         controller: addressCtrl,
-                                        inputFormatters: [LengthLimitingTextInputFormatter(80)],
-                                        decoration: _dec(label: 'Address', hint: '123 Main Street', icon: Icons.home_outlined),
-                                        validator: (v) => _req(v, msg: 'Address is required'),
+                                        autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
+                                        inputFormatters: [
+                                          LengthLimitingTextInputFormatter(80),
+                                          _upper,
+                                        ],
+                                        decoration: _dec(
+                                          label: 'Address',
+                                          hint: '123 MAIN STREET',
+                                          icon: Icons.home_outlined,
+                                        ),
+                                        validator: (v) =>
+                                            _req(v, msg: 'Address is required'),
                                       ),
                                     ),
                                     field(
                                       TextFormField(
                                         controller: cityCtrl,
-                                        inputFormatters: _nameFormatters(max: 30),
-                                        decoration: _dec(label: 'City', hint: 'Dubai', icon: Icons.location_city_outlined),
-                                        validator: (v) => _req(v, msg: 'City is required'),
+                                        autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
+                                        inputFormatters:
+                                            _nameFormatters(max: 30),
+                                        decoration: _dec(
+                                          label: 'City',
+                                          hint: 'DUBAI',
+                                          icon: Icons.location_city_outlined,
+                                        ),
+                                        validator: (v) =>
+                                            _req(v, msg: 'City is required'),
                                       ),
                                     ),
                                     field(
                                       TextFormField(
                                         controller: stateCtrl,
-                                        inputFormatters: _nameFormatters(max: 30),
-                                        decoration: _dec(label: 'State', hint: 'UAE', icon: Icons.map_outlined),
-                                        validator: (v) => _req(v, msg: 'State is required'),
+                                        autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
+                                        inputFormatters:
+                                            _nameFormatters(max: 30),
+                                        decoration: _dec(
+                                          label: 'State',
+                                          hint: 'UAE',
+                                          icon: Icons.map_outlined,
+                                        ),
+                                        validator: (v) =>
+                                            _req(v, msg: 'State is required'),
                                       ),
                                     ),
                                     field(
                                       TextFormField(
                                         controller: zipCtrl,
+                                        autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
                                         inputFormatters: _zipFormatters(),
-                                        decoration: _dec(label: 'Zip Code', hint: '00000', icon: Icons.local_post_office_outlined),
+                                        decoration: _dec(
+                                          label: 'Zip Code',
+                                          hint: '00000',
+                                          icon:
+                                              Icons.local_post_office_outlined,
+                                        ),
                                         validator: _zipValidator,
                                       ),
                                     ),
@@ -1815,12 +2176,21 @@ Dummy Terms & Conditions
                                 Divider(color: Colors.black.withOpacity(0.08)),
                                 const SizedBox(height: 18),
 
-                                _sectionTitle('Notes', icon: Icons.notes_outlined),
+                                _sectionTitle('Notes',
+                                    icon: Icons.notes_outlined),
                                 const SizedBox(height: 10),
                                 TextFormField(
                                   controller: notesCtrl,
                                   maxLines: 4,
-                                  decoration: _dec(label: 'Notes', hint: 'Any special instructions...', icon: Icons.notes_outlined),
+                                  inputFormatters: [
+                                    LengthLimitingTextInputFormatter(250),
+                                    _upper,
+                                  ],
+                                  decoration: _dec(
+                                    label: 'Notes',
+                                    hint: 'ANY SPECIAL INSTRUCTIONS...',
+                                    icon: Icons.notes_outlined,
+                                  ),
                                 ),
 
                                 const SizedBox(height: 18),
@@ -1832,26 +2202,35 @@ Dummy Terms & Conditions
                                   decoration: BoxDecoration(
                                     color: Colors.white,
                                     borderRadius: BorderRadius.circular(18),
-                                    border: Border.all(color: Colors.black.withOpacity(0.08)),
+                                    border: Border.all(
+                                      color: Colors.black.withOpacity(0.08),
+                                    ),
                                   ),
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       Row(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
                                         children: [
                                           Padding(
-                                            padding: const EdgeInsets.only(top: 2),
+                                            padding:
+                                                const EdgeInsets.only(top: 2),
                                             child: SizedBox(
                                               width: 24,
                                               height: 24,
                                               child: Checkbox(
                                                 value: _agreeTerms,
-                                                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                                visualDensity: VisualDensity.compact,
+                                                materialTapTargetSize:
+                                                    MaterialTapTargetSize
+                                                        .shrinkWrap,
+                                                visualDensity:
+                                                    VisualDensity.compact,
                                                 onChanged: (v) {
                                                   if (v == null) return;
-                                                  setState(() => _agreeTerms = v);
+                                                  setState(() =>
+                                                      _agreeTerms = v);
                                                 },
                                               ),
                                             ),
@@ -1859,34 +2238,45 @@ Dummy Terms & Conditions
                                           const SizedBox(width: 10),
                                           Expanded(
                                             child: Wrap(
-                                              alignment: WrapAlignment.start,
-                                              crossAxisAlignment: WrapCrossAlignment.center,
+                                              alignment:
+                                                  WrapAlignment.start,
+                                              crossAxisAlignment:
+                                                  WrapCrossAlignment.center,
                                               runSpacing: 2,
                                               children: [
                                                 const Text(
                                                   'Agree to ',
-                                                  style: TextStyle(color: Colors.black54),
+                                                  style: TextStyle(
+                                                      color: Colors.black54),
                                                 ),
                                                 InkWell(
-                                                  onTap: () => _showTermsDialog('Privacy Policy'),
+                                                  onTap: () => _showTermsDialog(
+                                                      'Privacy Policy'),
                                                   child: const Text(
                                                     'Privacy Policy',
                                                     style: TextStyle(
                                                       color: Colors.blue,
-                                                      decoration: TextDecoration.underline,
-                                                      fontWeight: FontWeight.w700,
+                                                      decoration: TextDecoration
+                                                          .underline,
+                                                      fontWeight:
+                                                          FontWeight.w700,
                                                     ),
                                                   ),
                                                 ),
-                                                const Text(' & ', style: TextStyle(color: Colors.black54)),
+                                                const Text(' & ',
+                                                    style: TextStyle(
+                                                        color: Colors.black54)),
                                                 InkWell(
-                                                  onTap: () => _showTermsDialog('Terms and Conditions'),
+                                                  onTap: () => _showTermsDialog(
+                                                      'Terms and Conditions'),
                                                   child: const Text(
                                                     'Terms and Conditions',
                                                     style: TextStyle(
                                                       color: Colors.blue,
-                                                      decoration: TextDecoration.underline,
-                                                      fontWeight: FontWeight.w700,
+                                                      decoration: TextDecoration
+                                                          .underline,
+                                                      fontWeight:
+                                                          FontWeight.w700,
                                                     ),
                                                   ),
                                                 ),
@@ -1900,14 +2290,19 @@ Dummy Terms & Conditions
                                         width: double.infinity,
                                         height: 48,
                                         child: FilledButton.icon(
-                                          onPressed: (loading || !_agreeTerms) ? null : () => _submit(type),
+                                          onPressed: (loading || !_agreeTerms)
+                                              ? null
+                                              : () => _submit(type),
                                           icon: const Icon(Icons.send),
-                                          label: Text(loading ? 'Submitting…' : 'Submit Request'),
+                                          label: Text(loading
+                                              ? 'Submitting…'
+                                              : 'Submit Request'),
                                         ),
                                       ),
                                       const SizedBox(height: 10),
                                       TextButton.icon(
-                                        onPressed: () => context.go('/products'),
+                                        onPressed: () =>
+                                            context.go('/products'),
                                         icon: const Icon(Icons.arrow_back),
                                         label: const Text('Back to Services'),
                                       ),
@@ -1989,4 +2384,7 @@ class UaEPhoneInputFormatter extends TextInputFormatter {
     );
   }
 }
+
+
+
 

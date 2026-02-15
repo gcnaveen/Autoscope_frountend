@@ -1189,6 +1189,7 @@ class LandingPage extends StatelessWidget {
         body: SingleChildScrollView(
           child: Column(
             children: const [
+              _HeroSection(),
               _AboutUsSection(),
               _ServicesIntroSection(),
               _InspectionSection(),
@@ -1253,6 +1254,102 @@ class _SectionShell extends StatelessWidget {
   }
 }
 
+
+// =====================================================
+// Hero section
+// =====================================================
+class _HeroSection extends StatelessWidget {
+  const _HeroSection();
+
+  @override
+  Widget build(BuildContext context) {
+    final w = MediaQuery.sizeOf(context).width;
+    final isMobile = w < 900;
+
+    return Container(
+      height: isMobile ? 520 : 560,
+      decoration: const BoxDecoration(color: Color(0xFF0B1220)),
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: Opacity(
+              opacity: 1,
+              child: Image.asset(
+                'assets/images/inspection-1.jpg',
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Color(0xFF0B1220), Color(0xFF1A2B55)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    const Color(0xFF0B1220).withOpacity(0.70),
+                    const Color(0xFF0B1220).withOpacity(0.25),
+                  ],
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                ),
+              ),
+            ),
+          ),
+          _WrapWidth(
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 720),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Auto Scope',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 54,
+                        height: 1.04,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Buy Smart. Sell Confident.',
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Auto Scope is a UAE-based services company specializing in vehicle inspection and valuation support.\n'
+                      'We were founded with a clear objective: to bring clarity, transparency, and professionalism to the used car buying and selling process.\n'
+                      'With years of hands-on experience in the vehicle remarketing industry, our team understands how vehicles are evaluated, priced, and traded in real market conditions — not just on paper',
+                      style: TextStyle(color: Colors.white, fontSize: 16 , height: 1.5),
+                    ),
+                    const SizedBox(height: 18),
+                    
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 // =====================================================
 // ABOUT US
 // =====================================================
@@ -1272,11 +1369,7 @@ class _AboutUsSection extends StatelessWidget {
           Positioned.fill(
             child: Opacity(
               opacity: 1, // keep subtle
-              child: Image.asset(
-                'assets/images/inspection-1.jpg', // ✅ same hero bg image
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-              ),
+
             ),
           ),
 
@@ -1303,12 +1396,12 @@ class _AboutUsSection extends StatelessWidget {
               children: [
                 // Text('About Auto Scope', style: Theme.of(context).textTheme.headlineMedium),
                 // const SizedBox(height: 10),
-                const Text(
-                  'Auto Scope is a UAE-based services company specializing in vehicle inspection and valuation support.\n'
-                  'We were founded with a clear objective: to bring clarity, transparency, and professionalism to the used car buying and selling process.\n'
-                  'With years of hands-on experience in the vehicle remarketing industry, our team understands how vehicles are evaluated, priced, and traded in real market conditions — not just on paper',
-                  style: TextStyle(color: Colors.black54, height: 1.6),
-                ),
+                // const Text(
+                //   'Auto Scope is a UAE-based services company specializing in vehicle inspection and valuation support.\n'
+                //   'We were founded with a clear objective: to bring clarity, transparency, and professionalism to the used car buying and selling process.\n'
+                //   'With years of hands-on experience in the vehicle remarketing industry, our team understands how vehicles are evaluated, priced, and traded in real market conditions — not just on paper',
+                //   style: TextStyle(color: Colors.black54, height: 1.6),
+                // ),
                 const SizedBox(height: 18),
                 if (isMobile)
                   Column(

@@ -135,12 +135,14 @@ class _AddInspectorDialogState extends State<AddInspectorDialog> {
 
                     final first = TextFormField(
                       controller: firstCtrl,
+                      autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
                       decoration: _dec('First name', hint: 'Jane', icon: Icons.person_outline),
                       validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
                     );
 
                     final last = TextFormField(
                       controller: lastCtrl,
+                      autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
                       decoration: _dec('Last name', hint: 'Smith', icon: Icons.person_outline),
                       validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
                     );
@@ -149,6 +151,7 @@ class _AddInspectorDialogState extends State<AddInspectorDialog> {
                       children: [
                         TextFormField(
                           controller: emailCtrl,
+                          autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
                           keyboardType: TextInputType.emailAddress,
                           decoration: _dec('Email', hint: 'inspector@example.com', icon: Icons.email_outlined),
                           validator: (v) {
@@ -178,6 +181,7 @@ class _AddInspectorDialogState extends State<AddInspectorDialog> {
 
                         TextFormField(
                           controller: phoneCtrl,
+                          autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
                           keyboardType: TextInputType.phone,
                           decoration: _dec('Phone', hint: '+1234567890', icon: Icons.phone_outlined),
                           validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
@@ -187,6 +191,7 @@ class _AddInspectorDialogState extends State<AddInspectorDialog> {
 
                         TextFormField(
                           controller: passwordCtrl,
+                          autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
                           obscureText: obscure,
                           decoration: _dec(
                             'Temporary password',

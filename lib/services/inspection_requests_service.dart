@@ -626,24 +626,27 @@ class InspectionRequestsService {
   Future<List<String>> listVehicleModels(String makeId) async {
     final mk = makeId.trim();
     if (mk.isEmpty) return [];
+    //get vehicle data by make id in this we will get all the model
+    final res = await apiClient.getJson('/admin/makes/${Uri.encodeComponent(mk)}');
 
-    final res = await apiClient.getJson('/admin/models/${Uri.encodeComponent(mk)}');
+    final data = (res is Map) ? res['data'] : null;
+    final models = (data is Map) ? data['models'] : null;
 
-    dynamic list = res;
-    if (res is Map && res['data'] is List) list = res['data'];
+    if (models is! List) return <String>[];
 
-    if (list is List) {
-      final out = <String>[];
-      for (final x in list) {
-        if (x is String) out.add(x.trim());
-        if (x is Map && x['name'] != null) out.add(x['name'].toString().trim());
+    final out = <String>[];
+    for (final m in models) {
+      if (m is Map && m['name'] != null) {
+        final name = m['name'].toString().trim();
+        if (name.isNotEmpty) out.add(name);
+      } else if (m is String) {
+        final name = m.trim();
+        if (name.isNotEmpty) out.add(name);
       }
-      out.removeWhere((e) => e.isEmpty);
-      out.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-      return out.toSet().toList();
     }
 
-    return [];
+    out.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return out.toSet().toList(); // unique (keeps first occurrence order)
   }
 
   /// ✅ POST add make

@@ -90,6 +90,7 @@ class _CarPointMarkerPageState extends State<CarPointMarkerPage> {
 
                   DropdownButtonFormField<String>(
                     value: tmp.damageType,
+                    autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
                     items: _damageTypes
                         .map((t) => DropdownMenuItem(value: t, child: Text(t)))
                         .toList(),

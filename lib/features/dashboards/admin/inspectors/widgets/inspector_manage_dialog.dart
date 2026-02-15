@@ -237,6 +237,7 @@ class _InspectorManageDialogState extends State<InspectorManageDialog> {
                       const SizedBox(height: 12),
                       DropdownButtonFormField<String>(
                         value: status,
+                        autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
                         decoration: _dec('Status', icon: Icons.toggle_on_outlined),
                         items: const [
                           DropdownMenuItem(value: 'active', child: Text('active')),

@@ -520,6 +520,7 @@ class _InspectionRequestManageDialogState extends State<InspectionRequestManageD
 
                           return DropdownButtonFormField<AppUser>(
                             value: _selected,
+                            autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
                             items: list
                                 .where((u) => _currentInspector == null || u.id != _currentInspector!.id)
                                 .map(
@@ -780,6 +781,7 @@ class MakeModelPickerState extends State<MakeModelPicker> {
       children: [
         DropdownButtonFormField<String>(
           value: _makeId,
+          autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
           items: makeItems,
           onChanged: widget.enabled
               ? (v) async {
@@ -806,6 +808,7 @@ class MakeModelPickerState extends State<MakeModelPicker> {
           const SizedBox(height: 10),
           TextFormField(
             controller: _otherMakeCtrl,
+            autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
             enabled: widget.enabled,
             textCapitalization: TextCapitalization.characters,
             inputFormatters: [UpperCaseTextFormatter(), LengthLimitingTextInputFormatter(60)],
@@ -823,6 +826,7 @@ class MakeModelPickerState extends State<MakeModelPicker> {
         else
           DropdownButtonFormField<String>(
             value: _modelId,
+            autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
             items: modelItems,
             onChanged: widget.enabled
                 ? (v) => setState(() {
@@ -840,6 +844,7 @@ class MakeModelPickerState extends State<MakeModelPicker> {
           const SizedBox(height: 10),
           TextFormField(
             controller: _otherModelCtrl,
+            autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
             enabled: widget.enabled,
             textCapitalization: TextCapitalization.characters,
             inputFormatters: [UpperCaseTextFormatter(), LengthLimitingTextInputFormatter(60)],

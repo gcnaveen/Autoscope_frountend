@@ -2741,6 +2741,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
   }) {
     return DropdownButtonFormField<String>(
       value: value,
+      autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
       items: options.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(),
       onChanged: onChanged,
       decoration: _dec(label: label, hint: hint, icon: icon),
@@ -2767,6 +2768,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
 
     return TextFormField(
       controller: c,
+      autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
       keyboardType: keyboardType,
       inputFormatters: fmts,
       validator: validator,
@@ -2792,6 +2794,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
             // ✅ MAKE (API) + OTHER
             DropdownButtonFormField<String>(
               value: selectedMake,
+              autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
               items: makes.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
               onChanged: loadingMakes
                   ? null
@@ -2873,6 +2876,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
             // ✅ MODEL (API) + OTHER
             DropdownButtonFormField<String>(
               value: selectedModel,
+              autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
               items: models.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
               onChanged: (selectedMake == null || loadingModels)
                   ? null
@@ -3351,6 +3355,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
                       const SizedBox(height: 12),
                       DropdownButtonFormField<String>(
                         value: _grade[key],
+                        autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
                         items: _gradeOptions
                             .map((x) => DropdownMenuItem(value: x, child: Text(x)))
                             .toList(),
