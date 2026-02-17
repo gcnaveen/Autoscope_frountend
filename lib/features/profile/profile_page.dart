@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../services/service_locator.dart';
+import '../../models/role.dart';
 import '../shared/app_shell.dart';
 import '../shared/top_snackbar.dart';
 
@@ -34,6 +35,34 @@ class _ProfilePageState extends State<ProfilePage> {
     super.dispose();
   }
 
+  void _safeBack() {
+    final r = GoRouter.of(context);
+
+    if (r.canPop()) {
+      r.pop();
+      return;
+    }
+
+    // No stack to pop (common on web refresh / direct URL) -> go to role home
+    final s = authService.session.value;
+    if (s == null) {
+      context.go('/'); // public landing
+      return;
+    }
+
+    switch (s.role) {
+      case Role.admin:
+        context.go('/dashboard/admin');
+        break;
+      case Role.user:
+        context.go('/dashboard/user');
+        break;
+      case Role.inspector:
+        context.go('/dashboard/inspector');
+        break;
+    }
+  }
+
   Future<void> _save() async {
     setState(() => saving = true);
 
@@ -42,15 +71,9 @@ class _ProfilePageState extends State<ProfilePage> {
 
       if (!mounted) return;
       showTopSnack(context, 'Profile updated.', variant: 'success');
-      // ScaffoldMessenger.of(context).showSnackBar(
-      //   const SnackBar(content: Text('Profile updated (demo).')),
-      // );
     } catch (e) {
       if (!mounted) return;
       showTopSnack(context, 'Update Failed', variant: 'error');
-      // ScaffoldMessenger.of(context).showSnackBar(
-      //   SnackBar(content: Text('Update failed: $e')),
-      // );
     } finally {
       if (mounted) setState(() => saving = false);
     }
@@ -80,7 +103,7 @@ class _ProfilePageState extends State<ProfilePage> {
                           child: Text('Account', style: Theme.of(context).textTheme.titleLarge),
                         ),
                         TextButton.icon(
-                          onPressed: () => context.pop(),
+                          onPressed: _safeBack,
                           icon: const Icon(Icons.arrow_back),
                           label: const Text('Back'),
                         ),

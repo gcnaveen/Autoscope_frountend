@@ -271,10 +271,10 @@ class DashboardLatestRequest {
   });
 
   factory DashboardLatestRequest.fromJson(Map<String, dynamic> json) => DashboardLatestRequest(
-        id: (json['_id'] ?? json['id'] ?? '').toString(),
-        type: (json['type'] ?? json['requestType'] ?? '').toString(),
-        status: (json['status'] ?? '').toString(),
-        location: (json['location'] ?? json['address'] ?? '').toString(),
+        id: (json['request_id']  ?? '').toString(),
+        type: (json['request_type'] ?? '').toString(),
+        status: (json['request_status'] ?? '').toString(),
+        location: (json['request_location'] ?? '').toString(),
       );
 }
 
