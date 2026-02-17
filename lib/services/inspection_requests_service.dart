@@ -3,6 +3,44 @@
 
 // import 'api_client.dart';
 
+// /// ===============================
+// /// PDF Download Model + Helpers
+// /// ===============================
+// class PdfDownload {
+//   final Uint8List bytes;
+//   final String fileName;
+//   final String contentType;
+
+//   const PdfDownload({
+//     required this.bytes,
+//     required this.fileName,
+//     required this.contentType,
+//   });
+// }
+
+// String? _fileNameFromDisposition(String? cd) {
+//   if (cd == null) return null;
+
+//   // filename*=UTF-8''encoded-name.pdf
+//   final star =
+//       RegExp(r"filename\*\s*=\s*UTF-8''([^;]+)", caseSensitive: false).firstMatch(cd);
+//   if (star != null) {
+//     return Uri.decodeFull(star.group(1)!).replaceAll('"', '').trim();
+//   }
+
+//   // filename="name.pdf"
+//   final normal =
+//       RegExp(r'filename\s*=\s*"([^"]+)"', caseSensitive: false).firstMatch(cd);
+//   if (normal != null) return normal.group(1)!.trim();
+
+//   // filename=name.pdf
+//   final bare =
+//       RegExp(r'filename\s*=\s*([^;]+)', caseSensitive: false).firstMatch(cd);
+//   if (bare != null) return bare.group(1)!.replaceAll('"', '').trim();
+
+//   return null;
+// }
+
 // class InspectionRequestsService {
 //   final ApiClient apiClient;
 //   InspectionRequestsService({required this.apiClient});
@@ -101,6 +139,216 @@
 //   }
 
 //   /* =========================================================
+//      ✅ VEHICLE MAKE / MODEL (NEW)
+//      - API-first
+//      - Tries multiple endpoints (so it works with your backend even if route differs)
+//      - Normalizes responses into List<String>
+//   ========================================================= */
+
+//   Future<dynamic> _tryGet(String path) async {
+//     try {
+//       return await apiClient.getJson(path);
+//     } catch (_) {
+//       return null;
+//     }
+//   }
+
+//   Future<dynamic> _tryPost(String path, Map<String, dynamic> body) async {
+//     try {
+//       return await apiClient.postJson(path, body);
+//     } catch (_) {
+//       return null;
+//     }
+//   }
+
+//   List<String> _normalizeStringList(dynamic res) {
+//     dynamic v = res;
+
+//     // unwrap common formats
+//     if (v is Map && v['data'] != null) v = v['data'];
+//     if (v is Map && v['result'] != null) v = v['result'];
+
+//     // { data: { makes: [...] } } or { data: { models: [...] } } etc.
+//     if (v is Map) {
+//       for (final k in const ['makes', 'models', 'items', 'list', 'rows', 'values']) {
+//         if (v[k] is List) {
+//           v = v[k];
+//           break;
+//         }
+//       }
+//     }
+
+//     final out = <String>[];
+
+//     if (v is List) {
+//       for (final x in v) {
+//         if (x is String) out.add(x.trim());
+//         if (x is Map && x['name'] != null) out.add(x['name'].toString().trim());
+//         if (x is Map && x['label'] != null) out.add(x['label'].toString().trim());
+//         if (x is Map && x['value'] != null) out.add(x['value'].toString().trim());
+//       }
+//     }
+
+//     out.removeWhere((e) => e.isEmpty);
+
+//     // unique + sort
+//     final set = <String>{};
+//     final uniq = <String>[];
+//     for (final s in out) {
+//       final t = s.trim();
+//       if (t.isEmpty) continue;
+//       if (set.add(t)) uniq.add(t);
+//     }
+
+//     uniq.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+//     return uniq;
+//   }
+
+//   /// ✅ Get vehicle makes list from backend
+//   Future<List<Map<String, dynamic>>> listVehicleMakesDetailed() async {
+//     final res = await apiClient.getJson('/admin/makes');
+
+//     dynamic list = res;
+//     if (res is Map && res['data'] is List) list = res['data'];
+
+//     if (list is! List) return [];
+
+//     final out = <Map<String, dynamic>>[];
+
+//     for (final x in list) {
+//       if (x is String) {
+//         // If backend returns only strings, id will be missing.
+//         out.add({'_id': '', 'name': x});
+//       } else if (x is Map) {
+//         final m = Map<String, dynamic>.from(x);
+//         final id = (m['_id'] ?? m['id'] ?? '').toString();
+//         final name = (m['name'] ?? m['make'] ?? '').toString();
+//         out.add({'_id': id, 'name': name});
+//       }
+//     }
+
+//     // clean + unique + sort
+//     out.removeWhere((e) => (e['name'] ?? '').toString().trim().isEmpty);
+//     final seen = <String>{};
+//     final uniq = <Map<String, dynamic>>[];
+//     for (final e in out) {
+//       final name = (e['name'] ?? '').toString().trim();
+//       if (seen.add(name.toUpperCase())) uniq.add(e);
+//     }
+//     uniq.sort((a, b) => a['name']
+//         .toString()
+//         .toLowerCase()
+//         .compareTo(b['name'].toString().toLowerCase()));
+//     return uniq;
+//   }
+
+//   /// ✅ GET makes (names only) - keeps your old signature working
+//   Future<List<String>> listVehicleMakes() async {
+//     final detailed = await listVehicleMakesDetailed();
+//     return detailed
+//         .map((e) => (e['name'] ?? '').toString())
+//         .where((s) => s.trim().isNotEmpty)
+//         .toList();
+//   }
+
+//   /// ✅ GET models for a makeId (your endpoint uses /admin/models/:make)
+//   Future<List<String>> listVehicleModels(String makeId) async {
+//     final mk = makeId.trim();
+//     if (mk.isEmpty) return [];
+
+//     // get vehicle data by make id in this we will get all the model
+//     final res = await apiClient.getJson('/admin/makes/${Uri.encodeComponent(mk)}');
+
+//     final data = (res is Map) ? res['data'] : null;
+//     final models = (data is Map) ? data['models'] : null;
+
+//     if (models is! List) return <String>[];
+
+//     final out = <String>[];
+//     for (final m in models) {
+//       if (m is Map && m['name'] != null) {
+//         final name = m['name'].toString().trim();
+//         if (name.isNotEmpty) out.add(name);
+//       } else if (m is String) {
+//         final name = m.trim();
+//         if (name.isNotEmpty) out.add(name);
+//       }
+//     }
+
+//     out.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+//     return out.toSet().toList(); // unique
+//   }
+
+//   /// ✅ POST add make
+//   String? _extractIdFromRes(dynamic res) {
+//     if (res is! Map) return null;
+
+//     final data = res['data'];
+
+//     // { data: { id/_id/makeId/modelId } }
+//     if (data is Map) {
+//       final id = (data['id'] ?? data['_id'] ?? data['makeId'] ?? data['modelId'])
+//           ?.toString()
+//           .trim();
+//       if (id != null && id.isNotEmpty) return id;
+
+//       // sometimes makeId is object { _id, name }
+//       final mk = data['makeId'];
+//       if (mk is Map) {
+//         final mid = (mk['_id'] ?? mk['id'])?.toString().trim();
+//         if (mid != null && mid.isNotEmpty) return mid;
+//       }
+//     }
+
+//     // fallback: { id/_id } at root
+//     final rootId = (res['id'] ?? res['_id'])?.toString().trim();
+//     return (rootId == null || rootId.isEmpty) ? null : rootId;
+//   }
+
+//   /// returns created makeId (or null if backend doesn't return it)
+//   Future<String?> addVehicleMake(String name) async {
+//     final n = name.trim();
+//     if (n.isEmpty) return null;
+
+//     try {
+//       final res = await apiClient.postJson('/admin/makes', {'name': n});
+//       return _extractIdFromRes(res);
+//     } catch (e) {
+//       final s = e.toString().toLowerCase();
+//       if (s.contains('already') ||
+//           s.contains('exists') ||
+//           s.contains('duplicate') ||
+//           s.contains('409')) {
+//         return null; // ignore duplicate
+//       }
+//       rethrow;
+//     }
+//   }
+
+//   /// ✅ POST add model (needs makeId!)
+//   Future<void> addVehicleModel({required String makeId, required String name}) async {
+//     final mk = makeId.trim();
+//     final n = name.trim();
+//     if (mk.isEmpty || n.isEmpty) return;
+
+//     try {
+//       await apiClient.postJson('/admin/models', {
+//         'name': n,
+//         'makeId': mk,
+//       });
+//     } catch (e) {
+//       final s = e.toString().toLowerCase();
+//       if (s.contains('already') ||
+//           s.contains('exists') ||
+//           s.contains('duplicate') ||
+//           s.contains('409')) {
+//         return; // ignore duplicate
+//       }
+//       rethrow;
+//     }
+//   }
+
+//   /* =========================================================
 //      INSPECTOR – START INSPECTION
 //   ========================================================= */
 
@@ -117,7 +365,9 @@
 
 //     final data = res['data'];
 //     if (data is Map) {
-//       final id = (data['inspectionId'] ?? data['_id'] ?? data['id'] ?? '').toString().trim();
+//       final id = (data['inspectionId'] ?? data['_id'] ?? data['id'] ?? '')
+//           .toString()
+//           .trim();
 //       return id.isEmpty ? null : id;
 //     }
 
@@ -137,8 +387,7 @@
 //     required String mediaType,
 //     int expiresIn = 14400,
 //   }) async {
-//     final safeFileName =
-//         '${DateTime.now().millisecondsSinceEpoch}_${fileName.replaceAll(' ', '_')}';
+//     final safeFileName = '${DateTime.now().millisecondsSinceEpoch}_${fileName.replaceAll(' ', '_')}';
 
 //     final res = await apiClient.postJson(
 //       '/upload/presigned-url',
@@ -246,8 +495,6 @@
 //     return fileUrl;
 //   }
 
-
-
 //   Future<String> uploadInspectionPhoto({
 //     required String inspectionRequestId,
 //     required String typeName,
@@ -275,7 +522,6 @@
 //       mediaType: 'photos',
 //     );
 //   }
-
 
 //   Future<String> uploadInspectionVideo({
 //     required String inspectionRequestId,
@@ -309,7 +555,6 @@
 //     required String fileName,
 //     required String contentType,
 //   }) async {
-//     // NOTE: fileName should already be "safe"
 //     final res = await apiClient.postJson('/upload/simple-image', {
 //       'fileName': fileName,
 //       'contentType': contentType,
@@ -348,20 +593,6 @@
 //     return presigned['fileUrl']!;
 //   }
 
-
-//   // Future<String> uploadDamageMarkerPhoto({
-//   //   required Uint8List bytes,
-//   //   required String fileName,
-//   //   required String contentType,
-//   // }) async {
-//   //   final presign = await getPresignedUrlSimple(fileName: fileName, contentType: contentType);
-//   //   final uploadUrl = presign['uploadUrl']!;
-//   //   final fileUrl = presign['fileUrl']!;
-
-//   //   await uploadToS3(uploadUrl: uploadUrl, bytes: bytes, contentType: contentType);
-//   //   return fileUrl;
-//   // }
-
 //   /* =========================================================
 //      INSPECTOR – SUBMIT INSPECTION
 //   ========================================================= */
@@ -388,6 +619,35 @@
 //     throw Exception('Unexpected response type: ${res.runtimeType}');
 //   }
 
+//   /* =========================================================
+//     ✅ DOWNLOAD INSPECTION REPORT PDF
+//     GET /checklists/inspections/{id}/report/pdf
+//   ========================================================= */
+
+//   Future<PdfDownload> getInspectionReportPdf(String inspectionId) async {
+//     final http.Response res = await apiClient.getBytes(
+//       '/checklists/inspections/$inspectionId/report/pdf',
+//       extraHeaders: {
+//         'Accept': 'application/pdf',
+//       },
+//     );
+
+//     final contentType = res.headers['content-type'] ?? 'application/pdf';
+//     final fileName =
+//         _fileNameFromDisposition(res.headers['content-disposition']) ??
+//             'inspection_$inspectionId.pdf';
+
+//     return PdfDownload(
+//       bytes: res.bodyBytes,
+//       fileName: fileName,
+//       contentType: contentType,
+//     );
+//   }
+
+//   /* =========================================================
+//     MOCK (KEEP)
+//   ========================================================= */
+
 //   Future<Map<String, dynamic>> fetchInspectionReportMock(String requestId) async {
 //     return {
 //       "reference": "REF-$requestId",
@@ -412,11 +672,48 @@
 //   }
 // }
 
-
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
 import 'api_client.dart';
+
+/// ===============================
+/// PDF Download Model + Helpers
+/// ===============================
+class PdfDownload {
+  final Uint8List bytes;
+  final String fileName;
+  final String contentType;
+
+  const PdfDownload({
+    required this.bytes,
+    required this.fileName,
+    required this.contentType,
+  });
+}
+
+String? _fileNameFromDisposition(String? cd) {
+  if (cd == null) return null;
+
+  // filename*=UTF-8''encoded-name.pdf
+  final star =
+      RegExp(r"filename\*\s*=\s*UTF-8''([^;]+)", caseSensitive: false).firstMatch(cd);
+  if (star != null) {
+    return Uri.decodeFull(star.group(1)!).replaceAll('"', '').trim();
+  }
+
+  // filename="name.pdf"
+  final normal =
+      RegExp(r'filename\s*=\s*"([^"]+)"', caseSensitive: false).firstMatch(cd);
+  if (normal != null) return normal.group(1)!.trim();
+
+  // filename=name.pdf
+  final bare =
+      RegExp(r'filename\s*=\s*([^;]+)', caseSensitive: false).firstMatch(cd);
+  if (bare != null) return bare.group(1)!.replaceAll('"', '').trim();
+
+  return null;
+}
 
 class InspectionRequestsService {
   final ApiClient apiClient;
@@ -612,21 +909,28 @@ class InspectionRequestsService {
       final name = (e['name'] ?? '').toString().trim();
       if (seen.add(name.toUpperCase())) uniq.add(e);
     }
-    uniq.sort((a, b) => a['name'].toString().toLowerCase().compareTo(b['name'].toString().toLowerCase()));
+    uniq.sort((a, b) => a['name']
+        .toString()
+        .toLowerCase()
+        .compareTo(b['name'].toString().toLowerCase()));
     return uniq;
   }
 
   /// ✅ GET makes (names only) - keeps your old signature working
   Future<List<String>> listVehicleMakes() async {
     final detailed = await listVehicleMakesDetailed();
-    return detailed.map((e) => (e['name'] ?? '').toString()).where((s) => s.trim().isNotEmpty).toList();
+    return detailed
+        .map((e) => (e['name'] ?? '').toString())
+        .where((s) => s.trim().isNotEmpty)
+        .toList();
   }
 
   /// ✅ GET models for a makeId (your endpoint uses /admin/models/:make)
   Future<List<String>> listVehicleModels(String makeId) async {
     final mk = makeId.trim();
     if (mk.isEmpty) return [];
-    //get vehicle data by make id in this we will get all the model
+
+    // get vehicle data by make id in this we will get all the model
     final res = await apiClient.getJson('/admin/makes/${Uri.encodeComponent(mk)}');
 
     final data = (res is Map) ? res['data'] : null;
@@ -646,29 +950,35 @@ class InspectionRequestsService {
     }
 
     out.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-    return out.toSet().toList(); // unique (keeps first occurrence order)
+    return out.toSet().toList(); // unique
   }
 
   /// ✅ POST add make
   String? _extractIdFromRes(dynamic res) {
     if (res is! Map) return null;
 
-    dynamic data = res['data'];
+    final data = res['data'];
+
+    // { data: { id/_id/makeId/modelId } }
     if (data is Map) {
-      final id = (data['id'] ?? data['_id'] ?? data['makeId'] ?? data['modelId'])?.toString().trim();
+      final id = (data['id'] ?? data['_id'] ?? data['makeId'] ?? data['modelId'])
+          ?.toString()
+          .trim();
       if (id != null && id.isNotEmpty) return id;
 
-    // sometimes makeId is object { _id, name }
-    final mk = data['makeId'];
-    if (mk is Map) {
-      final mid = (mk['_id'] ?? mk['id'])?.toString().trim();
-      if (mid != null && mid.isNotEmpty) return mid;
+      // sometimes makeId is object { _id, name }
+      final mk = data['makeId'];
+      if (mk is Map) {
+        final mid = (mk['_id'] ?? mk['id'])?.toString().trim();
+        if (mid != null && mid.isNotEmpty) return mid;
+      }
     }
+
+    // fallback: { id/_id } at root
+    final rootId = (res['id'] ?? res['_id'])?.toString().trim();
+    return (rootId == null || rootId.isEmpty) ? null : rootId;
   }
 
-  final id = (res['id'] ?? res['_id'])?.toString().trim();
-  return (id == null || id.isEmpty) ? null : id;
-}
   /// returns created makeId (or null if backend doesn't return it)
   Future<String?> addVehicleMake(String name) async {
     final n = name.trim();
@@ -679,7 +989,10 @@ class InspectionRequestsService {
       return _extractIdFromRes(res);
     } catch (e) {
       final s = e.toString().toLowerCase();
-      if (s.contains('already') || s.contains('exists') || s.contains('duplicate') || s.contains('409')) {
+      if (s.contains('already') ||
+          s.contains('exists') ||
+          s.contains('duplicate') ||
+          s.contains('409')) {
         return null; // ignore duplicate
       }
       rethrow;
@@ -699,7 +1012,10 @@ class InspectionRequestsService {
       });
     } catch (e) {
       final s = e.toString().toLowerCase();
-      if (s.contains('already') || s.contains('exists') || s.contains('duplicate') || s.contains('409')) {
+      if (s.contains('already') ||
+          s.contains('exists') ||
+          s.contains('duplicate') ||
+          s.contains('409')) {
         return; // ignore duplicate
       }
       rethrow;
@@ -723,7 +1039,9 @@ class InspectionRequestsService {
 
     final data = res['data'];
     if (data is Map) {
-      final id = (data['inspectionId'] ?? data['_id'] ?? data['id'] ?? '').toString().trim();
+      final id = (data['inspectionId'] ?? data['_id'] ?? data['id'] ?? '')
+          .toString()
+          .trim();
       return id.isEmpty ? null : id;
     }
 
@@ -743,8 +1061,7 @@ class InspectionRequestsService {
     required String mediaType,
     int expiresIn = 14400,
   }) async {
-    final safeFileName =
-        '${DateTime.now().millisecondsSinceEpoch}_${fileName.replaceAll(' ', '_')}';
+    final safeFileName = '${DateTime.now().millisecondsSinceEpoch}_${fileName.replaceAll(' ', '_')}';
 
     final res = await apiClient.postJson(
       '/upload/presigned-url',
@@ -912,7 +1229,6 @@ class InspectionRequestsService {
     required String fileName,
     required String contentType,
   }) async {
-    // NOTE: fileName should already be "safe"
     final res = await apiClient.postJson('/upload/simple-image', {
       'fileName': fileName,
       'contentType': contentType,
@@ -977,6 +1293,35 @@ class InspectionRequestsService {
     throw Exception('Unexpected response type: ${res.runtimeType}');
   }
 
+  /* =========================================================
+    ✅ DOWNLOAD INSPECTION REPORT PDF
+    GET /checklists/inspections/{id}/report/pdf
+  ========================================================= */
+
+  Future<PdfDownload> getInspectionReportPdf(String inspectionId) async {
+    final http.Response res = await apiClient.getBytes(
+      '/checklists/inspections/$inspectionId/report/pdf',
+      extraHeaders: {
+        'Accept': 'application/pdf',
+      },
+    );
+
+    final contentType = res.headers['content-type'] ?? 'application/pdf';
+    final fileName =
+        _fileNameFromDisposition(res.headers['content-disposition']) ??
+            'inspection_$inspectionId.pdf';
+
+    return PdfDownload(
+      bytes: res.bodyBytes,
+      fileName: fileName,
+      contentType: contentType,
+    );
+  }
+
+  /* =========================================================
+    MOCK (KEEP)
+  ========================================================= */
+
   Future<Map<String, dynamic>> fetchInspectionReportMock(String requestId) async {
     return {
       "reference": "REF-$requestId",
@@ -1000,3 +1345,4 @@ class InspectionRequestsService {
     };
   }
 }
+

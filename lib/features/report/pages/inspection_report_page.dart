@@ -1,8 +1,21 @@
+// // lib/features/dashboards/user/inspection_report_page.dart
+// import 'package:flutter/foundation.dart' show kIsWeb;
+// // ignore: avoid_web_libraries_in_flutter
+// import 'dart:html' as html;
 // import 'dart:math' as math;
 // import 'package:flutter/material.dart';
+// import 'dart:typed_data';
+
 
 // import '../../shared/app_shell.dart';
 // import '../../../services/service_locator.dart';
+
+// /// ✅ IMPORTANT:
+// /// Set this to the SAME asset you used in StartInspectionPage for the top car image.
+// /// Example:
+// ///   assets/images/top.jpg
+// ///   assets/images/car_top_outline.png
+// const String kCarTopDamageAsset = 'assets/images/car_views/top.jpg';
 
 // class InspectionReportPage extends StatefulWidget {
 //   final String inspectionId;
@@ -172,6 +185,76 @@
 //     if (openViewer) _openViewer(_heroIndex);
 //   }
 
+//   void _openUrlInViewer(String url) {
+//     final u = url.trim();
+//     if (u.isEmpty) return;
+
+//     final idx = _photos.indexWhere((p) => p.url == u);
+//     if (idx >= 0) {
+//       _openViewer(idx);
+//       return;
+//     }
+
+//     // fallback: show a clean dialog even if it's not in the photo list
+//     showDialog(
+//       context: context,
+//       builder: (_) => AlertDialog(
+//         title: const Text('Image'),
+//         content: _NetImageBox(
+//           url: u,
+//           width: 700,
+//           height: 420,
+//           borderRadius: BorderRadius.circular(14),
+//           fit: BoxFit.contain,
+//         ),
+//         actions: [
+//           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
+//         ],
+//       ),
+//     );
+//   }
+
+//   void _openDamageDialog(_DamagePoint d, int idx) {
+//     showDialog(
+//       context: context,
+//       builder: (_) => AlertDialog(
+//         title: Text('Damage #$idx'),
+//         content: SizedBox(
+//           width: 720,
+//           child: Column(
+//             mainAxisSize: MainAxisSize.min,
+//             crossAxisAlignment: CrossAxisAlignment.start,
+//             children: [
+//               Text('Damage ID: ${d.id}'),
+//               const SizedBox(height: 8),
+//               Text('Description: ${d.description.trim().isEmpty ? '-' : d.description.trim()}'),
+//               const SizedBox(height: 12),
+//               if (d.images.isEmpty)
+//                 const Text('No photos uploaded.')
+//               else
+//                 Wrap(
+//                   spacing: 10,
+//                   runSpacing: 10,
+//                   children: [
+//                     for (final url in d.images)
+//                       _NetImageBox(
+//                         url: url,
+//                         width: 170,
+//                         height: 110,
+//                         onTap: () => _openUrlInViewer(url),
+//                       ),
+//                   ],
+//                 ),
+//             ],
+//           ),
+//         ),
+//         actions: [
+//           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
+//         ],
+//       ),
+//     );
+//   }
+
 //   @override
 //   Widget build(BuildContext context) {
 //     final inspection = widget.inspection;
@@ -186,6 +269,9 @@
 //     final exteriorDetails = _asMap(inspection['exteriorDetails']);
 
 //     final types = (inspection['types'] as List?) ?? const [];
+
+//     // ✅ damages from report response
+//     final damages = _parseDamages(inspection);
 
 //     final id = (inspection['_id'] ?? inspection['id'] ?? '').toString();
 //     final status = (inspection['status'] ?? '').toString();
@@ -206,7 +292,7 @@
 //           children: [
 //             _HeaderRow(
 //               title: 'Inspection Report',
-//               status: status,
+//               onDownload: _downloadReport,
 //             ),
 //             const SizedBox(height: 12),
 
@@ -280,9 +366,6 @@
 //             const SizedBox(height: 12),
 
 //             // Vehicle Info (sub-sections)
-//             // ✅ rearranged per your sketch:
-//             // 1) Exterior + Interior side-by-side
-//             // 2) Service/Warranty full width below
 //             _Card(
 //               title: 'Vehicle Info',
 //               child: Column(
@@ -290,14 +373,17 @@
 //                   LayoutBuilder(
 //                     builder: (context, c) {
 //                       final wide = c.maxWidth >= 900;
-//                       final vehicleDetailsCard = 
+//                       final vehicleDetailsCard =
 //                           _SubSectionMapCard(title: 'Vehicle Details', data: vehicleDetails);
 //                       final exteriorCard =
 //                           _SubSectionMapCard(title: 'Exterior Details', data: exteriorDetails);
 //                       final interiorCard =
 //                           _SubSectionMapCard(title: 'Interior Details', data: interiorDetails);
-//                       final serviceCard = 
-//                           _SubSectionMapCard(title: 'Service / Warranty Overview', data: serviceWarrantyOverview);
+//                       final serviceCard = _SubSectionMapCard(
+//                         title: 'Service / Warranty Overview',
+//                         data: serviceWarrantyOverview,
+//                       );
+
 //                       if (!wide) {
 //                         return Column(
 //                           children: [
@@ -312,34 +398,16 @@
 //                         );
 //                       }
 
-//                       // return Row(
-//                       //   crossAxisAlignment: CrossAxisAlignment.start,
-//                       //   children: [
-//                       //     Expanded(child: vehicleDetailsCard),
-//                       //     const SizedBox(width: 12),
-//                       //     Expanded(child: exteriorCard),
-//                       //     const SizedBox(width: 12),
-//                       //     Expanded(child: interiorCard),
-//                       //     const SizedBox(width: 12),
-//                       //     Expanded(child: serviceCard),
-//                       //   ],
-//                       // );
-
 //                       return Row(
 //                         crossAxisAlignment: CrossAxisAlignment.start,
 //                         children: [
-//                           // 1st column (left)
 //                           Expanded(flex: 6, child: vehicleDetailsCard),
-
 //                           const SizedBox(width: 12),
-
-//                           // 2nd column (right) -> 2 rows
 //                           Expanded(
 //                             flex: 6,
 //                             child: Column(
 //                               crossAxisAlignment: CrossAxisAlignment.start,
 //                               children: [
-//                                 // Row 1 -> 2 columns (Exterior + Interior)
 //                                 Row(
 //                                   crossAxisAlignment: CrossAxisAlignment.start,
 //                                   children: [
@@ -348,10 +416,7 @@
 //                                     Expanded(child: interiorCard),
 //                                   ],
 //                                 ),
-
 //                                 const SizedBox(height: 12),
-
-//                                 // Row 2 -> 1 column (Service)
 //                                 serviceCard,
 //                               ],
 //                             ),
@@ -360,19 +425,22 @@
 //                       );
 //                     },
 //                   ),
-
-//                   // const SizedBox(height: 10),
-//                   // _SubSectionMapCard(
-//                   //   title: 'Service / Warranty Overview',
-//                   //   data: serviceWarrantyOverview,
-//                   // ),
 //                 ],
 //               ),
 //             ),
 
+//             // ✅ Damages block (map + list)
+//             const SizedBox(height: 12),
+//             _DamagesBlock(
+//               damages: damages,
+//               carTopAssetPath: kCarTopDamageAsset,
+//               onTapDamage: (d, idx) => _openDamageDialog(d, idx),
+//               onOpenImage: (url) => _openUrlInViewer(url),
+//             ),
+
 //             const SizedBox(height: 12),
 
-//             // ✅ Overall Rating + Section Overview side-by-side (like your last screenshot)
+//             // ✅ Overall Rating + Section Overview side-by-side
 //             LayoutBuilder(
 //               builder: (context, c) {
 //                 final wide = c.maxWidth >= 950;
@@ -383,7 +451,6 @@
 //                     builder: (context, c2) {
 //                       final label = _ratingLabel(overallRating ?? 0);
 
-//                       // smaller gauge (compact)
 //                       final gauge = SizedBox(
 //                         width: 300,
 //                         height: 150,
@@ -437,7 +504,6 @@
 //                 }
 
 //                 return Row(
-//                   // crossAxisAlignment: CrossAxisAlignment.start,
 //                   crossAxisAlignment: CrossAxisAlignment.center,
 //                   children: [
 //                     Expanded(flex: 6, child: sectionOverviewCard),
@@ -448,7 +514,6 @@
 //               },
 //             ),
 
-//             // optional overall notes only if present
 //             if (notes.isNotEmpty) ...[
 //               const SizedBox(height: 12),
 //               _Card(
@@ -459,7 +524,7 @@
 
 //             const SizedBox(height: 12),
 
-//             // Photos: hero + section thumbs (bigger / full width)
+//             // Photos
 //             _PhotosBlock(
 //               photos: _photos,
 //               sectionToPhotoIdx: _sectionToPhotoIdx,
@@ -471,7 +536,7 @@
 
 //             const SizedBox(height: 18),
 
-//             // Checklist (names + status + rating only)
+//             // Checklist
 //             _Card(
 //               title: 'Checklist',
 //               child: Column(
@@ -488,7 +553,6 @@
 //           ],
 //         ),
 
-//         // Floating Photos button while scrolling
 //         if (_showFloatingPhotos)
 //           Positioned(
 //             right: 18,
@@ -499,7 +563,6 @@
 //             ),
 //           ),
 
-//         // Popover viewer overlay
 //         if (_viewerOpen && _photos.isNotEmpty)
 //           Positioned.fill(
 //             child: _ImageViewerOverlay(
@@ -548,7 +611,335 @@
 //       }
 //     }
 
+//     // ✅ Add damage images into Photos viewer under section: "Damages"
+//     final damages = _parseDamages(inspection);
+//     for (final d in damages) {
+//       for (final u in d.images) {
+//         add(u, 'Damages');
+//       }
+//     }
+
 //     return (refs, sectionMap);
+//   }
+
+//   void _downloadReport() {
+//     // Close image viewer overlay before printing (optional)
+//     if (_viewerOpen) _closeViewer();
+
+//     if (kIsWeb) {
+//       html.window.print(); // user can "Save as PDF"
+//     } else {
+//       ScaffoldMessenger.of(context).showSnackBar(
+//         const SnackBar(content: Text('Download is available on Web (Print -> Save as PDF).')),
+//       );
+//     }
+//   }
+// }
+
+// /* =========================
+//    Damages (Map + List)
+// ========================= */
+
+// class _DamagesBlock extends StatelessWidget {
+//   final List<_DamagePoint> damages;
+//   final String carTopAssetPath;
+//   final void Function(_DamagePoint d, int index) onTapDamage;
+//   final void Function(String url) onOpenImage;
+
+//   const _DamagesBlock({
+//     required this.damages,
+//     required this.carTopAssetPath,
+//     required this.onTapDamage,
+//     required this.onOpenImage,
+//   });
+
+//   @override
+//   Widget build(BuildContext context) {
+//     if (damages.isEmpty) {
+//       return const _Card(title: 'Damages', child: Text('No damages marked.'));
+//     }
+
+//     return Card(
+//       elevation: 0,
+//       color: Colors.black.withOpacity(0.02),
+//       child: Padding(
+//         padding: const EdgeInsets.all(14),
+//         child: Column(
+//           crossAxisAlignment: CrossAxisAlignment.start,
+//           children: [
+//             Text(
+//               'Damages (${damages.length})',
+//               style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+//             ),
+//             const SizedBox(height: 10),
+//             LayoutBuilder(
+//               builder: (context, c) {
+//                 final wide = c.maxWidth >= 950;
+
+//                 final map = _CarDamageMap(
+//                   assetPath: carTopAssetPath,
+//                   damages: damages,
+//                   onTapMarker: onTapDamage,
+//                 );
+
+//                 final list = _DamageList(
+//                   damages: damages,
+//                   onTapDamage: onTapDamage,
+//                   onOpenImage: onOpenImage,
+//                 );
+
+//                 if (!wide) {
+//                   return Column(
+//                     children: [
+//                       map,
+//                       const SizedBox(height: 12),
+//                       list,
+//                     ],
+//                   );
+//                 }
+
+//                 return Row(
+//                   crossAxisAlignment: CrossAxisAlignment.start,
+//                   children: [
+//                     Expanded(flex: 7, child: map),
+//                     const SizedBox(width: 12),
+//                     Expanded(flex: 5, child: list),
+//                   ],
+//                 );
+//               },
+//             ),
+//           ],
+//         ),
+//       ),
+//     );
+//   }
+// }
+
+// class _CarDamageMap extends StatelessWidget {
+//   final String assetPath;
+//   final List<_DamagePoint> damages;
+//   final void Function(_DamagePoint d, int index) onTapMarker;
+
+//   const _CarDamageMap({
+//     required this.assetPath,
+//     required this.damages,
+//     required this.onTapMarker,
+//   });
+
+//   @override
+//   Widget build(BuildContext context) {
+//     // ✅ No InteractiveViewer here -> prevents scroll-wheel zooming
+//     return ClipRRect(
+//       borderRadius: BorderRadius.circular(14),
+//       child: Container(
+//         color: Colors.white.withOpacity(0.6),
+//         padding: const EdgeInsets.all(12),
+//         child: AspectRatio(
+//           // IMPORTANT: keep SAME ratio as StartInspectionPage for exact marker alignment
+//           aspectRatio: 16 / 9,
+//           child: LayoutBuilder(
+//             builder: (context, c) {
+//               final w = c.maxWidth;
+//               final h = c.maxHeight;
+
+//               return Stack(
+//                 children: [
+//                   Positioned.fill(
+//                     child: Image.asset(
+//                       assetPath,
+//                       fit: BoxFit.contain,
+//                       errorBuilder: (_, __, ___) => Container(
+//                         color: Colors.black.withOpacity(0.06),
+//                         child: const Center(child: Text('Car image not found (asset path)')),
+//                       ),
+//                     ),
+//                   ),
+//                   for (int i = 0; i < damages.length; i++)
+//                     _DamageMarker(
+//                       index: i + 1,
+//                       left: (damages[i].x * w).clamp(0, w),
+//                       top: (damages[i].y * h).clamp(0, h),
+//                       onTap: () => onTapMarker(damages[i], i + 1),
+//                     ),
+//                 ],
+//               );
+//             },
+//           ),
+//         ),
+//       ),
+//     );
+//   }
+// }
+
+// class _DamageMarker extends StatelessWidget {
+//   final int index;
+//   final double left;
+//   final double top;
+//   final VoidCallback onTap;
+
+//   const _DamageMarker({
+//     required this.index,
+//     required this.left,
+//     required this.top,
+//     required this.onTap,
+//   });
+
+//   @override
+//   Widget build(BuildContext context) {
+//     const size = 26.0;
+//     return Positioned(
+//       left: left - size / 2,
+//       top: top - size / 2,
+//       child: MouseRegion(
+//         cursor: SystemMouseCursors.click,
+//         child: InkWell(
+//           onTap: onTap,
+//           borderRadius: BorderRadius.circular(999),
+//           child: Container(
+//             width: size,
+//             height: size,
+//             decoration: BoxDecoration(
+//               color: Colors.redAccent,
+//               borderRadius: BorderRadius.circular(999),
+//               border: Border.all(color: Colors.white, width: 2),
+//               boxShadow: [
+//                 BoxShadow(
+//                   color: Colors.black.withOpacity(0.20),
+//                   blurRadius: 8,
+//                   offset: const Offset(0, 3),
+//                 ),
+//               ],
+//             ),
+//             child: Center(
+//               child: Text(
+//                 '$index',
+//                 style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900),
+//               ),
+//             ),
+//           ),
+//         ),
+//       ),
+//     );
+//   }
+// }
+
+// class _DamageList extends StatelessWidget {
+//   final List<_DamagePoint> damages;
+//   final void Function(_DamagePoint d, int index) onTapDamage;
+//   final void Function(String url) onOpenImage;
+
+//   const _DamageList({
+//     required this.damages,
+//     required this.onTapDamage,
+//     required this.onOpenImage,
+//   });
+
+//   @override
+//   Widget build(BuildContext context) {
+//     return Container(
+//       decoration: BoxDecoration(
+//         color: Colors.white.withOpacity(0.6),
+//         borderRadius: BorderRadius.circular(14),
+//         border: Border.all(color: Colors.black.withOpacity(0.06)),
+//       ),
+//       padding: const EdgeInsets.all(12),
+//       child: Column(
+//         children: [
+//           for (int i = 0; i < damages.length; i++) ...[
+//             _DamageTile(
+//               index: i + 1,
+//               d: damages[i],
+//               onTap: () => onTapDamage(damages[i], i + 1),
+//               onOpenImage: onOpenImage,
+//             ),
+//             if (i != damages.length - 1) const Divider(height: 18),
+//           ],
+//         ],
+//       ),
+//     );
+//   }
+// }
+
+// class _DamageTile extends StatelessWidget {
+//   final int index;
+//   final _DamagePoint d;
+//   final VoidCallback onTap;
+//   final void Function(String url) onOpenImage;
+
+//   const _DamageTile({
+//     required this.index,
+//     required this.d,
+//     required this.onTap,
+//     required this.onOpenImage,
+//   });
+
+//   @override
+//   Widget build(BuildContext context) {
+//     final desc = d.description.trim().isEmpty ? '-' : d.description.trim();
+
+//     return Row(
+//       crossAxisAlignment: CrossAxisAlignment.start,
+//       children: [
+//         // left marker
+//         Container(
+//           width: 28,
+//           height: 28,
+//           decoration: BoxDecoration(
+//             color: Colors.redAccent.withOpacity(0.12),
+//             borderRadius: BorderRadius.circular(999),
+//             border: Border.all(color: Colors.redAccent.withOpacity(0.25)),
+//           ),
+//           child: Center(
+//             child: Text(
+//               '$index',
+//               style: const TextStyle(fontWeight: FontWeight.w900, color: Colors.redAccent),
+//             ),
+//           ),
+//         ),
+//         const SizedBox(width: 10),
+
+//         // content
+//         Expanded(
+//           child: Column(
+//             crossAxisAlignment: CrossAxisAlignment.start,
+//             children: [
+//               MouseRegion(
+//                 cursor: SystemMouseCursors.click,
+//                 child: InkWell(
+//                   onTap: onTap,
+//                   child: Text(
+//                     'Damage #$index',
+//                     style: const TextStyle(fontWeight: FontWeight.w900),
+//                   ),
+//                 ),
+//               ),
+//               const SizedBox(height: 6),
+//               Text('Description: $desc', style: const TextStyle(color: Colors.black87)),
+//               const SizedBox(height: 6),
+//               Text('Damage ID: ${d.id}', style: const TextStyle(color: Colors.black54)),
+//               const SizedBox(height: 10),
+
+//               if (d.images.isEmpty)
+//                 const Text('No damage photos uploaded.', style: TextStyle(color: Colors.black54))
+//               else
+//                 Wrap(
+//                   spacing: 10,
+//                   runSpacing: 10,
+//                   children: [
+//                     for (final url in d.images)
+//                       _NetImageBox(
+//                         url: url,
+//                         width: 120,
+//                         height: 78,
+//                         onTap: () => onOpenImage(url),
+//                       ),
+//                   ],
+//                 ),
+//             ],
+//           ),
+//         ),
+//       ],
+//     );
 //   }
 // }
 
@@ -631,9 +1022,8 @@
 //                   );
 //                 }
 
-//                 // ✅ hero height based on its width (16:9)
 //                 const gap = 14.0;
-//                 final heroWidth = (c.maxWidth - gap) * (7 / 12); // because flex 7 vs 5
+//                 final heroWidth = (c.maxWidth - gap) * (7 / 12);
 //                 final heroHeight = heroWidth * 9 / 16;
 
 //                 return Row(
@@ -641,16 +1031,11 @@
 //                   children: [
 //                     Expanded(flex: 7, child: hero),
 //                     const SizedBox(width: gap),
-//                     // Expanded(flex: 5, child: thumbs),
 //                     Expanded(
 //                       flex: 5,
 //                       child: SizedBox(
 //                         height: heroHeight,
-//                         child: _SectionThumbs(
-//                           photos: photos,
-//                           sectionToPhotoIdx: sectionToPhotoIdx,
-//                           onTapIndex: onThumbClick,
-//                         ),
+//                         child: thumbs,
 //                       ),
 //                     ),
 //                   ],
@@ -681,13 +1066,12 @@
 //             children: [
 //               AspectRatio(
 //                 aspectRatio: 16 / 9,
-//                 child: Image.network(
-//                   url,
+//                 child: _NetImageBox(
+//                   url: url,
+//                   width: double.infinity,
+//                   height: double.infinity,
 //                   fit: BoxFit.cover,
-//                   errorBuilder: (_, __, ___) => const ColoredBox(
-//                     color: Colors.black12,
-//                     child: Center(child: Text('Failed to load image')),
-//                   ),
+//                   borderRadius: BorderRadius.zero,
 //                 ),
 //               ),
 //               Positioned(
@@ -738,30 +1122,27 @@
 //         border: Border.all(color: Colors.black.withOpacity(0.06)),
 //       ),
 //       padding: const EdgeInsets.all(12),
-//       child: SizedBox(
-//         height: 220, // compact but scrollable
-//         child: SingleChildScrollView(
-//           child: Column(
-//             crossAxisAlignment: CrossAxisAlignment.start,
-//             children: [
-//               for (final s in sections) ...[
-//                 Text(s, style: const TextStyle(fontWeight: FontWeight.w900)),
-//                 const SizedBox(height: 8),
-//                 Wrap(
-//                   spacing: 10,
-//                   runSpacing: 10,
-//                   children: [
-//                     for (final idx in sectionToPhotoIdx[s] ?? const [])
-//                       _ThumbTile(
-//                         url: photos[idx].url,
-//                         onTap: () => onTapIndex(idx),
-//                       ),
-//                   ],
-//                 ),
-//                 const SizedBox(height: 12),
-//               ]
-//             ],
-//           ),
+//       child: SingleChildScrollView(
+//         child: Column(
+//           crossAxisAlignment: CrossAxisAlignment.start,
+//           children: [
+//             for (final s in sections) ...[
+//               Text(s, style: const TextStyle(fontWeight: FontWeight.w900)),
+//               const SizedBox(height: 8),
+//               Wrap(
+//                 spacing: 10,
+//                 runSpacing: 10,
+//                 children: [
+//                   for (final idx in sectionToPhotoIdx[s] ?? const [])
+//                     _ThumbTile(
+//                       url: photos[idx].url,
+//                       onTap: () => onTapIndex(idx),
+//                     ),
+//                 ],
+//               ),
+//               const SizedBox(height: 12),
+//             ]
+//           ],
 //         ),
 //       ),
 //     );
@@ -782,19 +1163,11 @@
 //     return SizedBox(
 //       width: 110,
 //       height: 70,
-//       child: MouseRegion(
-//         cursor: SystemMouseCursors.click,
-//         child: InkWell(
-//           onTap: onTap,
-//           child: ClipRRect(
-//             borderRadius: BorderRadius.circular(12),
-//             child: Image.network(
-//               url,
-//               fit: BoxFit.cover,
-//               errorBuilder: (_, __, ___) => const ColoredBox(color: Colors.black12),
-//             ),
-//           ),
-//         ),
+//       child: _NetImageBox(
+//         url: url,
+//         width: 110,
+//         height: 70,
+//         onTap: onTap,
 //       ),
 //     );
 //   }
@@ -829,7 +1202,6 @@
 //       child: SafeArea(
 //         child: Stack(
 //           children: [
-//             // close on background tap
 //             Positioned.fill(
 //               child: InkWell(onTap: onClose, child: const SizedBox()),
 //             ),
@@ -846,13 +1218,12 @@
 //                         children: [
 //                           Positioned.fill(
 //                             child: InteractiveViewer(
-//                               child: Image.network(
-//                                 item.url,
+//                               child: _NetImageBox(
+//                                 url: item.url,
+//                                 width: double.infinity,
+//                                 height: double.infinity,
 //                                 fit: BoxFit.contain,
-//                                 errorBuilder: (_, __, ___) => const Center(
-//                                   child: Text('Failed to load image',
-//                                       style: TextStyle(color: Colors.white)),
-//                                 ),
+//                                 borderRadius: BorderRadius.zero,
 //                               ),
 //                             ),
 //                           ),
@@ -891,7 +1262,9 @@
 //                                   child: Text(
 //                                     '${item.section}  •  ${i + 1} / ${photos.length}',
 //                                     style: const TextStyle(
-//                                         color: Colors.white, fontWeight: FontWeight.w800),
+//                                       color: Colors.white,
+//                                       fontWeight: FontWeight.w800,
+//                                     ),
 //                                     overflow: TextOverflow.ellipsis,
 //                                   ),
 //                                 ),
@@ -1005,7 +1378,7 @@
 //     final label = _cleanStr(item['label']).isEmpty ? '-' : _cleanStr(item['label']);
 //     final status = _cleanStr(item['status']).isEmpty ? '-' : _cleanStr(item['status']);
 //     final rating = item['rating'];
-//     final remarks = _cleanStr(item['remarks']); // ✅ description/remarks
+//     final remarks = _cleanStr(item['remarks']);
 
 //     return Padding(
 //       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
@@ -1014,7 +1387,6 @@
 //           Row(
 //             crossAxisAlignment: CrossAxisAlignment.center,
 //             children: [
-//               // LEFT SIDE: pos + label + chips (no big gap)
 //               Expanded(
 //                 flex: 7,
 //                 child: Wrap(
@@ -1022,23 +1394,14 @@
 //                   spacing: 10,
 //                   runSpacing: 8,
 //                   children: [
-//                     Text(
-//                       '${pos ?? ''}.',
-//                       style: const TextStyle(fontWeight: FontWeight.w900),
-//                     ),
-//                     Text(
-//                       label,
-//                       style: const TextStyle(fontWeight: FontWeight.w800),
-//                     ),
+//                     Text('${pos ?? ''}.', style: const TextStyle(fontWeight: FontWeight.w900)),
+//                     Text(label, style: const TextStyle(fontWeight: FontWeight.w800)),
 //                     _StatusChip(status: status),
 //                     _RatingChip(rating: rating),
 //                   ],
 //                 ),
 //               ),
-
 //               const SizedBox(width: 12),
-
-//               // RIGHT SIDE: remarks
 //               Expanded(
 //                 flex: 5,
 //                 child: Align(
@@ -1125,8 +1488,8 @@
 
 //     final rect = Rect.fromCircle(center: center, radius: radius);
 
-//     const start = math.pi; // left
-//     const sweep = math.pi; // to right
+//     const start = math.pi;
+//     const sweep = math.pi;
 
 //     canvas.drawArc(rect, start, sweep, false, bgPaint);
 
@@ -1142,10 +1505,10 @@
 //       canvas.drawArc(rect, a1, sw, false, p);
 //     }
 
-//     seg(0, 2, const Color(0xFFE53935)); // red
-//     seg(2, 3.5, const Color(0xFFFB8C00)); // orange
-//     seg(3.5, 4.5, const Color(0xFF1E88E5)); // blue
-//     seg(4.5, 5, const Color(0xFF43A047)); // green
+//     seg(0, 2, const Color(0xFFE53935));
+//     seg(2, 3.5, const Color(0xFFFB8C00));
+//     seg(3.5, 4.5, const Color(0xFF1E88E5));
+//     seg(4.5, 5, const Color(0xFF43A047));
 
 //     final tickPaint = Paint()
 //       ..color = Colors.black.withOpacity(0.55)
@@ -1154,10 +1517,14 @@
 //     for (int i = 0; i <= 5; i++) {
 //       final t = i / 5;
 //       final ang = start + t * sweep;
-//       final p1 =
-//           Offset(center.dx + math.cos(ang) * (radius - 6), center.dy + math.sin(ang) * (radius - 6));
+//       final p1 = Offset(
+//         center.dx + math.cos(ang) * (radius - 6),
+//         center.dy + math.sin(ang) * (radius - 6),
+//       );
 //       final p2 = Offset(
-//           center.dx + math.cos(ang) * (radius - 18), center.dy + math.sin(ang) * (radius - 18));
+//         center.dx + math.cos(ang) * (radius - 18),
+//         center.dy + math.sin(ang) * (radius - 18),
+//       );
 //       canvas.drawLine(p1, p2, tickPaint);
 
 //       final tp = TextPainter(
@@ -1202,8 +1569,12 @@
 
 // class _HeaderRow extends StatelessWidget {
 //   final String title;
-//   final String status;
-//   const _HeaderRow({required this.title, required this.status});
+//   final VoidCallback onDownload;
+
+//   const _HeaderRow({
+//     required this.title,
+//     required this.onDownload,
+//   });
 
 //   @override
 //   Widget build(BuildContext context) {
@@ -1212,17 +1583,32 @@
 //         Expanded(
 //           child: Text(
 //             title,
-//             style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
+//             style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+//                   fontWeight: FontWeight.w900,
+//                 ),
 //           ),
 //         ),
-//         _Badge(
-//           text: status.isEmpty ? '-' : status,
-//           tone: _badgeTone(status),
+//         Tooltip(
+//           message: 'Download (Save as PDF)',
+//           child: InkWell(
+//             onTap: onDownload,
+//             borderRadius: BorderRadius.circular(999),
+//             child: Container(
+//               padding: const EdgeInsets.all(10),
+//               decoration: BoxDecoration(
+//                 color: Colors.black.withOpacity(0.06),
+//                 borderRadius: BorderRadius.circular(999),
+//                 border: Border.all(color: Colors.black.withOpacity(0.10)),
+//               ),
+//               child: const Icon(Icons.download_outlined, size: 20),
+//             ),
+//           ),
 //         ),
 //       ],
 //     );
 //   }
 // }
+
 
 // class _FloatingPhotosButton extends StatelessWidget {
 //   final int count;
@@ -1245,7 +1631,10 @@
 //             children: [
 //               const Icon(Icons.photo_library_outlined, color: Colors.white, size: 18),
 //               const SizedBox(width: 8),
-//               Text('View Photos ($count)', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900)),
+//               Text(
+//                 'View Photos ($count)',
+//                 style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900),
+//               ),
 //             ],
 //           ),
 //         ),
@@ -1296,7 +1685,8 @@
 //         children: [
 //           Text(title, style: const TextStyle(fontWeight: FontWeight.w900)),
 //           const SizedBox(height: 10),
-//           for (final k in keys) _kv(_prettyKey(k), _cleanStr(data[k]).isEmpty ? '-' : _cleanStr(data[k])),
+//           for (final k in keys)
+//             _kv(_prettyKey(k), _cleanStr(data[k]).isEmpty ? '-' : _cleanStr(data[k])),
 //         ],
 //       ),
 //     );
@@ -1413,13 +1803,128 @@
 // }
 
 // /* =========================
-//    Data helpers
+//    Clean Network Image (no red 403 text in UI)
+// ========================= */
+
+// class _NetImageBox extends StatelessWidget {
+//   final String url;
+
+//   final double width;
+//   final double height;
+
+//   final BoxFit fit;
+//   final BorderRadius borderRadius;
+
+//   final VoidCallback? onTap;
+
+//   const _NetImageBox({
+//     required this.url,
+//     this.width = 110,
+//     this.height = 70,
+//     this.fit = BoxFit.cover,
+//     this.borderRadius = const BorderRadius.all(Radius.circular(12)),
+//     this.onTap,
+//   });
+
+//   @override
+//   Widget build(BuildContext context) {
+//     final child = ClipRRect(
+//       borderRadius: borderRadius,
+//       child: Image.network(
+//         url,
+//         fit: fit,
+//         width: width == double.infinity ? null : width,
+//         height: height == double.infinity ? null : height,
+//         // ✅ never show the error string in UI
+//         errorBuilder: (_, __, ___) => Container(
+//           width: width == double.infinity ? null : width,
+//           height: height == double.infinity ? null : height,
+//           color: Colors.black.withOpacity(0.06),
+//           child: const Center(
+//             child: Icon(Icons.broken_image_outlined, color: Colors.black45),
+//           ),
+//         ),
+//         loadingBuilder: (context, w, progress) {
+//           if (progress == null) return w;
+//           return Container(
+//             width: width == double.infinity ? null : width,
+//             height: height == double.infinity ? null : height,
+//             color: Colors.black.withOpacity(0.06),
+//             child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+//           );
+//         },
+//       ),
+//     );
+
+//     if (onTap == null) return child;
+
+//     return MouseRegion(
+//       cursor: SystemMouseCursors.click,
+//       child: InkWell(onTap: onTap, child: child),
+//     );
+//   }
+// }
+
+// /* =========================
+//    Data helpers + Models
 // ========================= */
 
 // class _PhotoRef {
 //   final String url;
 //   final String section;
 //   const _PhotoRef({required this.url, required this.section});
+// }
+
+// class _DamagePoint {
+//   final String id;
+//   final String description;
+//   final List<String> images;
+//   final double x; // 0..1
+//   final double y; // 0..1
+
+//   const _DamagePoint({
+//     required this.id,
+//     required this.description,
+//     required this.images,
+//     required this.x,
+//     required this.y,
+//   });
+// }
+
+// List<_DamagePoint> _parseDamages(Map<String, dynamic> inspection) {
+//   final dc = _asMap(inspection['damaged_coordinates']);
+//   final list = (dc['data'] as List?) ?? const [];
+
+//   final out = <_DamagePoint>[];
+
+//   for (final item in list) {
+//     final m = _asMap(item);
+//     final coords = _asMap(m['coordinates']);
+
+//     final x = (_toDouble(coords['x']) ?? 0.0).clamp(0.0, 1.0).toDouble();
+//     final y = (_toDouble(coords['y']) ?? 0.0).clamp(0.0, 1.0).toDouble();
+
+//     final images = ((m['damageImages'] as List?) ?? const [])
+//         .map((e) => e.toString().trim())
+//         .where((s) => s.isNotEmpty && s != 'null')
+//         .toList();
+
+//     final id = _cleanStr(m['damageid']).isNotEmpty
+//         ? _cleanStr(m['damageid'])
+//         : (_cleanStr(m['_id']).isNotEmpty ? _cleanStr(m['_id']) : _cleanStr(m['id']));
+
+//     out.add(
+//       _DamagePoint(
+//         id: id.isEmpty ? '-' : id,
+//         description: _cleanStr(m['damagedescription']),
+//         images: images,
+//         x: x,
+//         y: y,
+//       ),
+//     );
+//   }
+
+//   return out;
 // }
 
 // Map<String, dynamic> _asMap(dynamic v) {
@@ -1492,10 +1997,13 @@
 // }
 
 
-
 // lib/features/dashboards/user/inspection_report_page.dart
+import 'package:flutter/foundation.dart' show kIsWeb;
+// ignore: avoid_web_libraries_in_flutter
+import 'dart:html' as html;
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'dart:typed_data';
 
 import '../../shared/app_shell.dart';
 import '../../../services/service_locator.dart';
@@ -1782,7 +2290,7 @@ class _ReportViewState extends State<_ReportView> {
           children: [
             _HeaderRow(
               title: 'Inspection Report',
-              status: status,
+              onDownload: _downloadReport,
             ),
             const SizedBox(height: 12),
 
@@ -2110,6 +2618,48 @@ class _ReportViewState extends State<_ReportView> {
     }
 
     return (refs, sectionMap);
+  }
+
+  // ✅ PDF download change ONLY (replaces Print -> Save as PDF)
+  void _downloadReport() async {
+    // Close image viewer overlay before downloading (optional)
+    if (_viewerOpen) _closeViewer();
+
+    if (!kIsWeb) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('PDF download is available on Web.')),
+      );
+      return;
+    }
+
+    try {
+      final inspectionId =
+          (widget.inspection['_id'] ?? widget.inspection['id'] ?? '').toString().trim();
+
+      if (inspectionId.isEmpty) {
+        throw Exception('Missing inspectionId');
+      }
+
+      // Requires ONLY your service pdf method (no UI/media changes)
+      final pdf = await inspectionRequestsService.getInspectionReportPdf(inspectionId);
+
+      final blob = html.Blob([pdf.bytes], pdf.contentType);
+      final url = html.Url.createObjectUrlFromBlob(blob);
+
+      final a = html.AnchorElement(href: url)
+        ..style.display = 'none'
+        ..download = pdf.fileName;
+
+      html.document.body?.children.add(a);
+      a.click();
+      a.remove();
+
+      html.Url.revokeObjectUrl(url);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('PDF download failed: $e')),
+      );
+    }
   }
 }
 
@@ -3046,8 +3596,12 @@ class _OdometerPainter extends CustomPainter {
 
 class _HeaderRow extends StatelessWidget {
   final String title;
-  final String status;
-  const _HeaderRow({required this.title, required this.status});
+  final VoidCallback onDownload;
+
+  const _HeaderRow({
+    required this.title,
+    required this.onDownload,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -3056,12 +3610,26 @@ class _HeaderRow extends StatelessWidget {
         Expanded(
           child: Text(
             title,
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w900,
+                ),
           ),
         ),
-        _Badge(
-          text: status.isEmpty ? '-' : status,
-          tone: _badgeTone(status),
+        Tooltip(
+          message: 'Download (Save as PDF)',
+          child: InkWell(
+            onTap: onDownload,
+            borderRadius: BorderRadius.circular(999),
+            child: Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.06),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(color: Colors.black.withOpacity(0.10)),
+              ),
+              child: const Icon(Icons.download_outlined, size: 20),
+            ),
+          ),
         ),
       ],
     );
@@ -3453,4 +4021,3 @@ _Tone _badgeTone(String label) {
   if (s.contains('draft')) return _Tone(Colors.black.withOpacity(0.06), Colors.black87);
   return _Tone(Colors.grey.withOpacity(0.12), Colors.grey.shade800);
 }
-
