@@ -2742,7 +2742,63 @@ class _DamagesBlock extends StatelessWidget {
   }
 }
 
-class _CarDamageMap extends StatelessWidget {
+// class _CarDamageMap extends StatelessWidget {
+//   final String assetPath;
+//   final List<_DamagePoint> damages;
+//   final void Function(_DamagePoint d, int index) onTapMarker;
+
+//   const _CarDamageMap({
+//     required this.assetPath,
+//     required this.damages,
+//     required this.onTapMarker,
+//   });
+
+//   @override
+//   Widget build(BuildContext context) {
+//     // ✅ No InteractiveViewer here -> prevents scroll-wheel zooming
+//     return ClipRRect(
+//       borderRadius: BorderRadius.circular(14),
+//       child: Container(
+//         color: Colors.white.withOpacity(0.6),
+//         padding: const EdgeInsets.all(12),
+//         child: AspectRatio(
+//           // IMPORTANT: keep SAME ratio as StartInspectionPage for exact marker alignment
+//           aspectRatio: 16 / 9,
+//           child: LayoutBuilder(
+//             builder: (context, c) {
+//               final w = c.maxWidth;
+//               final h = c.maxHeight;
+
+//               return Stack(
+//                 children: [
+//                   Positioned.fill(
+//                     child: Image.asset(
+//                       assetPath,
+//                       fit: BoxFit.contain,
+//                       errorBuilder: (_, __, ___) => Container(
+//                         color: Colors.black.withOpacity(0.06),
+//                         child: const Center(child: Text('Car image not found (asset path)')),
+//                       ),
+//                     ),
+//                   ),
+//                   for (int i = 0; i < damages.length; i++)
+//                     _DamageMarker(
+//                       index: i + 1,
+//                       left: (damages[i].x * w).clamp(0, w),
+//                       top: (damages[i].y * h).clamp(0, h),
+//                       onTap: () => onTapMarker(damages[i], i + 1),
+//                     ),
+//                 ],
+//               );
+//             },
+//           ),
+//         ),
+//       ),
+//     );
+//   }
+// }
+
+class _CarDamageMap extends StatefulWidget {
   final String assetPath;
   final List<_DamagePoint> damages;
   final void Function(_DamagePoint d, int index) onTapMarker;
@@ -2754,26 +2810,91 @@ class _CarDamageMap extends StatelessWidget {
   });
 
   @override
+  State<_CarDamageMap> createState() => _CarDamageMapState();
+}
+
+class _CarDamageMapState extends State<_CarDamageMap> {
+  Size? _imgSize;
+  ImageStream? _stream;
+  ImageStreamListener? _listener;
+
+  @override
+  void initState() {
+    super.initState();
+    _resolveImageSize();
+  }
+
+  @override
+  void didUpdateWidget(covariant _CarDamageMap oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.assetPath != widget.assetPath) {
+      _disposeStream();
+      _imgSize = null;
+      _resolveImageSize();
+    }
+  }
+
+  void _resolveImageSize() {
+    final provider = AssetImage(widget.assetPath);
+    final stream = provider.resolve(const ImageConfiguration());
+    _stream = stream;
+
+    _listener = ImageStreamListener((info, _) {
+      final s = Size(info.image.width.toDouble(), info.image.height.toDouble());
+      if (mounted) setState(() => _imgSize = s);
+    }, onError: (e, _) {
+      if (mounted) setState(() => _imgSize = null);
+    });
+
+    stream.addListener(_listener!);
+  }
+
+  void _disposeStream() {
+    if (_stream != null && _listener != null) {
+      _stream!.removeListener(_listener!);
+    }
+    _stream = null;
+    _listener = null;
+  }
+
+  @override
+  void dispose() {
+    _disposeStream();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    // ✅ No InteractiveViewer here -> prevents scroll-wheel zooming
     return ClipRRect(
       borderRadius: BorderRadius.circular(14),
       child: Container(
         color: Colors.white.withOpacity(0.6),
         padding: const EdgeInsets.all(12),
         child: AspectRatio(
-          // IMPORTANT: keep SAME ratio as StartInspectionPage for exact marker alignment
-          aspectRatio: 16 / 9,
+          // ✅ use the REAL image aspect ratio once loaded
+          aspectRatio: (_imgSize == null) ? (16 / 9) : (_imgSize!.width / _imgSize!.height),
           child: LayoutBuilder(
             builder: (context, c) {
               final w = c.maxWidth;
               final h = c.maxHeight;
 
+              final img = _imgSize;
+              if (img == null) {
+                return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+              }
+
+              // BoxFit.contain math
+              final scale = (w / img.width < h / img.height) ? (w / img.width) : (h / img.height);
+              final renderW = img.width * scale;
+              final renderH = img.height * scale;
+              final dx = (w - renderW) / 2;
+              final dy = (h - renderH) / 2;
+
               return Stack(
                 children: [
                   Positioned.fill(
                     child: Image.asset(
-                      assetPath,
+                      widget.assetPath,
                       fit: BoxFit.contain,
                       errorBuilder: (_, __, ___) => Container(
                         color: Colors.black.withOpacity(0.06),
@@ -2781,12 +2902,14 @@ class _CarDamageMap extends StatelessWidget {
                       ),
                     ),
                   ),
-                  for (int i = 0; i < damages.length; i++)
+
+                  for (int i = 0; i < widget.damages.length; i++)
                     _DamageMarker(
                       index: i + 1,
-                      left: (damages[i].x * w).clamp(0, w),
-                      top: (damages[i].y * h).clamp(0, h),
-                      onTap: () => onTapMarker(damages[i], i + 1),
+                      // ✅ map normalized coords into the rendered image rect
+                      left: (dx + widget.damages[i].x * renderW).clamp(dx, dx + renderW),
+                      top: (dy + widget.damages[i].y * renderH).clamp(dy, dy + renderH),
+                      onTap: () => widget.onTapMarker(widget.damages[i], i + 1),
                     ),
                 ],
               );
