@@ -11,8 +11,7 @@ import '../../shared/top_snackbar.dart';
 import '../../shared/widgets/image_uploader.dart';
 import '../../shared/widgets/media_uploader.dart';
 
-
-// ✅ Damage marker editor
+// ✅ Damage marker editor + DamageCoordinate
 import 'widgets/damage_marker_editor.dart';
 
 /// ✅ Forces ALL user-typed text to UPPERCASE
@@ -51,24 +50,32 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
   late Future<List<ChecklistTemplate>> _future;
   ChecklistTemplate? _selectedTemplate;
 
-  // Wizard section index:
-  // 0 Vehicle Details
-  // 1 Service & Warranty
-  // 2 Interior Details
-  // 3 Exterior Details
-  // 4 Damaged Coordinates
-  // 5.. (Checklist types)
+  /// Wizard section index:
+  /// 0 Vehicle Details
+  /// 1 Service & Warranty
+  /// 2 Interior Details
+  /// 3 Exterior Details
+  /// 4.. checklist types
+  /// last = Damaged Coordinates
   int _section = 0;
 
-  // ✅ Start inspection API state
+  /// ✅ IMPORTANT: We will use inspectionRequestId as the "inspectionId" for section-progress APIs
+  String get _progressId => widget.requestId;
+
   bool _startingInspection = false;
   bool _inspectionStarted = false;
   String? _startError;
 
   bool _submitting = false;
+  bool _savingDraft = false;
 
   final _scrollCtrl = ScrollController();
   final _upper = UpperCaseTextFormatter();
+
+  // progress restore
+  bool _progressFetched = false;
+  bool _progressApplied = false;
+  Map<String, dynamic>? _progressSnapshot;
 
   // ============================
   // FORM KEYS
@@ -138,15 +145,13 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
   bool loadingMakes = false;
   bool loadingModels = false;
 
-  // what user sees
   List<String> makes = [];
   List<String> models = [];
 
   String? selectedMake; // MAKE NAME (UPPERCASE)
-  String? selectedMakeId; // MAKE ID (backend)
+  String? selectedMakeId; // MAKE ID
   String? selectedModel; // MODEL NAME (UPPERCASE)
 
-  // mapping MAKE_NAME -> makeId
   final Map<String, String> _makeIdByName = {};
 
   bool _makeIsOther = false;
@@ -158,17 +163,12 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
   // CHECKLIST STATE
   // ============================
 
-  /// One dropdown replaces status+rating:
-  /// Excellent(5), Good(4), Average(3), Poor(1), Not Applicable
   final Map<String, String?> _grade = {}; // selected option label
   final Map<String, TextEditingController> _remarks = {};
   final Map<String, List<String>> _itemPhotos = {};
 
-  /// overall remarks & photos per type (ti)
   final Map<int, TextEditingController> _overallRemarks = {};
   final Map<int, List<String>> _overallPhotos = {};
-
-  /// overall videos per type (ti)
   final Map<int, List<String>> _overallVideos = {};
 
   static const List<String> _gradeOptions = [
@@ -191,31 +191,58 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
     'Electric',
   ];
 
+  static const List<String> _gradeVariantOptions = ['XLE', 'LIMITED'];
+  static const List<String> _cylinderSizeOptions = ['3', '4', '6', '8'];
+  static const List<String> _driveTrainOptions = ['FWD', 'RWD', '4X4'];
+  static const List<String> _specsOptions = ['GCC'];
+  static const List<String> _ownershipTypeOptions = ['INDIVIDUAL', 'COMPANY'];
+  static const List<String> _servicedWithOptions = ['AGENCY', 'THIRD PARTY'];
+  static const List<String> _seatsOptions = ['2', '4', '5', '6', '7', '8', '9'];
+  static const List<String> _colorOptions = [
+    'WHITE',
+    'BLACK',
+    'GRAY / GREY',
+    'SILVER',
+    'BLUE',
+    'RED',
+    'BEIGE / TAN',
+    'BROWN / CHOCOLATE',
+    'GOLD',
+    'GREEN',
+    'ORANGE',
+    'PURPLE / VIOLET',
+    'MAROON / BURGUNDY',
+    'YELLOW',
+    'PINK',
+  ];
+  static const List<String> _upholsteryOptions = ['LEATHER', 'FABRIC'];
+  static const List<String> _numberOfKeysOptions = ['1', '2', '3', '4', '5'];
+  static const List<String> _doorsOptions = ['2', '3', '4', '5'];
+
   double? _gradeToRating(String? v) {
     if (v == null) return null;
     if (v.startsWith('Excellent')) return 5;
     if (v.startsWith('Good')) return 4;
     if (v.startsWith('Average')) return 3;
     if (v.startsWith('Poor')) return 1;
-    return null; // Not Applicable -> null
+    return null;
   }
 
   String? _gradeToStatus(String? v) {
     if (v == null) return null;
     if (v == 'Not Applicable') return 'Not Applicable';
-    return v.split(' ').first.trim(); // "Excellent (5)" -> "Excellent"
+    return v.split(' ').first.trim();
   }
 
   @override
   void initState() {
     super.initState();
     _future = _loadTemplates();
-
-    // ✅ Load makes from API once
     _loadMakes();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _startInspectionIfNeeded();
+      // ✅ On "Start Inspection" open, fetch draft first and fill all data
+      _bootstrapStartInspection();
     });
   }
 
@@ -230,7 +257,6 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
       c.dispose();
     }
 
-    // Report controllers
     makeCtrl.dispose();
     modelCtrl.dispose();
     gradeVariantCtrl.dispose();
@@ -279,12 +305,11 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
     );
   }
 
-  // ============================
-  // START INSPECTION API
-  // ============================
-
-  Future<void> _startInspectionIfNeeded() async {
-    if (_inspectionStarted || _startingInspection) return;
+  // =========================================================
+  // ✅ BOOTSTRAP: Fetch draft + apply + then startInspection
+  // =========================================================
+  Future<void> _bootstrapStartInspection() async {
+    if (_startingInspection || _inspectionStarted) return;
 
     setState(() {
       _startingInspection = true;
@@ -292,10 +317,18 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
     });
 
     try {
+      // 1) GET existing progress using requestId
+      await _fetchSectionProgress();
+      _applyProgressIfReady(); // will apply only if template already loaded
+
+      // 2) Call startInspection (keep it; backend might need it)
       await inspectionRequestsService.startInspection(widget.requestId);
 
       if (!mounted) return;
       setState(() => _inspectionStarted = true);
+
+      // apply again (in case templates loaded after fetch)
+      _applyProgressIfReady();
     } catch (e) {
       if (!mounted) return;
       setState(() => _startError = e.toString());
@@ -306,9 +339,208 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
   }
 
   // ============================
+  // DRAFT PROGRESS API (REQUEST-ID BASED)
+  // ============================
+  Future<void> _fetchSectionProgress() async {
+    if (_progressFetched) return;
+    _progressFetched = true;
+
+    final id = _progressId.trim();
+    if (id.isEmpty) return;
+
+    try {
+      final res = await inspectionRequestsService.getInspectionSectionProgress(id);
+
+      // expected:
+      // { data: { progress: { currentSectionIndex, sections:[...] } } }
+      final data = (res['data'] is Map) ? res['data'] as Map : null;
+      final progress = (data?['progress'] is Map) ? data!['progress'] as Map : null;
+
+      if (progress != null) {
+        _progressSnapshot = Map<String, dynamic>.from(progress);
+      }
+    } catch (e) {
+      // If no draft exists backend might throw 404; keep non-blocking
+      _snack('Draft not found / could not load: $e', 'warning');
+    }
+  }
+
+  void _applyProgressIfReady() {
+    if (_progressApplied) return;
+    if (_selectedTemplate == null) return;
+    if (_progressSnapshot == null) return;
+
+    _progressApplied = true;
+
+    final selected = _selectedTemplate!;
+    final total = _totalSections(selected);
+    final progress = _progressSnapshot!;
+
+    final idxRaw = progress['currentSectionIndex'];
+    final idx = int.tryParse(idxRaw?.toString() ?? '');
+    if (idx != null) {
+      _section = idx.clamp(0, total - 1);
+    }
+
+    final sections = progress['sections'];
+    if (sections is List) {
+      for (final s in sections) {
+        if (s is! Map) continue;
+        final sectionKey = (s['sectionKey'] ?? '').toString().trim();
+        final sectionData = s['sectionData'];
+        if (sectionKey.isEmpty) continue;
+        _applySectionData(selected, sectionKey, sectionData);
+      }
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _syncMakeModelUIFromControllers();
+      if (mounted) setState(() {});
+    });
+
+    setState(() {});
+  }
+
+  // ============================
+  // APPLY SECTION DATA (RESTORE)
+  // ============================
+  void _applySectionData(ChecklistTemplate selected, String sectionKey, dynamic sectionData) {
+    // ✅ Restore damages
+    if (sectionKey == 'damaged_coordinates') {
+      List<dynamic>? list;
+
+      if (sectionData is Map) {
+        final m = Map<String, dynamic>.from(sectionData);
+        final d = m['data'];
+        if (d is List) list = d;
+      } else if (sectionData is List) {
+        list = sectionData;
+      }
+
+      if (list != null) {
+        _damagedCoordinates = list
+            .whereType<Map>()
+            .map((x) => DamageCoordinate.fromJson(Map<String, dynamic>.from(x)))
+            .toList();
+      }
+      return;
+    }
+
+    if (sectionData is! Map) return;
+    final d = Map<String, dynamic>.from(sectionData);
+
+    switch (sectionKey) {
+      case 'vehicle_details':
+        makeCtrl.text = (d['make'] ?? makeCtrl.text).toString().trim();
+        modelCtrl.text = (d['model'] ?? modelCtrl.text).toString().trim();
+        gradeVariantCtrl.text = (d['gradeVariant'] ?? gradeVariantCtrl.text).toString().trim();
+        engineCapacityCtrl.text = (d['engineCapacity'] ?? engineCapacityCtrl.text).toString().trim();
+        modelYearCtrl.text = (d['modelYear'] ?? modelYearCtrl.text).toString().trim();
+        cylinderSizeCtrl.text = (d['cylinderSize'] ?? cylinderSizeCtrl.text).toString().trim();
+        transmissionCtrl.text = (d['transmission'] ?? transmissionCtrl.text).toString().trim();
+        fuelTypeCtrl.text = (d['fuelType'] ?? fuelTypeCtrl.text).toString().trim();
+        driveTrainCtrl.text = (d['driveTrain'] ?? driveTrainCtrl.text).toString().trim();
+        specsCtrl.text = (d['specs'] ?? specsCtrl.text).toString().trim();
+        odometerCtrl.text = (d['odometerReading'] ?? odometerCtrl.text).toString().trim();
+        registrationNoCtrl.text = (d['registrationNo'] ?? registrationNoCtrl.text).toString().trim();
+        emiratesRegAtCtrl.text = (d['emiratesRegAt'] ?? emiratesRegAtCtrl.text).toString().trim();
+        chassisNoCtrl.text = (d['chassisNo'] ?? chassisNoCtrl.text).toString().trim();
+        ownershipTypeCtrl.text = (d['ownershipType'] ?? ownershipTypeCtrl.text).toString().trim();
+        break;
+
+      case 'service_warranty_overview':
+        serviceHistory = (d['serviceHistory'] ?? serviceHistory)?.toString();
+        servicedWithCtrl.text = (d['servicedWith'] ?? servicedWithCtrl.text).toString().trim();
+        lastServiceDateCtrl.text = (d['lastServiceDate'] ?? lastServiceDateCtrl.text).toString().trim();
+        warrantyAvailable = (d['warrantyAvailable'] ?? warrantyAvailable)?.toString();
+        warrantyEndsInCtrl.text = (d['warrantyEndsIn'] ?? warrantyEndsInCtrl.text).toString().trim();
+        hadAccidents = (d['hadAccidents'] ?? hadAccidents)?.toString();
+        break;
+
+      case 'interior_details':
+        seatsCtrl.text = (d['seats'] ?? seatsCtrl.text).toString().trim();
+        interiorColorCtrl.text = (d['interiorColor'] ?? interiorColorCtrl.text).toString().trim();
+        upholsteryCtrl.text = (d['upholstery'] ?? upholsteryCtrl.text).toString().trim();
+        numberOfKeysCtrl.text = (d['numberOfKeys'] ?? numberOfKeysCtrl.text).toString().trim();
+        interiorModificationDone = (d['modificationDone'] ?? interiorModificationDone)?.toString();
+        break;
+
+      case 'exterior_details':
+        exteriorColorCtrl.text = (d['exteriorColor'] ?? exteriorColorCtrl.text).toString().trim();
+        doorsCtrl.text = (d['doors'] ?? doorsCtrl.text).toString().trim();
+        wheelSizeCtrl.text = (d['wheelSize'] ?? wheelSizeCtrl.text).toString().trim();
+        exteriorModificationDone = (d['modificationDone'] ?? exteriorModificationDone)?.toString();
+        break;
+
+      default:
+        // checklist sections
+        final ti = _findTypeIndexByKey(selected, sectionKey, d);
+        if (ti == null) return;
+
+        final gradeMap = d['grade'];
+        if (gradeMap is Map) {
+          for (final e in gradeMap.entries) {
+            final ii = int.tryParse(e.key.toString());
+            if (ii == null) continue;
+            final k = '$ti:$ii';
+            if (_grade.containsKey(k)) _grade[k] = e.value?.toString();
+          }
+        }
+
+        final remMap = d['remarks'];
+        if (remMap is Map) {
+          for (final e in remMap.entries) {
+            final ii = int.tryParse(e.key.toString());
+            if (ii == null) continue;
+            final k = '$ti:$ii';
+            if (_remarks.containsKey(k)) _remarks[k]!.text = e.value?.toString() ?? '';
+          }
+        }
+
+        final phMap = d['itemPhotos'];
+        if (phMap is Map) {
+          for (final e in phMap.entries) {
+            final ii = int.tryParse(e.key.toString());
+            if (ii == null) continue;
+            final k = '$ti:$ii';
+            if (_itemPhotos.containsKey(k) && e.value is List) {
+              _itemPhotos[k] = (e.value as List).map((x) => x.toString()).toList();
+            }
+          }
+        }
+
+        final oRem = d['overallRemarks'];
+        if (oRem != null && _overallRemarks.containsKey(ti)) {
+          _overallRemarks[ti]!.text = oRem.toString();
+        }
+
+        final oPhotos = d['overallPhotos'];
+        if (oPhotos is List) {
+          _overallPhotos[ti] = oPhotos.map((x) => x.toString()).toList();
+        }
+
+        final oVideos = d['overallVideos'];
+        if (oVideos is List) {
+          _overallVideos[ti] = oVideos.map((x) => x.toString()).toList();
+        }
+        break;
+    }
+  }
+
+  int? _findTypeIndexByKey(ChecklistTemplate selected, String sectionKey, Map<String, dynamic> sectionData) {
+    final raw = sectionData['typeIndex'];
+    final ti = int.tryParse(raw?.toString() ?? '');
+    if (ti != null && ti >= 0 && ti < selected.types.length) return ti;
+
+    for (var i = 0; i < selected.types.length; i++) {
+      if (_normalizeKey(selected.types[i].typeName) == sectionKey) return i;
+    }
+    return null;
+  }
+
+  // ============================
   // TEMPLATES
   // ============================
-
   Future<List<ChecklistTemplate>> _loadTemplates() async {
     final raw = await checklistTemplatesService.listActiveTemplates();
     final templates = raw.map((x) => ChecklistTemplate.fromJson(x)).toList();
@@ -317,11 +549,16 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
       _selectedTemplate = templates.first;
       _primeChecklistControllers();
     }
+
+    // If draft already fetched, apply now
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _applyProgressIfReady();
+    });
+
     return templates;
   }
 
   void _primeChecklistControllers() {
-    // ✅ IMPORTANT: dispose old controllers AFTER next frame (prevents “used after disposed”)
     final oldItemRemarkControllers = _remarks.values.toList();
     final oldOverallControllers = _overallRemarks.values.toList();
 
@@ -368,31 +605,21 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
   }
 
   // ============================
-  // ✅ MAKE / MODEL API (via services)
+  // MAKE / MODEL API
   // ============================
-
-  /// expects service to return list of maps like:
-  /// [{id:'...', name:'TOYOTA'}]
   Future<void> _loadMakes() async {
     setState(() {
       loadingMakes = true;
-
       makes = [];
       models = [];
-
       selectedMake = null;
       selectedMakeId = null;
       selectedModel = null;
-
       _makeIdByName.clear();
-
       _makeIsOther = false;
       _modelIsOther = false;
       otherMakeCtrl.text = '';
       otherModelCtrl.text = '';
-
-      makeCtrl.text = '';
-      modelCtrl.text = '';
     });
 
     try {
@@ -414,14 +641,13 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      _snack('Failed to load makes (API): $e', 'error');
+      _snack('Failed to load makes: $e', 'error');
       setState(() => makes = const ['OTHER']);
     } finally {
       if (mounted) setState(() => loadingMakes = false);
     }
   }
 
-  /// GET /admin/models/{makeId}
   Future<void> _loadModelsForMakeId(String makeId) async {
     setState(() {
       loadingModels = true;
@@ -429,7 +655,6 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
       selectedModel = null;
       _modelIsOther = false;
       otherModelCtrl.text = '';
-      modelCtrl.text = '';
     });
 
     try {
@@ -442,7 +667,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      _snack('Failed to load models (API): $e', 'error');
+      _snack('Failed to load models: $e', 'error');
       setState(() {
         models = const ['OTHER'];
         selectedModel = 'OTHER';
@@ -453,42 +678,59 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
     }
   }
 
-  bool _applyMakeModelToControllersNoNetwork() {
-    // MAKE
-    String make = '';
-    if (_makeIsOther) {
-      make = otherMakeCtrl.text.trim().toUpperCase();
-    } else {
-      make = (selectedMake ?? '').trim().toUpperCase();
+  Future<void> _syncMakeModelUIFromControllers() async {
+    final make = makeCtrl.text.trim().toUpperCase();
+    final model = modelCtrl.text.trim().toUpperCase();
+    if (make.isEmpty) return;
+
+    if (makes.isEmpty && !loadingMakes) {
+      await _loadMakes();
     }
+
+    final mkId = _makeIdByName[make];
+
+    if (mkId != null && mkId.trim().isNotEmpty) {
+      selectedMake = make;
+      selectedMakeId = mkId;
+      _makeIsOther = false;
+      otherMakeCtrl.text = '';
+
+      await _loadModelsForMakeId(mkId);
+
+      if (model.isNotEmpty && models.contains(model)) {
+        selectedModel = model;
+        _modelIsOther = false;
+        otherModelCtrl.text = '';
+      } else if (model.isNotEmpty) {
+        selectedModel = 'OTHER';
+        _modelIsOther = true;
+        otherModelCtrl.text = model;
+      }
+    } else {
+      selectedMake = 'OTHER';
+      selectedMakeId = null;
+      _makeIsOther = true;
+      otherMakeCtrl.text = make;
+
+      if (model.isNotEmpty) {
+        selectedModel = 'OTHER';
+        _modelIsOther = true;
+        otherModelCtrl.text = model;
+        models = const ['OTHER'];
+      }
+    }
+  }
+
+  bool _applyMakeModelToControllersNoNetwork() {
+    String make = _makeIsOther ? otherMakeCtrl.text.trim().toUpperCase() : (selectedMake ?? '').trim().toUpperCase();
+    String model = _modelIsOther ? otherModelCtrl.text.trim().toUpperCase() : (selectedModel ?? '').trim().toUpperCase();
 
     if (make.isEmpty) {
       _snack('Make is required', 'warning');
       return false;
     }
-
-    final makeErr = _alphaNumValidator(make, fieldName: 'Make', min: 2);
-    if (makeErr != null) {
-      _snack(makeErr, 'warning');
-      return false;
-    }
-
-    // MODEL
-    String model = '';
-    if (_modelIsOther) {
-      model = otherModelCtrl.text.trim().toUpperCase();
-    } else {
-      model = (selectedModel ?? '').trim().toUpperCase();
-    }
-
     if (model.isEmpty) {
       _snack('Model is required', 'warning');
-      return false;
-    }
-
-    final modelErr = _alphaNumValidator(model, fieldName: 'Model', min: 2);
-    if (modelErr != null) {
-      _snack(modelErr, 'warning');
       return false;
     }
 
@@ -500,7 +742,6 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
   // ============================
   // WIZARD
   // ============================
-
   int _totalSections(ChecklistTemplate selected) => 5 + selected.types.length;
 
   String _sectionTitle(ChecklistTemplate selected, int index) {
@@ -508,30 +749,56 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
     if (index == 1) return 'Service & Warranty Overview';
     if (index == 2) return 'Interior Details';
     if (index == 3) return 'Exterior Details';
-    if (index == 4) return 'Damaged Coordinates';
-    final ti = index - 5;
+
+    final damageIndex = 4 + selected.types.length;
+    if (index == damageIndex) return 'Damaged Coordinates';
+
+    final ti = index - 4;
     return selected.types[ti].typeName;
   }
 
-  bool _isLastSection(ChecklistTemplate selected) =>
-      _section == _totalSections(selected) - 1;
+  bool _isLastSection(ChecklistTemplate selected) => _section == _totalSections(selected) - 1;
 
-  bool _validateCurrentSection() {
+  bool _validateCurrentSection(ChecklistTemplate selected) {
     if (_section == 0) return _vehicleFormKey.currentState?.validate() ?? false;
     if (_section == 1) return _serviceFormKey.currentState?.validate() ?? false;
     if (_section == 2) return _interiorFormKey.currentState?.validate() ?? false;
     if (_section == 3) return _exteriorFormKey.currentState?.validate() ?? false;
+
+    final damageIndex = 4 + selected.types.length;
+    if (_section == damageIndex) return true;
+
+    final ti = _section - 4;
+    return _validateChecklistTypeOnly(selected, ti);
+  }
+
+  bool _validateChecklistTypeOnly(ChecklistTemplate selected, int ti) {
+    if (ti < 0 || ti >= selected.types.length) return true;
+    final type = selected.types[ti];
+
+    for (var ii = 0; ii < type.checklistItems.length; ii++) {
+      final item = type.checklistItems[ii];
+      if (!item.isRequired) continue;
+
+      final key = '$ti:$ii';
+      final g = _grade[key];
+      if (g == null || g.trim().isEmpty) {
+        _snack('Please select: ${type.typeName} → ${item.label}', 'warning');
+        return false;
+      }
+    }
     return true;
   }
 
-  void _next(ChecklistTemplate selected) {
-    if (_section <= 3) {
-      final ok = _validateCurrentSection();
-      if (!ok) {
-        _snack('Please fix the highlighted fields.', 'warning');
-        return;
-      }
+  Future<void> _next(ChecklistTemplate selected) async {
+    final ok = _validateCurrentSection(selected);
+    if (!ok) {
+      _snack('Please fix the highlighted fields.', 'warning');
+      return;
     }
+
+    final saved = await _saveDraftOnNext(selected);
+    if (!saved) return;
 
     final total = _totalSections(selected);
     if (_section < total - 1) {
@@ -548,10 +815,1191 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
   }
 
   // ============================
-  // VALIDATION (CHECKLIST)
+  // SECTION KEYS + SECTION DATA (DRAFT)
   // ============================
+  String _normalizeKey(String s) {
+    final x = s.trim().toLowerCase();
+    return x.replaceAll(RegExp(r'[^a-z0-9]+'), '_').replaceAll(RegExp(r'_+'), '_');
+  }
 
-  bool _validateChecklist() {
+  String _sectionKeyForIndex(ChecklistTemplate selected, int index) {
+    if (index == 0) return 'vehicle_details';
+    if (index == 1) return 'service_warranty_overview';
+    if (index == 2) return 'interior_details';
+    if (index == 3) return 'exterior_details';
+
+    final damageIndex = 4 + selected.types.length;
+    if (index == damageIndex) return 'damaged_coordinates';
+
+    final ti = index - 4;
+    return _normalizeKey(selected.types[ti].typeName);
+  }
+
+  Map<String, dynamic> _buildSectionDataForIndex(ChecklistTemplate selected, int index) {
+    if (index == 0) {
+      _applyMakeModelToControllersNoNetwork();
+      return {
+        'make': makeCtrl.text.trim(),
+        'model': modelCtrl.text.trim(),
+        'gradeVariant': gradeVariantCtrl.text.trim(),
+        'engineCapacity': engineCapacityCtrl.text.trim(),
+        'modelYear': modelYearCtrl.text.trim(),
+        'cylinderSize': cylinderSizeCtrl.text.trim(),
+        'transmission': transmissionCtrl.text.trim(),
+        'fuelType': fuelTypeCtrl.text.trim(),
+        'driveTrain': driveTrainCtrl.text.trim(),
+        'specs': specsCtrl.text.trim(),
+        'odometerReading': odometerCtrl.text.trim(),
+        'registrationNo': registrationNoCtrl.text.trim(),
+        'emiratesRegAt': emiratesRegAtCtrl.text.trim(),
+        'chassisNo': chassisNoCtrl.text.trim(),
+        'ownershipType': ownershipTypeCtrl.text.trim(),
+      };
+    }
+
+    if (index == 1) {
+      return {
+        'serviceHistory': serviceHistory,
+        'servicedWith': servicedWithCtrl.text.trim(),
+        'lastServiceDate': lastServiceDateCtrl.text.trim(),
+        'warrantyAvailable': warrantyAvailable,
+        'warrantyEndsIn': warrantyEndsInCtrl.text.trim(),
+        'hadAccidents': hadAccidents,
+      };
+    }
+
+    if (index == 2) {
+      return {
+        'seats': seatsCtrl.text.trim(),
+        'interiorColor': interiorColorCtrl.text.trim(),
+        'upholstery': upholsteryCtrl.text.trim(),
+        'numberOfKeys': numberOfKeysCtrl.text.trim(),
+        'modificationDone': interiorModificationDone,
+      };
+    }
+
+    if (index == 3) {
+      return {
+        'exteriorColor': exteriorColorCtrl.text.trim(),
+        'doors': doorsCtrl.text.trim(),
+        'wheelSize': wheelSizeCtrl.text.trim(),
+        'modificationDone': exteriorModificationDone,
+      };
+    }
+
+    final damageIndex = 4 + selected.types.length;
+    if (index == damageIndex) {
+      return _buildDamagedCoordinatesPayload();
+    }
+
+    // checklist type section
+    final ti = index - 4;
+    final type = selected.types[ti];
+
+    final gradeMap = <String, dynamic>{};
+    final remarksMap = <String, dynamic>{};
+    final itemPhotosMap = <String, dynamic>{};
+
+    for (var ii = 0; ii < type.checklistItems.length; ii++) {
+      final key = '$ti:$ii';
+      gradeMap['$ii'] = _grade[key];
+      remarksMap['$ii'] = _remarks[key]?.text ?? '';
+      itemPhotosMap['$ii'] = _itemPhotos[key] ?? [];
+    }
+
+    return {
+      'typeIndex': ti,
+      'typeName': type.typeName,
+      'overallRemarks': _overallRemarks[ti]?.text.trim() ?? '',
+      'overallPhotos': _overallPhotos[ti] ?? [],
+      'overallVideos': _overallVideos[ti] ?? [],
+      'grade': gradeMap,
+      'remarks': remarksMap,
+      'itemPhotos': itemPhotosMap,
+    };
+  }
+
+  Future<bool> _saveDraftOnNext(ChecklistTemplate selected) async {
+    final id = _progressId.trim();
+    if (id.isEmpty) {
+      _snack('inspectionRequestId missing — draft cannot be saved', 'warning');
+      return true;
+    }
+
+    if (_savingDraft) return false;
+
+    setState(() => _savingDraft = true);
+
+    try {
+      _applyMakeModelToControllersNoNetwork();
+
+      final total = _totalSections(selected);
+      final currentIndex = _section;
+      final nextIndex = (currentIndex + 1).clamp(0, total - 1);
+
+      final sectionKey = _sectionKeyForIndex(selected, currentIndex);
+      final nextKey = _sectionKeyForIndex(selected, nextIndex);
+
+      final sectionData = _buildSectionDataForIndex(selected, currentIndex);
+
+      final body = {
+        // ✅ requestId used as inspectionId for draft APIs
+        'inspectionId': id,
+        'sectionKey': sectionKey,
+        'sectionIndex': currentIndex,
+        'currentSectionKey': nextKey,
+        'currentSectionIndex': nextIndex,
+        'sectionData': sectionData,
+        'completed': true,
+      };
+
+      await inspectionRequestsService.updateInspectionSectionProgress(id, body);
+      return true;
+    } catch (e) {
+      _snack('Failed to save draft: $e', 'error');
+      return false;
+    } finally {
+      if (mounted) setState(() => _savingDraft = false);
+    }
+  }
+
+  // ============================
+  // VALIDATORS + FORMATTERS
+  // ============================
+  String? _req(String? v, {String msg = 'Required'}) {
+    if (v == null) return msg;
+    if (v.trim().isEmpty) return msg;
+    return null;
+  }
+
+  String? _alphaNumValidator(String? v, {required String fieldName, int min = 2}) {
+    final r = _req(v, msg: '$fieldName is required');
+    if (r != null) return r;
+    final s = v!.trim();
+    if (s.length < min) return '$fieldName must be at least $min characters';
+    if (!RegExp(r"^[A-Za-z0-9\s'./-]+$").hasMatch(s)) {
+      return '$fieldName contains invalid characters';
+    }
+    return null;
+  }
+
+  String? _yearValidator(String? v) {
+    final r = _req(v, msg: 'Model Year is required');
+    if (r != null) return r;
+    final year = int.tryParse(v!.trim());
+    if (year == null) return 'Model Year must be a number';
+    final now = DateTime.now().year;
+    if (year < 1980 || year > now + 1) {
+      return 'Enter a valid year (1980 - ${now + 1})';
+    }
+    return null;
+  }
+
+  String? _numberValidator(String? v, {required String fieldName, int max = 12}) {
+    final r = _req(v, msg: '$fieldName is required');
+    if (r != null) return r;
+    final s = v!.trim();
+    if (!RegExp(r'^\d+$').hasMatch(s)) return '$fieldName must be numeric';
+    if (s.length > max) return '$fieldName is too long';
+    return null;
+  }
+
+  List<TextInputFormatter> _digitsFormatters({int max = 12}) => [
+        LengthLimitingTextInputFormatter(max),
+        FilteringTextInputFormatter.digitsOnly,
+      ];
+
+  List<TextInputFormatter> _yearFormatters() => [
+        LengthLimitingTextInputFormatter(4),
+        FilteringTextInputFormatter.digitsOnly,
+      ];
+
+  // ============================
+  // DATE PICKERS
+  // ============================
+  Future<void> _pickLastServiceDate() async {
+    final now = DateTime.now();
+    DateTime initial = now;
+    final raw = lastServiceDateCtrl.text.trim();
+    final parts = raw.split('-');
+    if (parts.length == 3) {
+      final y = int.tryParse(parts[0]);
+      final m = int.tryParse(parts[1]);
+      final d = int.tryParse(parts[2]);
+      if (y != null && m != null && d != null) {
+        initial = DateTime(y, m, d);
+      }
+    }
+
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(1990, 1, 1),
+      lastDate: now.add(const Duration(days: 365 * 2)),
+    );
+
+    if (picked == null) return;
+    final s =
+        '${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
+    setState(() => lastServiceDateCtrl.text = s);
+  }
+
+  Future<void> _pickWarrantyEndsMonthYear() async {
+    final now = DateTime.now();
+    DateTime initial = DateTime(now.year, now.month, 1);
+
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(1990, 1, 1),
+      lastDate: DateTime(now.year + 10, 12, 31),
+      helpText: 'Select warranty end month (pick any day)',
+    );
+
+    if (picked == null) return;
+
+    const months = [
+      'Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'
+    ];
+    final mmmyy =
+        '${months[picked.month - 1]}-${(picked.year % 100).toString().padLeft(2, '0')}'
+            .toUpperCase();
+    setState(() => warrantyEndsInCtrl.text = mmmyy);
+  }
+
+  // ============================
+  // UI HELPERS
+  // ============================
+  InputDecoration _dec({required String label, String? hint, IconData? icon}) {
+    return InputDecoration(
+      labelText: label,
+      hintText: hint,
+      prefixIcon: icon == null ? null : Icon(icon),
+      filled: true,
+      fillColor: Colors.white,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide(color: Colors.black.withOpacity(0.10)),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: Color(0xFF1E5EFF), width: 1.6),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: Colors.redAccent),
+      ),
+      focusedErrorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: Colors.redAccent, width: 1.6),
+      ),
+    );
+  }
+
+  Widget _sectionCard({
+    required String title,
+    required IconData icon,
+    required Widget child,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFFF4F6FB),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: Colors.black.withOpacity(0.06)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 22,
+            offset: const Offset(0, 12),
+          )
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  height: 38,
+                  width: 38,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0B1220),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Icon(icon, color: Colors.white, size: 18),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            child,
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _dropField({
+    required String label,
+    required String? value,
+    required List<String> options,
+    required void Function(String?) onChanged,
+    String? hint,
+    IconData? icon,
+    String? Function(String?)? validator,
+  }) {
+    return DropdownButtonFormField<String>(
+      value: value,
+      autovalidateMode: AutovalidateMode.onUserInteraction,
+      items: options.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(),
+      onChanged: onChanged,
+      decoration: _dec(label: label, hint: hint, icon: icon),
+      validator: validator,
+    );
+  }
+
+  // ============================
+  // SECTIONS UI
+  // ============================
+  Widget _vehicleDetailsSection() {
+    return _sectionCard(
+      title: 'Vehicle Details',
+      icon: Icons.directions_car_outlined,
+      child: Form(
+        key: _vehicleFormKey,
+        child: Column(
+          children: [
+            // MAKE
+            DropdownButtonFormField<String>(
+              value: selectedMake,
+              autovalidateMode: AutovalidateMode.onUserInteraction,
+              items: makes.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
+              onChanged: loadingMakes
+                  ? null
+                  : (v) async {
+                      if (v == null) return;
+
+                      if (v == 'OTHER') {
+                        setState(() {
+                          selectedMake = 'OTHER';
+                          selectedMakeId = null;
+                          _makeIsOther = true;
+                          otherMakeCtrl.text = '';
+                          makeCtrl.text = '';
+                          models = const ['OTHER'];
+                          selectedModel = 'OTHER';
+                          _modelIsOther = true;
+                          otherModelCtrl.text = '';
+                          modelCtrl.text = '';
+                        });
+                        return;
+                      }
+
+                      final mkName = v.trim().toUpperCase();
+                      final mkId = _makeIdByName[mkName] ?? '';
+
+                      setState(() {
+                        selectedMake = mkName;
+                        selectedMakeId = mkId;
+                        _makeIsOther = false;
+                        otherMakeCtrl.text = '';
+                        makeCtrl.text = mkName;
+                        selectedModel = null;
+                        _modelIsOther = false;
+                        otherModelCtrl.text = '';
+                        modelCtrl.text = '';
+                        models = [];
+                      });
+
+                      if (mkId.isNotEmpty) {
+                        await _loadModelsForMakeId(mkId);
+                      } else {
+                        _snack('makeId missing for selected make', 'error');
+                        setState(() {
+                          models = const ['OTHER'];
+                          selectedModel = 'OTHER';
+                          _modelIsOther = true;
+                        });
+                      }
+                    },
+              decoration: _dec(
+                label: 'Make',
+                hint: loadingMakes ? 'Loading makes…' : 'Select make',
+                icon: Icons.directions_car_outlined,
+              ),
+              validator: (v) => v == null ? 'Make is required' : null,
+            ),
+
+            if (_makeIsOther) ...[
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: otherMakeCtrl,
+                autovalidateMode: AutovalidateMode.onUserInteraction,
+                inputFormatters: [LengthLimitingTextInputFormatter(40), _upper],
+                decoration: _dec(label: 'Other Make', hint: 'Enter make', icon: Icons.edit_outlined),
+                validator: (v) => _alphaNumValidator(v, fieldName: 'Other Make', min: 2),
+              ),
+            ],
+
+            const SizedBox(height: 12),
+
+            // MODEL
+            DropdownButtonFormField<String>(
+              value: selectedModel,
+              autovalidateMode: AutovalidateMode.onUserInteraction,
+              items: models.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
+              onChanged: (selectedMake == null || loadingModels)
+                  ? null
+                  : (v) {
+                      if (v == null) return;
+
+                      if (v == 'OTHER') {
+                        setState(() {
+                          selectedModel = 'OTHER';
+                          _modelIsOther = true;
+                          otherModelCtrl.text = '';
+                          modelCtrl.text = '';
+                        });
+                        return;
+                      }
+
+                      setState(() {
+                        selectedModel = v.toUpperCase();
+                        _modelIsOther = false;
+                        otherModelCtrl.text = '';
+                        modelCtrl.text = v.toUpperCase();
+                      });
+                    },
+              decoration: _dec(
+                label: 'Model',
+                hint: selectedMake == null
+                    ? 'Select make first'
+                    : (loadingModels ? 'Loading models…' : 'Select model'),
+                icon: Icons.car_repair_outlined,
+              ),
+              validator: (v) => v == null ? 'Model is required' : null,
+            ),
+
+            if (_modelIsOther) ...[
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: otherModelCtrl,
+                autovalidateMode: AutovalidateMode.onUserInteraction,
+                inputFormatters: [LengthLimitingTextInputFormatter(40), _upper],
+                decoration: _dec(label: 'Other Model', hint: 'Enter model', icon: Icons.edit_outlined),
+                validator: (v) => _alphaNumValidator(v, fieldName: 'Other Model', min: 2),
+              ),
+            ],
+
+            const SizedBox(height: 12),
+
+            _dropField(
+              label: 'Grade / Variant',
+              value: gradeVariantCtrl.text.isEmpty ? null : gradeVariantCtrl.text,
+              options: _gradeVariantOptions,
+              icon: Icons.badge_outlined,
+              hint: 'Select grade / variant',
+              validator: (v) => v == null ? 'Grade / Variant is required' : null,
+              onChanged: (v) => setState(() => gradeVariantCtrl.text = v ?? ''),
+            ),
+
+            const SizedBox(height: 12),
+
+            TextFormField(
+              controller: engineCapacityCtrl,
+              autovalidateMode: AutovalidateMode.onUserInteraction,
+              inputFormatters: [LengthLimitingTextInputFormatter(12), _upper],
+              decoration: _dec(label: 'Engine Capacity', hint: 'e.g. 2.0L', icon: Icons.speed_outlined),
+              validator: (v) => _alphaNumValidator(v, fieldName: 'Engine Capacity', min: 1),
+            ),
+
+            const SizedBox(height: 12),
+
+            TextFormField(
+              controller: modelYearCtrl,
+              autovalidateMode: AutovalidateMode.onUserInteraction,
+              keyboardType: TextInputType.number,
+              inputFormatters: _yearFormatters(),
+              decoration: _dec(label: 'Model Year', hint: '2020', icon: Icons.calendar_today_outlined),
+              validator: _yearValidator,
+            ),
+
+            const SizedBox(height: 12),
+
+            _dropField(
+              label: 'Cylinder Size',
+              value: cylinderSizeCtrl.text.isEmpty ? null : cylinderSizeCtrl.text,
+              options: _cylinderSizeOptions,
+              icon: Icons.settings_outlined,
+              hint: 'Select cylinder size',
+              validator: (v) => v == null ? 'Cylinder Size is required' : null,
+              onChanged: (v) => setState(() => cylinderSizeCtrl.text = v ?? ''),
+            ),
+
+            const SizedBox(height: 12),
+
+            _dropField(
+              label: 'Transmission',
+              value: transmissionCtrl.text.isEmpty ? null : transmissionCtrl.text,
+              options: _transmissionOptions,
+              icon: Icons.swap_horiz_outlined,
+              hint: 'Select transmission',
+              validator: (v) => v == null ? 'Transmission is required' : null,
+              onChanged: (v) => setState(() => transmissionCtrl.text = v ?? ''),
+            ),
+
+            const SizedBox(height: 12),
+
+            _dropField(
+              label: 'Fuel Type',
+              value: fuelTypeCtrl.text.isEmpty ? null : fuelTypeCtrl.text,
+              options: _fuelTypeOptions,
+              icon: Icons.local_gas_station_outlined,
+              hint: 'Select fuel type',
+              validator: (v) => v == null ? 'Fuel Type is required' : null,
+              onChanged: (v) => setState(() => fuelTypeCtrl.text = v ?? ''),
+            ),
+
+            const SizedBox(height: 12),
+
+            _dropField(
+              label: 'Drive Train',
+              value: driveTrainCtrl.text.isEmpty ? null : driveTrainCtrl.text,
+              options: _driveTrainOptions,
+              icon: Icons.grid_on_outlined,
+              hint: 'Select drive train',
+              validator: (v) => v == null ? 'Drive Train is required' : null,
+              onChanged: (v) => setState(() => driveTrainCtrl.text = v ?? ''),
+            ),
+
+            const SizedBox(height: 12),
+
+            _dropField(
+              label: 'Specs',
+              value: specsCtrl.text.isEmpty ? null : specsCtrl.text,
+              options: _specsOptions,
+              icon: Icons.public_outlined,
+              hint: 'Select specs',
+              validator: (v) => v == null ? 'Specs is required' : null,
+              onChanged: (v) => setState(() => specsCtrl.text = v ?? ''),
+            ),
+
+            const SizedBox(height: 12),
+
+            TextFormField(
+              controller: odometerCtrl,
+              autovalidateMode: AutovalidateMode.onUserInteraction,
+              keyboardType: TextInputType.number,
+              inputFormatters: _digitsFormatters(max: 10),
+              decoration: _dec(label: 'Odometer Reading', hint: 'e.g. 156468', icon: Icons.av_timer_outlined),
+              validator: (v) => _numberValidator(v, fieldName: 'Odometer Reading', max: 10),
+            ),
+
+            const SizedBox(height: 12),
+
+            TextFormField(
+              controller: registrationNoCtrl,
+              autovalidateMode: AutovalidateMode.onUserInteraction,
+              inputFormatters: [LengthLimitingTextInputFormatter(20), _upper],
+              decoration: _dec(label: 'Registration No.', hint: 'e.g. ABC123', icon: Icons.confirmation_number_outlined),
+              validator: (v) => _alphaNumValidator(v, fieldName: 'Registration No', min: 3),
+            ),
+
+            const SizedBox(height: 12),
+
+            TextFormField(
+              controller: emiratesRegAtCtrl,
+              autovalidateMode: AutovalidateMode.onUserInteraction,
+              inputFormatters: [LengthLimitingTextInputFormatter(20), _upper],
+              decoration: _dec(label: 'Emirates Reg. At', hint: 'e.g. DUBAI', icon: Icons.location_city_outlined),
+              validator: (v) => _alphaNumValidator(v, fieldName: 'Emirates Reg. At', min: 2),
+            ),
+
+            const SizedBox(height: 12),
+
+            TextFormField(
+              controller: chassisNoCtrl,
+              autovalidateMode: AutovalidateMode.onUserInteraction,
+              inputFormatters: [LengthLimitingTextInputFormatter(25), _upper],
+              decoration: _dec(label: 'Chassis No.', hint: 'e.g. JH4KA9650MC000000', icon: Icons.numbers_outlined),
+              validator: (v) => _alphaNumValidator(v, fieldName: 'Chassis No', min: 6),
+            ),
+
+            const SizedBox(height: 12),
+
+            _dropField(
+              label: 'Ownership Type',
+              value: ownershipTypeCtrl.text.isEmpty ? null : ownershipTypeCtrl.text,
+              options: _ownershipTypeOptions,
+              icon: Icons.person_outline,
+              hint: 'Select ownership type',
+              validator: (v) => v == null ? 'Ownership Type is required' : null,
+              onChanged: (v) => setState(() => ownershipTypeCtrl.text = v ?? ''),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _serviceWarrantySection() {
+    return _sectionCard(
+      title: 'Service & Warranty Overview',
+      icon: Icons.assignment_outlined,
+      child: Form(
+        key: _serviceFormKey,
+        child: Column(
+          children: [
+            _dropField(
+              label: 'Service History',
+              value: serviceHistory,
+              options: const ['Available', 'Not Available'],
+              icon: Icons.history_outlined,
+              hint: 'Select',
+              validator: (v) => v == null ? 'Service History is required' : null,
+              onChanged: (v) => setState(() => serviceHistory = v),
+            ),
+            const SizedBox(height: 12),
+            _dropField(
+              label: 'Serviced With',
+              value: servicedWithCtrl.text.isEmpty ? null : servicedWithCtrl.text,
+              options: _servicedWithOptions,
+              icon: Icons.build_outlined,
+              hint: 'Select',
+              validator: (v) => v == null ? 'Serviced With is required' : null,
+              onChanged: (v) => setState(() => servicedWithCtrl.text = v ?? ''),
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: lastServiceDateCtrl,
+              autovalidateMode: AutovalidateMode.onUserInteraction,
+              readOnly: true,
+              onTap: _pickLastServiceDate,
+              decoration: _dec(label: 'Last Service Date', hint: 'Select date', icon: Icons.date_range_outlined),
+              validator: (v) => _req(v, msg: 'Last Service Date is required'),
+            ),
+            const SizedBox(height: 12),
+            _dropField(
+              label: 'Warranty Available',
+              value: warrantyAvailable,
+              options: const ['Yes', 'No'],
+              icon: Icons.verified_outlined,
+              hint: 'Select',
+              validator: (v) => v == null ? 'Warranty Available is required' : null,
+              onChanged: (v) => setState(() => warrantyAvailable = v),
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: warrantyEndsInCtrl,
+              autovalidateMode: AutovalidateMode.onUserInteraction,
+              readOnly: true,
+              onTap: _pickWarrantyEndsMonthYear,
+              decoration: _dec(label: 'Warranty Ends In (Month/Year)', hint: 'Select month', icon: Icons.event_outlined),
+              validator: (v) => _req(v, msg: 'Warranty Ends In is required'),
+            ),
+            const SizedBox(height: 12),
+            _dropField(
+              label: 'Had Accidents',
+              value: hadAccidents,
+              options: const ['Yes', 'No'],
+              icon: Icons.report_problem_outlined,
+              hint: 'Select',
+              validator: (v) => v == null ? 'Had Accidents is required' : null,
+              onChanged: (v) => setState(() => hadAccidents = v),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _interiorSection() {
+    return _sectionCard(
+      title: 'Interior Details',
+      icon: Icons.chair_outlined,
+      child: Form(
+        key: _interiorFormKey,
+        child: Column(
+          children: [
+            _dropField(
+              label: 'Seats',
+              value: seatsCtrl.text.isEmpty ? null : seatsCtrl.text,
+              options: _seatsOptions,
+              icon: Icons.event_seat_outlined,
+              hint: 'Select seats',
+              validator: (v) => v == null ? 'Seats is required' : null,
+              onChanged: (v) => setState(() => seatsCtrl.text = v ?? ''),
+            ),
+            const SizedBox(height: 12),
+            _dropField(
+              label: 'Interior Color',
+              value: interiorColorCtrl.text.isEmpty ? null : interiorColorCtrl.text,
+              options: _colorOptions,
+              icon: Icons.palette_outlined,
+              hint: 'Select color',
+              validator: (v) => v == null ? 'Interior Color is required' : null,
+              onChanged: (v) => setState(() => interiorColorCtrl.text = v ?? ''),
+            ),
+            const SizedBox(height: 12),
+            _dropField(
+              label: 'Upholstery',
+              value: upholsteryCtrl.text.isEmpty ? null : upholsteryCtrl.text,
+              options: _upholsteryOptions,
+              icon: Icons.texture_outlined,
+              hint: 'Select upholstery',
+              validator: (v) => v == null ? 'Upholstery is required' : null,
+              onChanged: (v) => setState(() => upholsteryCtrl.text = v ?? ''),
+            ),
+            const SizedBox(height: 12),
+            _dropField(
+              label: 'Number of Keys',
+              value: numberOfKeysCtrl.text.isEmpty ? null : numberOfKeysCtrl.text,
+              options: _numberOfKeysOptions,
+              icon: Icons.key_outlined,
+              hint: 'Select keys count',
+              validator: (v) => v == null ? 'Number of Keys is required' : null,
+              onChanged: (v) => setState(() => numberOfKeysCtrl.text = v ?? ''),
+            ),
+            const SizedBox(height: 12),
+            _dropField(
+              label: 'Modification Done',
+              value: interiorModificationDone,
+              options: const ['Yes', 'No'],
+              icon: Icons.construction_outlined,
+              hint: 'Select',
+              validator: (v) => v == null ? 'Modification Done is required' : null,
+              onChanged: (v) => setState(() => interiorModificationDone = v),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _exteriorSection() {
+    return _sectionCard(
+      title: 'Exterior Details',
+      icon: Icons.directions_car_filled_outlined,
+      child: Form(
+        key: _exteriorFormKey,
+        child: Column(
+          children: [
+            _dropField(
+              label: 'Exterior Color',
+              value: exteriorColorCtrl.text.isEmpty ? null : exteriorColorCtrl.text,
+              options: _colorOptions,
+              icon: Icons.palette_outlined,
+              hint: 'Select color',
+              validator: (v) => v == null ? 'Exterior Color is required' : null,
+              onChanged: (v) => setState(() => exteriorColorCtrl.text = v ?? ''),
+            ),
+            const SizedBox(height: 12),
+            _dropField(
+              label: 'Doors',
+              value: doorsCtrl.text.isEmpty ? null : doorsCtrl.text,
+              options: _doorsOptions,
+              icon: Icons.door_front_door_outlined,
+              hint: 'Select doors',
+              validator: (v) => v == null ? 'Doors is required' : null,
+              onChanged: (v) => setState(() => doorsCtrl.text = v ?? ''),
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: wheelSizeCtrl,
+              autovalidateMode: AutovalidateMode.onUserInteraction,
+              keyboardType: TextInputType.number,
+              inputFormatters: _digitsFormatters(max: 2),
+              decoration: _dec(label: 'Wheel Size', hint: 'e.g. 20', icon: Icons.circle_outlined),
+              validator: (v) => _numberValidator(v, fieldName: 'Wheel Size', max: 2),
+            ),
+            const SizedBox(height: 12),
+            _dropField(
+              label: 'Modification Done',
+              value: exteriorModificationDone,
+              options: const ['Yes', 'No'],
+              icon: Icons.construction_outlined,
+              hint: 'Select',
+              validator: (v) => v == null ? 'Modification Done is required' : null,
+              onChanged: (v) => setState(() => exteriorModificationDone = v),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _damagedCoordinatesSection() {
+    return _sectionCard(
+      title: 'Damaged Coordinates',
+      icon: Icons.place_outlined,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Tap on the car to add a damage point. A popup will open to add description and photos.',
+            style: TextStyle(
+              color: Colors.black.withOpacity(0.55),
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 12),
+          DamageMarkerEditor(
+            imageAsset: _carTopImageAsset,
+            inspectionRequestId: widget.requestId,
+            markers: _damagedCoordinates,
+            onChanged: (next) => setState(() => _damagedCoordinates = next),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _damagedCoordinates.isEmpty ? null : () => setState(() => _damagedCoordinates = []),
+                  icon: const Icon(Icons.clear_all),
+                  label: const Text('Clear All'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _checklistTypeSection(ChecklistTemplate selected, int ti) {
+    final type = selected.types[ti];
+
+    return _sectionCard(
+      title: type.typeName,
+      icon: Icons.fact_check_outlined,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (type.allowOverallRemarks)
+            TextField(
+              controller: _overallRemarks[ti],
+              maxLines: 2,
+              inputFormatters: [LengthLimitingTextInputFormatter(200), _upper],
+              decoration: _dec(label: 'Overall Remarks', hint: 'Write overall remarks', icon: Icons.notes_outlined),
+            ),
+
+          if (type.allowOverallPhotos) ...[
+            const SizedBox(height: 12),
+            MediaUploader(
+              title: 'Overall Media',
+              initialPhotos: _overallPhotos[ti] ?? const [],
+              initialVideos: _overallVideos[ti] ?? const [],
+              onPhotosChanged: (v) => setState(() => _overallPhotos[ti] = v),
+              onVideosChanged: (v) => setState(() => _overallVideos[ti] = v),
+              uploadPhoto: ({
+                required Uint8List bytes,
+                required String contentType,
+                required String fileName,
+              }) {
+                return inspectionRequestsService.uploadInspectionMedia(
+                  inspectionRequestId: widget.requestId,
+                  typeName: type.typeName,
+                  bytes: bytes,
+                  fileName: fileName,
+                  contentType: contentType,
+                  mediaType: 'photos',
+                );
+              },
+              uploadVideo: ({
+                required Uint8List bytes,
+                required String contentType,
+                required String fileName,
+              }) {
+                return inspectionRequestsService.uploadInspectionMedia(
+                  inspectionRequestId: widget.requestId,
+                  typeName: type.typeName,
+                  bytes: bytes,
+                  fileName: fileName,
+                  contentType: contentType,
+                  mediaType: 'videos',
+                );
+              },
+            ),
+          ],
+
+          const SizedBox(height: 16),
+
+          ...List.generate(type.checklistItems.length, (ii) {
+            final item = type.checklistItems[ii];
+            final key = '$ti:$ii';
+            final required = item.isRequired;
+            final urls = _itemPhotos[key] ?? const <String>[];
+
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 14),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: Colors.black.withOpacity(0.07)),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${item.position}. ${item.label}${required ? ' *' : ''}',
+                        style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14),
+                      ),
+                      if ((item.description ?? '').trim().isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Text(item.description!, style: const TextStyle(color: Colors.black54)),
+                      ],
+                      const SizedBox(height: 12),
+
+                      DropdownButtonFormField<String>(
+                        value: _grade[key],
+                        autovalidateMode: AutovalidateMode.onUserInteraction,
+                        items: _gradeOptions.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(),
+                        onChanged: (v) => setState(() => _grade[key] = v),
+                        decoration: _dec(
+                          label: required ? 'Condition *' : 'Condition',
+                          hint: 'Select condition',
+                          icon: Icons.grade_outlined,
+                        ),
+                      ),
+
+                      const SizedBox(height: 12),
+                      ImageUploader(
+                        typeName: type.typeName,
+                        inspectionRequestId: widget.requestId,
+                        title: 'Photos',
+                        initialImages: urls,
+                        onChanged: (v) => setState(() => _itemPhotos[key] = v),
+                        enabled: true,
+                        mediaType: 'photos',
+                      ),
+
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _remarks[key],
+                        maxLines: 2,
+                        inputFormatters: [LengthLimitingTextInputFormatter(200), _upper],
+                        decoration: _dec(label: 'Remarks', hint: 'Write remarks', icon: Icons.comment_outlined),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCurrentSection(ChecklistTemplate selected) {
+    if (_section == 0) return _vehicleDetailsSection();
+    if (_section == 1) return _serviceWarrantySection();
+    if (_section == 2) return _interiorSection();
+    if (_section == 3) return _exteriorSection();
+
+    final damageIndex = 4 + selected.types.length;
+    if (_section == damageIndex) return _damagedCoordinatesSection();
+
+    final ti = _section - 4;
+    return _checklistTypeSection(selected, ti);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AppShell(
+      title: 'Start Inspection',
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1100),
+          child: FutureBuilder<List<ChecklistTemplate>>(
+            future: _future,
+            builder: (context, snap) {
+              if (snap.connectionState == ConnectionState.waiting) {
+                return const Padding(
+                  padding: EdgeInsets.all(40),
+                  child: Center(child: CircularProgressIndicator()),
+                );
+              }
+
+              if (snap.hasError) {
+                return Padding(
+                  padding: const EdgeInsets.all(18),
+                  child: Text('Failed to load template: ${snap.error}'),
+                );
+              }
+
+              final templates = snap.data ?? [];
+              if (templates.isEmpty) {
+                return const Padding(
+                  padding: EdgeInsets.all(18),
+                  child: Text('No active checklist templates found.'),
+                );
+              }
+
+              final selected = _selectedTemplate ?? templates.first;
+              final total = _totalSections(selected);
+
+              if (_section >= total) _section = total - 1;
+
+              final title = _sectionTitle(selected, _section);
+              final progress = total == 0 ? 0.0 : (_section + 1) / total;
+
+              return ListView(
+                controller: _scrollCtrl,
+                padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Start Inspection',
+                          style: Theme.of(context)
+                              .textTheme
+                              .headlineSmall
+                              ?.copyWith(fontWeight: FontWeight.w900),
+                        ),
+                      ),
+                      if (_startingInspection)
+                        const Padding(
+                          padding: EdgeInsets.only(right: 10),
+                          child: SizedBox(
+                            height: 18,
+                            width: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        )
+                      else if (_startError != null)
+                        TextButton.icon(
+                          onPressed: _bootstrapStartInspection,
+                          icon: const Icon(Icons.refresh, size: 18),
+                          label: const Text('Retry'),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+
+                  if (templates.length > 1)
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Row(
+                          children: [
+                            const Text('Checklist Template:', style: TextStyle(fontWeight: FontWeight.w800)),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: DropdownButtonHideUnderline(
+                                child: DropdownButton<ChecklistTemplate>(
+                                  value: selected,
+                                  isExpanded: true,
+                                  items: templates
+                                      .map((t) => DropdownMenuItem(value: t, child: Text(t.name ?? t.id)))
+                                      .toList(),
+                                  onChanged: (v) {
+                                    if (v == null) return;
+                                    setState(() {
+                                      _selectedTemplate = v;
+                                      _primeChecklistControllers();
+                                      _section = 0;
+                                      _progressApplied = false; // allow apply if draft exists
+                                    });
+                                    _applyProgressIfReady();
+                                  },
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                  const SizedBox(height: 10),
+
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(child: Text(title, style: const TextStyle(fontWeight: FontWeight.w900))),
+                              Text(
+                                'Section ${_section + 1} / $total',
+                                style: const TextStyle(color: Colors.black54, fontWeight: FontWeight.w700),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          LinearProgressIndicator(value: progress),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 12),
+                  _buildCurrentSection(selected),
+                  const SizedBox(height: 12),
+
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _section == 0 ? null : _back,
+                          icon: const Icon(Icons.arrow_back),
+                          label: const Text('Back'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _isLastSection(selected)
+                            ? FilledButton.icon(
+                                onPressed: (_submitting || _savingDraft) ? null : _submit,
+                                icon: _submitting
+                                    ? const SizedBox(
+                                        height: 18,
+                                        width: 18,
+                                        child: CircularProgressIndicator(strokeWidth: 2),
+                                      )
+                                    : const Icon(Icons.check),
+                                label: Text(_submitting ? 'Submitting...' : 'Submit'),
+                              )
+                            : FilledButton.icon(
+                                onPressed: (_savingDraft || _startingInspection) ? null : () => _next(selected),
+                                icon: _savingDraft
+                                    ? const SizedBox(
+                                        height: 18,
+                                        width: 18,
+                                        child: CircularProgressIndicator(strokeWidth: 2),
+                                      )
+                                    : const Icon(Icons.arrow_forward),
+                                label: Text(_savingDraft ? 'Saving...' : 'Next'),
+                              ),
+                      ),
+                    ],
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ============================
+  // SUBMIT (same as before)
+  // ============================
+  bool _validateChecklistAll() {
     final t = _selectedTemplate;
     if (t == null) {
       _snack('No active checklist template found', 'error');
@@ -653,9 +2101,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
         'typeName': type.typeName,
         'checklistItems': items,
         'overallRemarks':
-            (overallRemarksText != null && overallRemarksText.isNotEmpty)
-                ? overallRemarksText
-                : '',
+            (overallRemarksText != null && overallRemarksText.isNotEmpty) ? overallRemarksText : '',
         'overallPhotos': _overallPhotos[ti] ?? [],
         'videos': _overallVideos[ti] ?? [],
       });
@@ -664,247 +2110,15 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
     return out;
   }
 
-  bool _validateReportData() {
-    // ✅ ensure make/model text controllers are populated correctly (no network)
-    if (!_applyMakeModelToControllersNoNetwork()) return false;
-
-    // Vehicle Details
-    final v3 = _alphaNumValidator(
-      gradeVariantCtrl.text,
-      fieldName: 'Grade / Variant',
-      min: 2,
-    );
-    if (v3 != null) {
-      _snack(v3, 'warning');
-      return false;
-    }
-
-    final v4 = _alphaNumValidator(
-      engineCapacityCtrl.text,
-      fieldName: 'Engine Capacity',
-      min: 1,
-    );
-    if (v4 != null) {
-      _snack(v4, 'warning');
-      return false;
-    }
-
-    final v5 = _yearValidator(modelYearCtrl.text);
-    if (v5 != null) {
-      _snack(v5, 'warning');
-      return false;
-    }
-
-    final v6 = _alphaNumValidator(
-      cylinderSizeCtrl.text,
-      fieldName: 'Cylinder Size',
-      min: 1,
-    );
-    if (v6 != null) {
-      _snack(v6, 'warning');
-      return false;
-    }
-
-    if (transmissionCtrl.text.trim().isEmpty) {
-      _snack('Transmission is required', 'warning');
-      return false;
-    }
-    if (fuelTypeCtrl.text.trim().isEmpty) {
-      _snack('Fuel Type is required', 'warning');
-      return false;
-    }
-
-    final v7 = _alphaNumValidator(
-      driveTrainCtrl.text,
-      fieldName: 'Drive Train',
-      min: 1,
-    );
-    if (v7 != null) {
-      _snack(v7, 'warning');
-      return false;
-    }
-
-    final v8 = _alphaNumValidator(specsCtrl.text, fieldName: 'Specs', min: 1);
-    if (v8 != null) {
-      _snack(v8, 'warning');
-      return false;
-    }
-
-    final v9 =
-        _numberValidator(odometerCtrl.text, fieldName: 'Odometer Reading', max: 10);
-    if (v9 != null) {
-      _snack(v9, 'warning');
-      return false;
-    }
-
-    final v10 = _alphaNumValidator(
-      registrationNoCtrl.text,
-      fieldName: 'Registration No',
-      min: 3,
-    );
-    if (v10 != null) {
-      _snack(v10, 'warning');
-      return false;
-    }
-
-    final v11 = _alphaNumValidator(
-      emiratesRegAtCtrl.text,
-      fieldName: 'Emirates Reg. At',
-      min: 2,
-    );
-    if (v11 != null) {
-      _snack(v11, 'warning');
-      return false;
-    }
-
-    final v12 = _alphaNumValidator(
-      chassisNoCtrl.text,
-      fieldName: 'Chassis No',
-      min: 6,
-    );
-    if (v12 != null) {
-      _snack(v12, 'warning');
-      return false;
-    }
-
-    final v13 = _alphaNumValidator(
-      ownershipTypeCtrl.text,
-      fieldName: 'Ownership Type',
-      min: 2,
-    );
-    if (v13 != null) {
-      _snack(v13, 'warning');
-      return false;
-    }
-
-    // Service & Warranty
-    if (serviceHistory == null) {
-      _snack('Service History is required', 'warning');
-      return false;
-    }
-
-    final s1 = _alphaNumValidator(
-      servicedWithCtrl.text,
-      fieldName: 'Serviced With',
-      min: 2,
-    );
-    if (s1 != null) {
-      _snack(s1, 'warning');
-      return false;
-    }
-
-    final s2 = _req(lastServiceDateCtrl.text, msg: 'Last Service Date is required');
-    if (s2 != null) {
-      _snack(s2, 'warning');
-      return false;
-    }
-
-    if (warrantyAvailable == null) {
-      _snack('Warranty Available is required', 'warning');
-      return false;
-    }
-
-    final s3 = _req(warrantyEndsInCtrl.text, msg: 'Warranty Ends In is required');
-    if (s3 != null) {
-      _snack(s3, 'warning');
-      return false;
-    }
-
-    if (hadAccidents == null) {
-      _snack('Had Accidents is required', 'warning');
-      return false;
-    }
-
-    // Interior
-    final i1 = _numberValidator(seatsCtrl.text, fieldName: 'Seats', max: 2);
-    if (i1 != null) {
-      _snack(i1, 'warning');
-      return false;
-    }
-
-    final i2 = _alphaNumValidator(
-      interiorColorCtrl.text,
-      fieldName: 'Interior Color',
-      min: 2,
-    );
-    if (i2 != null) {
-      _snack(i2, 'warning');
-      return false;
-    }
-
-    final i3 = _alphaNumValidator(
-      upholsteryCtrl.text,
-      fieldName: 'Upholstery',
-      min: 2,
-    );
-    if (i3 != null) {
-      _snack(i3, 'warning');
-      return false;
-    }
-
-    final i4 = _numberValidator(
-      numberOfKeysCtrl.text,
-      fieldName: 'Number of Keys',
-      max: 1,
-    );
-    if (i4 != null) {
-      _snack(i4, 'warning');
-      return false;
-    }
-
-    if (interiorModificationDone == null) {
-      _snack('Interior Modification Done is required', 'warning');
-      return false;
-    }
-
-    // Exterior
-    final e1 = _alphaNumValidator(
-      exteriorColorCtrl.text,
-      fieldName: 'Exterior Color',
-      min: 2,
-    );
-    if (e1 != null) {
-      _snack(e1, 'warning');
-      return false;
-    }
-
-    final e2 = _numberValidator(doorsCtrl.text, fieldName: 'Doors', max: 1);
-    if (e2 != null) {
-      _snack(e2, 'warning');
-      return false;
-    }
-
-    final e3 = _numberValidator(wheelSizeCtrl.text, fieldName: 'Wheel Size', max: 2);
-    if (e3 != null) {
-      _snack(e3, 'warning');
-      return false;
-    }
-
-    if (exteriorModificationDone == null) {
-      _snack('Exterior Modification Done is required', 'warning');
-      return false;
-    }
-
-    return true;
-  }
-
   Future<void> _submit() async {
     if (_submitting) return;
 
-    // ✅ keep make/model synced before validation
     if (!_applyMakeModelToControllersNoNetwork()) return;
-
-    if (!_validateReportData()) {
-      _snack('Please fix the highlighted fields in report sections.', 'warning');
-      return;
-    }
-
-    if (!_validateChecklist()) return;
+    if (!_validateChecklistAll()) return;
 
     setState(() => _submitting = true);
 
     try {
-      // ✅ If OTHER selected, store new make/model via API before submitting inspection
       final makeName = _makeIsOther
           ? otherMakeCtrl.text.trim().toUpperCase()
           : (selectedMake ?? '').trim().toUpperCase();
@@ -915,19 +2129,16 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
 
       String? makeId = selectedMakeId;
 
-      // 1) create make if OTHER (get id)
       if (_makeIsOther) {
         final createdId = await inspectionRequestsService.addVehicleMake(makeName);
         if (createdId != null && createdId.trim().isNotEmpty) {
           makeId = createdId.trim();
         } else {
-          // try refresh + lookup
           await _loadMakes();
           makeId = _makeIdByName[makeName];
         }
       }
 
-      // 2) create model if OTHER (needs makeId)
       if (_modelIsOther) {
         if (makeId == null || makeId.trim().isEmpty) {
           throw Exception('makeId missing for adding model');
@@ -938,7 +2149,6 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
         );
       }
 
-      // ✅ finally write into controllers (what gets submitted)
       makeCtrl.text = makeName;
       modelCtrl.text = modelName;
 
@@ -950,10 +2160,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
         'inspectionDate': DateTime.now().toIso8601String(),
         'status': 'draft',
         ..._buildReportPayload(),
-
-        // ✅ NEW
         'damaged_coordinates': _buildDamagedCoordinatesPayload(),
-
         'types': _buildTypesPayload(),
       };
 
@@ -973,1106 +2180,5 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
-  }
-
-  // ============================
-  // VALIDATORS + FORMATTERS
-  // ============================
-
-  String? _req(String? v, {String msg = 'Required'}) {
-    if (v == null) return msg;
-    if (v.trim().isEmpty) return msg;
-    return null;
-  }
-
-  String? _alphaNumValidator(String? v, {required String fieldName, int min = 2}) {
-    final r = _req(v, msg: '$fieldName is required');
-    if (r != null) return r;
-    final s = v!.trim();
-    if (s.length < min) return '$fieldName must be at least $min characters';
-    if (!RegExp(r"^[A-Za-z0-9\s'./-]+$").hasMatch(s)) {
-      return '$fieldName contains invalid characters';
-    }
-    return null;
-  }
-
-  String? _yearValidator(String? v) {
-    final r = _req(v, msg: 'Model Year is required');
-    if (r != null) return r;
-    final year = int.tryParse(v!.trim());
-    if (year == null) return 'Model Year must be a number';
-    final now = DateTime.now().year;
-    if (year < 1980 || year > now + 1) {
-      return 'Enter a valid year (1980 - ${now + 1})';
-    }
-    return null;
-  }
-
-  String? _numberValidator(String? v, {required String fieldName, int max = 12}) {
-    final r = _req(v, msg: '$fieldName is required');
-    if (r != null) return r;
-    final s = v!.trim();
-    if (!RegExp(r'^\d+$').hasMatch(s)) return '$fieldName must be numeric';
-    if (s.length > max) return '$fieldName is too long';
-    return null;
-  }
-
-  List<TextInputFormatter> _freeTextFormatters({int max = 40}) => [
-        LengthLimitingTextInputFormatter(max),
-        FilteringTextInputFormatter.allow(RegExp(r"[A-Za-z0-9\s'./-]")),
-      ];
-
-  List<TextInputFormatter> _digitsFormatters({int max = 12}) => [
-        LengthLimitingTextInputFormatter(max),
-        FilteringTextInputFormatter.digitsOnly,
-      ];
-
-  List<TextInputFormatter> _yearFormatters() => [
-        LengthLimitingTextInputFormatter(4),
-        FilteringTextInputFormatter.digitsOnly,
-      ];
-
-  // ============================
-  // DATE PICKERS
-  // ============================
-
-  Future<void> _pickLastServiceDate() async {
-    final now = DateTime.now();
-    DateTime initial = now;
-    final raw = lastServiceDateCtrl.text.trim();
-    final parts = raw.split('-');
-    if (parts.length == 3) {
-      final y = int.tryParse(parts[0]);
-      final m = int.tryParse(parts[1]);
-      final d = int.tryParse(parts[2]);
-      if (y != null && m != null && d != null) {
-        initial = DateTime(y, m, d);
-      }
-    }
-
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: initial,
-      firstDate: DateTime(1990, 1, 1),
-      lastDate: now.add(const Duration(days: 365 * 2)),
-    );
-
-    if (picked == null) return;
-    final s =
-        '${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
-    setState(() => lastServiceDateCtrl.text = s);
-  }
-
-  Future<void> _pickWarrantyEndsMonthYear() async {
-    final now = DateTime.now();
-    DateTime initial = DateTime(now.year, now.month, 1);
-
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: initial,
-      firstDate: DateTime(1990, 1, 1),
-      lastDate: DateTime(now.year + 10, 12, 31),
-      helpText: 'Select warranty end month (pick any day)',
-    );
-
-    if (picked == null) return;
-
-    const months = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec'
-    ];
-    final mmmyy =
-        '${months[picked.month - 1]}-${(picked.year % 100).toString().padLeft(2, '0')}'
-            .toUpperCase();
-    setState(() => warrantyEndsInCtrl.text = mmmyy);
-  }
-
-  // ============================
-  // UI HELPERS
-  // ============================
-
-  InputDecoration _dec({required String label, String? hint, IconData? icon}) {
-    return InputDecoration(
-      labelText: label,
-      hintText: hint,
-      prefixIcon: icon == null ? null : Icon(icon),
-      filled: true,
-      fillColor: Colors.white,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide(color: Colors.black.withOpacity(0.10)),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: const BorderSide(color: Color(0xFF1E5EFF), width: 1.6),
-      ),
-      errorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: const BorderSide(color: Colors.redAccent),
-      ),
-      focusedErrorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: const BorderSide(color: Colors.redAccent, width: 1.6),
-      ),
-    );
-  }
-
-  Widget _sectionCard({
-    required String title,
-    required IconData icon,
-    required Widget child,
-  }) {
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFFF4F6FB),
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: Colors.black.withOpacity(0.06)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 22,
-            offset: const Offset(0, 12),
-          )
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  height: 38,
-                  width: 38,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF0B1220),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Icon(icon, color: Colors.white, size: 18),
-                ),
-                const SizedBox(width: 10),
-                Text(
-                  title,
-                  style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            child,
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _dropField({
-    required String label,
-    required String? value,
-    required List<String> options,
-    required void Function(String?) onChanged,
-    String? hint,
-    IconData? icon,
-    String? Function(String?)? validator,
-  }) {
-    return DropdownButtonFormField<String>(
-      value: value,
-      autovalidateMode: AutovalidateMode.onUserInteraction,
-      items: options.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(),
-      onChanged: onChanged,
-      decoration: _dec(label: label, hint: hint, icon: icon),
-      validator: validator,
-    );
-  }
-
-  Widget _textFormField({
-    required TextEditingController c,
-    required String label,
-    String? hint,
-    IconData? icon,
-    TextInputType? keyboardType,
-    List<TextInputFormatter>? inputFormatters,
-    String? Function(String?)? validator,
-    bool readOnly = false,
-    VoidCallback? onTap,
-    int maxLines = 1,
-  }) {
-    final fmts = <TextInputFormatter>[
-      ...(inputFormatters ?? const <TextInputFormatter>[]),
-      _upper,
-    ];
-
-    return TextFormField(
-      controller: c,
-      autovalidateMode: AutovalidateMode.onUserInteraction,
-      keyboardType: keyboardType,
-      inputFormatters: fmts,
-      validator: validator,
-      readOnly: readOnly,
-      onTap: onTap,
-      maxLines: maxLines,
-      decoration: _dec(label: label, hint: hint, icon: icon),
-    );
-  }
-
-  // ============================
-  // SECTIONS
-  // ============================
-
-  Widget _vehicleDetailsSection() {
-    return _sectionCard(
-      title: 'Vehicle Details',
-      icon: Icons.directions_car_outlined,
-      child: Form(
-        key: _vehicleFormKey,
-        child: Column(
-          children: [
-            // ✅ MAKE (API) + OTHER
-            DropdownButtonFormField<String>(
-              value: selectedMake,
-              autovalidateMode: AutovalidateMode.onUserInteraction,
-              items: makes.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
-              onChanged: loadingMakes
-                  ? null
-                  : (v) async {
-                      if (v == null) return;
-
-                      // OTHER
-                      if (v == 'OTHER') {
-                        setState(() {
-                          selectedMake = 'OTHER';
-                          selectedMakeId = null;
-                          _makeIsOther = true;
-
-                          otherMakeCtrl.text = '';
-                          makeCtrl.text = '';
-
-                          models = const ['OTHER'];
-                          selectedModel = 'OTHER';
-                          _modelIsOther = true;
-
-                          otherModelCtrl.text = '';
-                          modelCtrl.text = '';
-                        });
-                        return;
-                      }
-
-                      // NORMAL make
-                      final mkName = v.trim().toUpperCase();
-                      final mkId = _makeIdByName[mkName] ?? '';
-
-                      setState(() {
-                        selectedMake = mkName;
-                        selectedMakeId = mkId;
-
-                        _makeIsOther = false;
-                        otherMakeCtrl.text = '';
-                        makeCtrl.text = mkName;
-
-                        selectedModel = null;
-                        _modelIsOther = false;
-                        otherModelCtrl.text = '';
-                        modelCtrl.text = '';
-                        models = [];
-                      });
-
-                      if (mkId.isNotEmpty) {
-                        await _loadModelsForMakeId(mkId);
-                      } else {
-                        _snack('makeId missing for selected make', 'error');
-                        setState(() {
-                          models = const ['OTHER'];
-                          selectedModel = 'OTHER';
-                          _modelIsOther = true;
-                        });
-                      }
-                    },
-              decoration: _dec(
-                label: 'Make',
-                hint: loadingMakes ? 'Loading makes…' : 'Select make',
-                icon: Icons.directions_car_outlined,
-              ),
-              validator: (v) => v == null ? 'Make is required' : null,
-            ),
-
-            if (_makeIsOther) ...[
-              const SizedBox(height: 12),
-              _textFormField(
-                c: otherMakeCtrl,
-                label: 'Other Make',
-                hint: 'Enter make',
-                icon: Icons.edit_outlined,
-                inputFormatters: _freeTextFormatters(max: 40),
-                validator: (v) => _alphaNumValidator(v, fieldName: 'Other Make', min: 2),
-              ),
-            ],
-
-            const SizedBox(height: 12),
-
-            // ✅ MODEL (API) + OTHER
-            DropdownButtonFormField<String>(
-              value: selectedModel,
-              autovalidateMode: AutovalidateMode.onUserInteraction,
-              items: models.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
-              onChanged: (selectedMake == null || loadingModels)
-                  ? null
-                  : (v) {
-                      if (v == null) return;
-
-                      if (v == 'OTHER') {
-                        setState(() {
-                          selectedModel = 'OTHER';
-                          _modelIsOther = true;
-                          otherModelCtrl.text = '';
-                          modelCtrl.text = '';
-                        });
-                        return;
-                      }
-
-                      setState(() {
-                        selectedModel = v.toUpperCase();
-                        _modelIsOther = false;
-                        otherModelCtrl.text = '';
-                        modelCtrl.text = v.toUpperCase();
-                      });
-                    },
-              decoration: _dec(
-                label: 'Model',
-                hint: selectedMake == null
-                    ? 'Select make first'
-                    : (loadingModels ? 'Loading models…' : 'Select model'),
-                icon: Icons.car_repair_outlined,
-              ),
-              validator: (v) => v == null ? 'Model is required' : null,
-            ),
-
-            if (_modelIsOther) ...[
-              const SizedBox(height: 12),
-              _textFormField(
-                c: otherModelCtrl,
-                label: 'Other Model',
-                hint: 'Enter model',
-                icon: Icons.edit_outlined,
-                inputFormatters: _freeTextFormatters(max: 40),
-                validator: (v) => _alphaNumValidator(v, fieldName: 'Other Model', min: 2),
-              ),
-            ],
-
-            const SizedBox(height: 12),
-
-            _textFormField(
-              c: gradeVariantCtrl,
-              label: 'Grade / Variant',
-              hint: 'e.g. XLE / LIMITED',
-              icon: Icons.badge_outlined,
-              inputFormatters: _freeTextFormatters(max: 40),
-              validator: (v) => _alphaNumValidator(v, fieldName: 'Grade / Variant', min: 2),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: _textFormField(
-                    c: engineCapacityCtrl,
-                    label: 'Engine Capacity',
-                    hint: 'e.g. 2.0L',
-                    icon: Icons.speed_outlined,
-                    inputFormatters: _freeTextFormatters(max: 12),
-                    validator: (v) => _alphaNumValidator(v, fieldName: 'Engine Capacity', min: 1),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _textFormField(
-                    c: modelYearCtrl,
-                    label: 'Model Year',
-                    hint: '2020',
-                    icon: Icons.calendar_today_outlined,
-                    keyboardType: TextInputType.number,
-                    inputFormatters: _yearFormatters(),
-                    validator: _yearValidator,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            _textFormField(
-              c: cylinderSizeCtrl,
-              label: 'Cylinder Size',
-              hint: 'e.g. 6 CYLINDER',
-              icon: Icons.settings_outlined,
-              inputFormatters: _freeTextFormatters(max: 20),
-              validator: (v) => _alphaNumValidator(v, fieldName: 'Cylinder Size', min: 1),
-            ),
-            const SizedBox(height: 12),
-            _dropField(
-              label: 'Transmission',
-              value: transmissionCtrl.text.isEmpty ? null : transmissionCtrl.text,
-              options: _transmissionOptions,
-              icon: Icons.swap_horiz_outlined,
-              hint: 'Select transmission',
-              validator: (v) => v == null ? 'Transmission is required' : null,
-              onChanged: (v) => setState(() => transmissionCtrl.text = v ?? ''),
-            ),
-            const SizedBox(height: 12),
-            _dropField(
-              label: 'Fuel Type',
-              value: fuelTypeCtrl.text.isEmpty ? null : fuelTypeCtrl.text,
-              options: _fuelTypeOptions,
-              icon: Icons.local_gas_station_outlined,
-              hint: 'Select fuel type',
-              validator: (v) => v == null ? 'Fuel Type is required' : null,
-              onChanged: (v) => setState(() => fuelTypeCtrl.text = v ?? ''),
-            ),
-            const SizedBox(height: 12),
-            _textFormField(
-              c: driveTrainCtrl,
-              label: 'Drive Train',
-              hint: 'e.g. 4X4 / FWD',
-              icon: Icons.grid_on_outlined,
-              inputFormatters: _freeTextFormatters(max: 10),
-              validator: (v) => _alphaNumValidator(v, fieldName: 'Drive Train', min: 1),
-            ),
-            const SizedBox(height: 12),
-            _textFormField(
-              c: specsCtrl,
-              label: 'Specs',
-              hint: 'e.g. GCC',
-              icon: Icons.public_outlined,
-              inputFormatters: _freeTextFormatters(max: 10),
-              validator: (v) => _alphaNumValidator(v, fieldName: 'Specs', min: 1),
-            ),
-            const SizedBox(height: 12),
-            _textFormField(
-              c: odometerCtrl,
-              label: 'Odometer Reading',
-              hint: 'e.g. 156468',
-              icon: Icons.av_timer_outlined,
-              keyboardType: TextInputType.number,
-              inputFormatters: _digitsFormatters(max: 10),
-              validator: (v) => _numberValidator(v, fieldName: 'Odometer Reading', max: 10),
-            ),
-            const SizedBox(height: 12),
-            _textFormField(
-              c: registrationNoCtrl,
-              label: 'Registration No.',
-              hint: 'e.g. ABC123',
-              icon: Icons.confirmation_number_outlined,
-              inputFormatters: _freeTextFormatters(max: 20),
-              validator: (v) => _alphaNumValidator(v, fieldName: 'Registration No', min: 3),
-            ),
-            const SizedBox(height: 12),
-            _textFormField(
-              c: emiratesRegAtCtrl,
-              label: 'Emirates Reg. At',
-              hint: 'e.g. DUBAI',
-              icon: Icons.location_city_outlined,
-              inputFormatters: _freeTextFormatters(max: 20),
-              validator: (v) => _alphaNumValidator(v, fieldName: 'Emirates Reg. At', min: 2),
-            ),
-            const SizedBox(height: 12),
-            _textFormField(
-              c: chassisNoCtrl,
-              label: 'Chassis No.',
-              hint: 'e.g. JH4KA9650MC000000',
-              icon: Icons.numbers_outlined,
-              inputFormatters: _freeTextFormatters(max: 25),
-              validator: (v) => _alphaNumValidator(v, fieldName: 'Chassis No', min: 6),
-            ),
-            const SizedBox(height: 12),
-            _textFormField(
-              c: ownershipTypeCtrl,
-              label: 'Ownership Type',
-              hint: 'e.g. INDIVIDUAL / COMPANY',
-              icon: Icons.person_outline,
-              inputFormatters: _freeTextFormatters(max: 20),
-              validator: (v) => _alphaNumValidator(v, fieldName: 'Ownership Type', min: 2),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _serviceWarrantySection() {
-    return _sectionCard(
-      title: 'Service & Warranty Overview',
-      icon: Icons.assignment_outlined,
-      child: Form(
-        key: _serviceFormKey,
-        child: Column(
-          children: [
-            _dropField(
-              label: 'Service History',
-              value: serviceHistory,
-              options: const ['Available', 'Not Available'],
-              icon: Icons.history_outlined,
-              hint: 'Select',
-              validator: (v) => v == null ? 'Service History is required' : null,
-              onChanged: (v) => setState(() => serviceHistory = v),
-            ),
-            const SizedBox(height: 12),
-            _textFormField(
-              c: servicedWithCtrl,
-              label: 'Serviced With',
-              hint: 'AGENCY / THIRD PARTY',
-              icon: Icons.build_outlined,
-              inputFormatters: _freeTextFormatters(max: 40),
-              validator: (v) => _alphaNumValidator(v, fieldName: 'Serviced With', min: 2),
-            ),
-            const SizedBox(height: 12),
-            _textFormField(
-              c: lastServiceDateCtrl,
-              label: 'Last Service Date',
-              hint: 'Select date',
-              icon: Icons.date_range_outlined,
-              readOnly: true,
-              onTap: _pickLastServiceDate,
-              validator: (v) => _req(v, msg: 'Last Service Date is required'),
-            ),
-            const SizedBox(height: 12),
-            _dropField(
-              label: 'Warranty Available',
-              value: warrantyAvailable,
-              options: const ['Yes', 'No'],
-              icon: Icons.verified_outlined,
-              hint: 'Select',
-              validator: (v) => v == null ? 'Warranty Available is required' : null,
-              onChanged: (v) => setState(() => warrantyAvailable = v),
-            ),
-            const SizedBox(height: 12),
-            _textFormField(
-              c: warrantyEndsInCtrl,
-              label: 'Warranty Ends In (Month/Year)',
-              hint: 'Select month',
-              icon: Icons.event_outlined,
-              readOnly: true,
-              onTap: _pickWarrantyEndsMonthYear,
-              validator: (v) => _req(v, msg: 'Warranty Ends In is required'),
-            ),
-            const SizedBox(height: 12),
-            _dropField(
-              label: 'Had Accidents',
-              value: hadAccidents,
-              options: const ['Yes', 'No'],
-              icon: Icons.report_problem_outlined,
-              hint: 'Select',
-              validator: (v) => v == null ? 'Had Accidents is required' : null,
-              onChanged: (v) => setState(() => hadAccidents = v),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _interiorSection() {
-    return _sectionCard(
-      title: 'Interior Details',
-      icon: Icons.chair_outlined,
-      child: Form(
-        key: _interiorFormKey,
-        child: Column(
-          children: [
-            _textFormField(
-              c: seatsCtrl,
-              label: 'Seats',
-              hint: 'e.g. 5',
-              icon: Icons.event_seat_outlined,
-              keyboardType: TextInputType.number,
-              inputFormatters: _digitsFormatters(max: 2),
-              validator: (v) => _numberValidator(v, fieldName: 'Seats', max: 2),
-            ),
-            const SizedBox(height: 12),
-            _textFormField(
-              c: interiorColorCtrl,
-              label: 'Interior Color',
-              hint: 'e.g. BLACK',
-              icon: Icons.palette_outlined,
-              inputFormatters: _freeTextFormatters(max: 20),
-              validator: (v) => _alphaNumValidator(v, fieldName: 'Interior Color', min: 2),
-            ),
-            const SizedBox(height: 12),
-            _textFormField(
-              c: upholsteryCtrl,
-              label: 'Upholstery',
-              hint: 'e.g. LEATHER / FABRIC',
-              icon: Icons.texture_outlined,
-              inputFormatters: _freeTextFormatters(max: 20),
-              validator: (v) => _alphaNumValidator(v, fieldName: 'Upholstery', min: 2),
-            ),
-            const SizedBox(height: 12),
-            _textFormField(
-              c: numberOfKeysCtrl,
-              label: 'Number of Keys',
-              hint: 'e.g. 2',
-              icon: Icons.key_outlined,
-              keyboardType: TextInputType.number,
-              inputFormatters: _digitsFormatters(max: 1),
-              validator: (v) => _numberValidator(v, fieldName: 'Number of Keys', max: 1),
-            ),
-            const SizedBox(height: 12),
-            _dropField(
-              label: 'Modification Done',
-              value: interiorModificationDone,
-              options: const ['Yes', 'No'],
-              icon: Icons.construction_outlined,
-              hint: 'Select',
-              validator: (v) => v == null ? 'Modification Done is required' : null,
-              onChanged: (v) => setState(() => interiorModificationDone = v),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _exteriorSection() {
-    return _sectionCard(
-      title: 'Exterior Details',
-      icon: Icons.directions_car_filled_outlined,
-      child: Form(
-        key: _exteriorFormKey,
-        child: Column(
-          children: [
-            _textFormField(
-              c: exteriorColorCtrl,
-              label: 'Exterior Color',
-              hint: 'e.g. WHITE',
-              icon: Icons.palette_outlined,
-              inputFormatters: _freeTextFormatters(max: 20),
-              validator: (v) => _alphaNumValidator(v, fieldName: 'Exterior Color', min: 2),
-            ),
-            const SizedBox(height: 12),
-            _textFormField(
-              c: doorsCtrl,
-              label: 'Doors',
-              hint: 'e.g. 4',
-              icon: Icons.door_front_door_outlined,
-              keyboardType: TextInputType.number,
-              inputFormatters: _digitsFormatters(max: 1),
-              validator: (v) => _numberValidator(v, fieldName: 'Doors', max: 1),
-            ),
-            const SizedBox(height: 12),
-            _textFormField(
-              c: wheelSizeCtrl,
-              label: 'Wheel Size',
-              hint: 'e.g. 20',
-              icon: Icons.circle_outlined,
-              keyboardType: TextInputType.number,
-              inputFormatters: _digitsFormatters(max: 2),
-              validator: (v) => _numberValidator(v, fieldName: 'Wheel Size', max: 2),
-            ),
-            const SizedBox(height: 12),
-            _dropField(
-              label: 'Modification Done',
-              value: exteriorModificationDone,
-              options: const ['Yes', 'No'],
-              icon: Icons.construction_outlined,
-              hint: 'Select',
-              validator: (v) => v == null ? 'Modification Done is required' : null,
-              onChanged: (v) => setState(() => exteriorModificationDone = v),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _damagedCoordinatesSection() {
-    return _sectionCard(
-      title: 'Damaged Coordinates',
-      icon: Icons.place_outlined,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Tap on the car to add a damage point. A popup will open to add description and photos.',
-            style: TextStyle(
-              color: Colors.black.withOpacity(0.55),
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 12),
-          DamageMarkerEditor(
-            imageAsset: _carTopImageAsset,
-            inspectionRequestId: widget.requestId,
-            markers: _damagedCoordinates,
-            onChanged: (next) => setState(() => _damagedCoordinates = next),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _damagedCoordinates.isEmpty
-                      ? null
-                      : () => setState(() => _damagedCoordinates = []),
-                  icon: const Icon(Icons.clear_all),
-                  label: const Text('Clear All'),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _checklistTypeSection(ChecklistTemplate selected, int ti) {
-    final type = selected.types[ti];
-
-    return _sectionCard(
-      title: type.typeName,
-      icon: Icons.fact_check_outlined,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (type.allowOverallRemarks)
-            TextField(
-              controller: _overallRemarks[ti],
-              maxLines: 2,
-              inputFormatters: [LengthLimitingTextInputFormatter(200), _upper],
-              decoration: _dec(
-                label: 'Overall Remarks',
-                hint: 'Write overall remarks',
-                icon: Icons.notes_outlined,
-              ),
-            ),
-
-          // ✅ Overall media (photos + videos) via MediaUploader
-          if (type.allowOverallPhotos) ...[
-            const SizedBox(height: 12),
-            MediaUploader(
-              title: 'Overall Media',
-              initialPhotos: _overallPhotos[ti] ?? const [],
-              initialVideos: _overallVideos[ti] ?? const [],
-              onPhotosChanged: (v) => setState(() => _overallPhotos[ti] = v),
-              onVideosChanged: (v) => setState(() => _overallVideos[ti] = v),
-
-              uploadPhoto: ({
-                required Uint8List bytes,
-                required String contentType,
-                required String fileName,
-              }) {
-                return inspectionRequestsService.uploadInspectionMedia(
-                  inspectionRequestId: widget.requestId,
-                  typeName: type.typeName,
-                  bytes: bytes,
-                  fileName: fileName,
-                  contentType: contentType,
-                  mediaType: 'photos',
-                );
-              },
-
-              uploadVideo: ({
-                required Uint8List bytes,
-                required String contentType,
-                required String fileName,
-              }) {
-                return inspectionRequestsService.uploadInspectionMedia(
-                  inspectionRequestId: widget.requestId,
-                  typeName: type.typeName,
-                  bytes: bytes,
-                  fileName: fileName,
-                  contentType: contentType,
-                  mediaType: 'videos',
-                );
-              },
-            ),
-          ],
-
-          const SizedBox(height: 16),
-
-          ...List.generate(type.checklistItems.length, (ii) {
-            final item = type.checklistItems[ii];
-            final key = '$ti:$ii';
-            final required = item.isRequired;
-            final urls = _itemPhotos[key] ?? const <String>[];
-
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 14),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: Colors.black.withOpacity(0.07)),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(14),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${item.position}. ${item.label}${required ? ' *' : ''}',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w900,
-                          fontSize: 14,
-                        ),
-                      ),
-                      if ((item.description ?? '').trim().isNotEmpty) ...[
-                        const SizedBox(height: 6),
-                        Text(
-                          item.description!,
-                          style: const TextStyle(color: Colors.black54),
-                        ),
-                      ],
-                      const SizedBox(height: 12),
-                      DropdownButtonFormField<String>(
-                        value: _grade[key],
-                        autovalidateMode: AutovalidateMode.onUserInteraction,
-                        items: _gradeOptions
-                            .map((x) => DropdownMenuItem(value: x, child: Text(x)))
-                            .toList(),
-                        onChanged: (v) => setState(() => _grade[key] = v),
-                        decoration: _dec(
-                          label: required ? 'Condition *' : 'Condition',
-                          hint: 'Select condition',
-                          icon: Icons.grade_outlined,
-                        ),
-                      ),
-
-                      // ✅ Checklist items = IMAGE ONLY
-                      const SizedBox(height: 12),
-                      ImageUploader(
-                        typeName: type.typeName,
-                        inspectionRequestId: widget.requestId,
-                        title: 'Photos',
-                        initialImages: urls,
-                        onChanged: (v) => setState(() => _itemPhotos[key] = v),
-                        enabled: true,
-                        mediaType: 'photos',
-                      ),
-
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: _remarks[key],
-                        maxLines: 2,
-                        inputFormatters: [LengthLimitingTextInputFormatter(200), _upper],
-                        decoration: _dec(
-                          label: 'Remarks',
-                          hint: 'Write remarks',
-                          icon: Icons.comment_outlined,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          }),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCurrentSection(ChecklistTemplate selected) {
-    if (_section == 0) return _vehicleDetailsSection();
-    if (_section == 1) return _serviceWarrantySection();
-    if (_section == 2) return _interiorSection();
-    if (_section == 3) return _exteriorSection();
-    if (_section == 4) return _damagedCoordinatesSection();
-
-    final ti = _section - 5;
-    return _checklistTypeSection(selected, ti);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AppShell(
-      title: 'Start Inspection',
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1100),
-          child: FutureBuilder<List<ChecklistTemplate>>(
-            future: _future,
-            builder: (context, snap) {
-              if (snap.connectionState == ConnectionState.waiting) {
-                return const Padding(
-                  padding: EdgeInsets.all(40),
-                  child: Center(child: CircularProgressIndicator()),
-                );
-              }
-
-              if (snap.hasError) {
-                return Padding(
-                  padding: const EdgeInsets.all(18),
-                  child: Text('Failed to load template: ${snap.error}'),
-                );
-              }
-
-              final templates = snap.data ?? [];
-              if (templates.isEmpty) {
-                return const Padding(
-                  padding: EdgeInsets.all(18),
-                  child: Text('No active checklist templates found.'),
-                );
-              }
-
-              final selected = _selectedTemplate ?? templates.first;
-              final total = _totalSections(selected);
-
-              if (_section >= total) _section = total - 1;
-
-              final title = _sectionTitle(selected, _section);
-              final progress = total == 0 ? 0.0 : (_section + 1) / total;
-
-              return ListView(
-                controller: _scrollCtrl,
-                padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'Start Inspection',
-                          style: Theme.of(context)
-                              .textTheme
-                              .headlineSmall
-                              ?.copyWith(fontWeight: FontWeight.w900),
-                        ),
-                      ),
-                      if (_startingInspection)
-                        const Padding(
-                          padding: EdgeInsets.only(right: 10),
-                          child: SizedBox(
-                            height: 18,
-                            width: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        )
-                      else if (_startError != null)
-                        TextButton.icon(
-                          onPressed: _startInspectionIfNeeded,
-                          icon: const Icon(Icons.refresh, size: 18),
-                          label: const Text('Retry start'),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-
-                  if (templates.length > 1)
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Row(
-                          children: [
-                            const Text(
-                              'Checklist Template:',
-                              style: TextStyle(fontWeight: FontWeight.w800),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: DropdownButtonHideUnderline(
-                                child: DropdownButton<ChecklistTemplate>(
-                                  value: selected,
-                                  isExpanded: true,
-                                  items: templates
-                                      .map((t) => DropdownMenuItem(
-                                            value: t,
-                                            child: Text(t.name ?? t.id),
-                                          ))
-                                      .toList(),
-                                  onChanged: (v) {
-                                    if (v == null) return;
-                                    setState(() {
-                                      _selectedTemplate = v;
-                                      _primeChecklistControllers();
-                                      _section = 0;
-                                    });
-                                  },
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-
-                  const SizedBox(height: 10),
-
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  title,
-                                  style: const TextStyle(fontWeight: FontWeight.w900),
-                                ),
-                              ),
-                              Text(
-                                'Section ${_section + 1} / $total',
-                                style: const TextStyle(
-                                  color: Colors.black54,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 10),
-                          LinearProgressIndicator(value: progress),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(height: 12),
-                  _buildCurrentSection(selected),
-                  const SizedBox(height: 12),
-
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: _section == 0 ? null : _back,
-                          icon: const Icon(Icons.arrow_back),
-                          label: const Text('Back'),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _isLastSection(selected)
-                            ? FilledButton.icon(
-                                onPressed: _submitting ? null : _submit,
-                                icon: _submitting
-                                    ? const SizedBox(
-                                        height: 18,
-                                        width: 18,
-                                        child: CircularProgressIndicator(strokeWidth: 2),
-                                      )
-                                    : const Icon(Icons.check),
-                                label: Text(_submitting ? 'Submitting...' : 'Submit'),
-                              )
-                            : FilledButton.icon(
-                                onPressed: () => _next(selected),
-                                icon: const Icon(Icons.arrow_forward),
-                                label: const Text('Next'),
-                              ),
-                      ),
-                    ],
-                  ),
-                ],
-              );
-            },
-          ),
-        ),
-      ),
-    );
   }
 }
