@@ -2872,7 +2872,8 @@ class _CarDamageMapState extends State<_CarDamageMap> {
         padding: const EdgeInsets.all(12),
         child: AspectRatio(
           // ✅ use the REAL image aspect ratio once loaded
-          aspectRatio: (_imgSize == null) ? (16 / 9) : (_imgSize!.width / _imgSize!.height),
+          // aspectRatio: (_imgSize == null) ? (16 / 9) : (_imgSize!.width / _imgSize!.height),
+          aspectRatio: 16 / 9,
           child: LayoutBuilder(
             builder: (context, c) {
               final w = c.maxWidth;
