@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../../shared/app_shell.dart';
+import '../../../shared/top_snackbar.dart';
 import '../../../../services/service_locator.dart';
 
 class ChecklistTemplatesPage extends StatefulWidget {
@@ -23,8 +24,13 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
     _future = checklistTemplatesService.listAllAdmin(page: _page, limit: _limit);
   }
 
+  // void _reload() {
+  //   setState(() => _future = checklistTemplatesService.listAllAdmin(page: _page, limit: _limit));
+  // }
   void _reload() {
-    setState(() => _future = checklistTemplatesService.listAllAdmin(page: _page, limit: _limit));
+    setState(() {
+      _future = checklistTemplatesService.listAllAdmin(page: _page, limit: _limit);
+    });
   }
 
   int _countItems(Map<String, dynamic> t) {
@@ -47,6 +53,59 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
     if (changed == true) _reload();
   }
 
+  void _toastOk(String msg) {
+    showTopSnack(context, msg);
+  }
+
+  void _toastWarn(String msg) {
+    showTopSnack(context, msg, variant: 'warning');
+  }
+
+  void _toastErr(String msg) {
+    showTopSnack(context, msg, variant: 'error');
+  }
+
+  Future<void> _cloneTemplate({
+    required String id,
+    required String name,
+  }) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Clone template?'),
+        content: Text('This will create a copy of "$name".'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Clone')),
+        ],
+      ),
+    );
+
+    if (ok != true) return;
+
+    setState(() => _busy = true);
+    try {
+      final cloned = await checklistTemplatesService.cloneTemplate(id);
+      _reload();
+
+      if (!mounted) return;
+
+      final newId = _getId(cloned);
+      final newName = _getName(cloned);
+
+      _toastOk(
+        newId.isNotEmpty
+            ? 'Cloned: ${newName.isNotEmpty ? newName : "New template"}'
+            : 'Template cloned successfully',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      _toastErr('Clone failed: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _deleteTemplate({
     required String id,
     required String name,
@@ -54,9 +113,7 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
   }) async {
     if (!allowDelete) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cannot delete the last remaining template.')),
-      );
+      _toastWarn('Cannot delete the last remaining template.');
       return;
     }
 
@@ -84,7 +141,7 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
       _reload();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Delete failed: $e')));
+      _toastErr('Delete failed: $e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -126,9 +183,7 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
     // --- Rule: if only 1 template, it can never become inactive ---
     if (total == 1 && newValue == false) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('At least one template must remain active.')),
-      );
+      _toastWarn('At least one template must remain active.');
       return;
     }
 
@@ -137,9 +192,7 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
       final activeCount = templates.where((x) => (x['isActive'] ?? false) == true).length;
       if (activeCount <= 1 && targetIsActive) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('At least one template must remain active.')),
-        );
+        _toastWarn('At least one template must remain active.');
         return;
       }
 
@@ -149,7 +202,7 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
         _reload();
       } catch (e) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Update failed: $e')));
+        _toastErr('Update failed: $e');
       } finally {
         if (mounted) setState(() => _busy = false);
       }
@@ -181,7 +234,7 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
         _reload();
       } catch (e) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Update failed: $e')));
+        _toastErr('Update failed: $e');
       } finally {
         if (mounted) setState(() => _busy = false);
       }
@@ -196,7 +249,7 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
         _reload();
       } catch (e) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Update failed: $e')));
+        _toastErr('Update failed: $e');
       } finally {
         if (mounted) setState(() => _busy = false);
       }
@@ -287,7 +340,6 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
                     ],
                   ),
                   const SizedBox(height: 12),
-
                   Card(
                     child: Padding(
                       padding: const EdgeInsets.all(14),
@@ -298,7 +350,6 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
                               padding: EdgeInsets.all(18),
                               child: Text('No templates found. Click Add to create one.'),
                             ),
-
                           ...templates.map((t) {
                             final id = _getId(t);
                             final name = _getName(t);
@@ -322,9 +373,7 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
                                 : (bool v) async {
                                     // Hard block OFF if last active
                                     if (v == false && cannotTurnOff) {
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(content: Text('At least one template must remain active.')),
-                                      );
+                                      _toastWarn('At least one template must remain active.');
                                       return;
                                     }
 
@@ -372,6 +421,13 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
                                         child: const Text('Edit'),
                                       ),
 
+                                      // CLONE
+                                      IconButton(
+                                        tooltip: 'Clone',
+                                        onPressed: (id.isEmpty || _busy) ? null : () => _cloneTemplate(id: id, name: name),
+                                        icon: const Icon(Icons.copy_outlined),
+                                      ),
+
                                       // DELETE (disabled if only one template)
                                       IconButton(
                                         tooltip: allowDelete ? 'Delete' : 'Cannot delete the last template',
@@ -390,7 +446,6 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
                               ),
                             );
                           }),
-
                           const SizedBox(height: 8),
                           _PaginationBar(
                             pagination: pagination,

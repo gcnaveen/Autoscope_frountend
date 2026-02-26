@@ -1836,11 +1836,11 @@ class _CtaRight extends StatelessWidget {
         //   ),
         // ),
         // const SizedBox(height: 10),
-        Text(
-          'No spam. Clear pricing. Professional service.',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.black54),
-          textAlign: TextAlign.center,
-        ),
+        // Text(
+        //   'No spam. Clear pricing. Professional service.',
+        //   style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.black54),
+        //   textAlign: TextAlign.center,
+        // ),
       ],
     );
   }

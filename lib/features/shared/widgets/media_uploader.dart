@@ -458,6 +458,7 @@ import 'dart:html' as html;
 import 'package:flutter/material.dart';
 
 import 'web_camera_capture_web.dart';
+import 'web_video_capture_web.dart';
 
 typedef UploadFn = Future<String> Function({
   required Uint8List bytes,
@@ -648,7 +649,7 @@ class _MediaUploaderState extends State<MediaUploader> {
     });
 
     try {
-      final cap = await capturePhotoBytesViaPopup();
+      final cap = await capturePhotoBytesViaPopup(context);
       if (cap == null) return;
 
       final ct = _normalizeCt(cap.contentType);
@@ -682,11 +683,10 @@ class _MediaUploaderState extends State<MediaUploader> {
     });
 
     try {
-      final cap = await captureVideoBytesViaPopup();
+      final cap = await captureVideoBytesViaPopup(context);
       if (cap == null) return;
 
-      // ✅ CRITICAL: strip codecs to satisfy backend validation
-      final ct = _normalizeCt(cap.contentType);
+      final ct = _normalizeCt(cap.contentType); // strips codecs, keeps video/*
       if (ct.isEmpty) {
         _toast('Video contentType missing from capture');
         return;
@@ -709,6 +709,7 @@ class _MediaUploaderState extends State<MediaUploader> {
     }
   }
 
+  
   Future<void> _uploadFromFiles() async {
     if (_working) return;
 

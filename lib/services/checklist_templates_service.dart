@@ -118,4 +118,20 @@ class ChecklistTemplatesService {
       },
     );
   }
+
+    /// ADMIN: POST /api/checklists/templates/{id}/clone
+  /// Expected: { data: { template: {...} } } OR similar
+  Future<Map<String, dynamic>> cloneTemplate(String id) async {
+    final res = await apiClient.postJson('/checklists/templates/$id/clone', {});
+
+    if (res is Map && res['data'] is Map) {
+      final data = res['data'] as Map;
+      if (data['template'] is Map) return Map<String, dynamic>.from(data['template'] as Map);
+      return Map<String, dynamic>.from(data);
+    }
+
+    if (res is Map) return Map<String, dynamic>.from(res);
+
+    return {};
+  }
 }

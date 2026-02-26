@@ -1,319 +1,341 @@
-// import 'dart:async';
-// import 'dart:convert';
-// import 'dart:typed_data';
-
-// // ignore: avoid_web_libraries_in_flutter
-// import 'dart:html' as html;
-
-// class CapturedBytes {
-//   final Uint8List bytes;
-//   final String contentType;
-//   final String fileName;
-
-//   const CapturedBytes({
-//     required this.bytes,
-//     required this.contentType,
-//     required this.fileName,
-//   });
-// }
-
-// /// Public helpers used by MediaUploader
-// Future<CapturedBytes?> capturePhotoBytesViaPopup() {
-//   return _captureBytesViaPopup(mode: 'photo');
-// }
-
-// Future<CapturedBytes?> captureVideoBytesViaPopup() {
-//   return _captureBytesViaPopup(mode: 'video');
-// }
-
-// Future<CapturedBytes?> _captureBytesViaPopup({required String mode}) async {
-//   final completer = Completer<CapturedBytes?>();
-
-//   // open popup (served from /web folder)
-//   final popup = html.window.open(
-//     'camera_capture.html?mode=$mode',
-//     'autoscopecam_$mode',
-//     'width=520,height=760',
-//   );
-
-//   StreamSubscription<html.MessageEvent>? sub;
-//   Timer? timeout;
-//   Timer? closedPoll;
-
-//   void finish(CapturedBytes? result) {
-//     if (completer.isCompleted) return;
-//     timeout?.cancel();
-//     closedPoll?.cancel();
-//     sub?.cancel();
-//     completer.complete(result);
-//   }
-
-//   // If popup blocked or failed
-//   if (popup == null) {
-//     return null;
-//   }
-
-//   // Timeout safety (in case no message comes)
-//   timeout = Timer(const Duration(minutes: 5), () => finish(null));
-
-//   // If user closes popup without sending anything
-//   closedPoll = Timer.periodic(const Duration(milliseconds: 300), (_) {
-//     try {
-//       final isClosed = popup.closed ?? false;
-//       if (isClosed) finish(null);
-//     } catch (_) {
-//       // ignore cross-window issues
-//     }
-//   });
-
-//   sub = html.window.onMessage.listen((event) {
-//     try {
-//       final data = event.data;
-
-//       // Case A: Map payload
-//       if (data is Map) {
-//         final map = Map<String, dynamic>.from(data);
-
-//         // Optional type check if your HTML sends it
-//         // If not present, we still accept as long as bytes exist.
-//         final ok = map['ok'];
-//         if (ok == false) {
-//           finish(null);
-//           return;
-//         }
-
-//         Uint8List? bytes;
-//         String? contentType;
-//         String? fileName;
-
-//         // bytes may come as:
-//         // - base64 string in "bytes" or "base64"
-//         // - dataUrl string in "dataUrl"
-//         // - ByteBuffer / Uint8List
-//         final rawBytes = map['bytes'] ?? map['base64'] ?? map['data'] ?? map['buffer'];
-//         final rawDataUrl = map['dataUrl'] ?? map['dataURL'];
-
-//         contentType = (map['contentType'] ?? map['mimeType'] ?? '').toString();
-//         fileName = (map['fileName'] ?? map['filename'] ?? '').toString();
-
-//         if (rawDataUrl is String && rawDataUrl.startsWith('data:')) {
-//           final parsed = _bytesFromDataUrl(rawDataUrl);
-//           bytes = parsed.item1;
-//           contentType = parsed.item2 ?? contentType;
-//           if (fileName.isEmpty) {
-//             fileName = mode == 'video' ? 'capture.webm' : 'capture.jpg';
-//           }
-//         } else if (rawBytes is String) {
-//           // If it's a dataUrl anyway
-//           if (rawBytes.startsWith('data:')) {
-//             final parsed = _bytesFromDataUrl(rawBytes);
-//             bytes = parsed.item1;
-//             contentType = parsed.item2 ?? contentType;
-//           } else {
-//             bytes = base64Decode(rawBytes);
-//           }
-//           if (fileName.isEmpty) {
-//             fileName = mode == 'video' ? 'capture.webm' : 'capture.jpg';
-//           }
-//         } else if (rawBytes is ByteBuffer) {
-//           bytes = rawBytes.asUint8List();
-//           if (fileName.isEmpty) fileName = mode == 'video' ? 'capture.webm' : 'capture.jpg';
-//         } else if (rawBytes is Uint8List) {
-//           bytes = rawBytes;
-//           if (fileName.isEmpty) fileName = mode == 'video' ? 'capture.webm' : 'capture.jpg';
-//         }
-
-//         // Fallback content types
-//         if (contentType.isEmpty) {
-//           contentType = mode == 'video' ? 'video/webm' : 'image/jpeg';
-//         }
-
-//         if (bytes == null || bytes.isEmpty) {
-//           finish(null);
-//           return;
-//         }
-
-//         finish(CapturedBytes(bytes: bytes, contentType: contentType, fileName: fileName));
-//         return;
-//       }
-
-//       // Case B: String dataUrl directly
-//       if (data is String && data.startsWith('data:')) {
-//         final parsed = _bytesFromDataUrl(data);
-//         final bytes = parsed.item1;
-//         final contentType = parsed.item2 ?? (mode == 'video' ? 'video/webm' : 'image/jpeg');
-//         final fileName = mode == 'video' ? 'capture.webm' : 'capture.jpg';
-//         finish(CapturedBytes(bytes: bytes, contentType: contentType, fileName: fileName));
-//         return;
-//       }
-
-//       // Case C: ByteBuffer directly
-//       if (data is ByteBuffer) {
-//         finish(CapturedBytes(
-//           bytes: data.asUint8List(),
-//           contentType: mode == 'video' ? 'video/webm' : 'image/jpeg',
-//           fileName: mode == 'video' ? 'capture.webm' : 'capture.jpg',
-//         ));
-//         return;
-//       }
-
-//       // Unknown payload => ignore
-//     } catch (_) {
-//       finish(null);
-//     }
-//   });
-
-//   return completer.future;
-// }
-
-// /// returns (bytes, mimeType?)
-// _Tuple2<Uint8List, String?> _bytesFromDataUrl(String dataUrl) {
-//   // data:<mime>;base64,<payload>
-//   final comma = dataUrl.indexOf(',');
-//   if (comma < 0) return _Tuple2(Uint8List(0), null);
-
-//   final meta = dataUrl.substring(0, comma); // data:image/jpeg;base64
-//   final b64 = dataUrl.substring(comma + 1);
-
-//   String? mime;
-//   final m = RegExp(r'^data:([^;]+)').firstMatch(meta);
-//   if (m != null) mime = m.group(1);
-
-//   final bytes = base64Decode(b64);
-//   return _Tuple2(bytes, mime);
-// }
-
-// class _Tuple2<T1, T2> {
-//   final T1 item1;
-//   final T2 item2;
-//   const _Tuple2(this.item1, this.item2);
-// }
-
-import 'dart:async';
-import 'dart:typed_data';
-
+// lib/features/shared/widgets/web_camera_capture_web.dart
 // ignore: avoid_web_libraries_in_flutter
 import 'dart:html' as html;
 
-class CapturedMediaBytes {
-  final Uint8List bytes;
-  final String contentType; // normalized (no ;codecs=...)
-  final String fileName;
+import 'dart:async';
+import 'dart:typed_data';
+import 'dart:ui_web' as ui;
 
-  CapturedMediaBytes({
+import 'package:flutter/material.dart';
+
+class CapturedPhotoBytes {
+  final Uint8List bytes;
+  final String fileName;
+  final String contentType;
+
+  CapturedPhotoBytes({
     required this.bytes,
-    required this.contentType,
     required this.fileName,
+    required this.contentType,
   });
 }
 
-String normalizeContentType(String raw) {
-  final s = raw.trim();
-  if (s.isEmpty) return '';
-  // IMPORTANT: backend expects base mime only (e.g. video/webm), not "video/webm;codecs=..."
-  return s.split(';').first.trim().toLowerCase();
+/// ✅ Works for image + video content types.
+/// - strips codecs: "video/webm;codecs=vp8,opus" => "video/webm"
+String normalizeContentType(String? ct) {
+  var v = (ct ?? '').trim().toLowerCase();
+  if (v.isEmpty) return '';
+
+  // strip codecs / params
+  final semi = v.indexOf(';');
+  if (semi >= 0) v = v.substring(0, semi).trim();
+
+  // common video fixes
+  if (v == 'video/quicktime') return 'video/quicktime';
+  if (v == 'video/m4v') return 'video/mp4';
+  if (v.startsWith('video/')) return v;
+
+  // images
+  if (v.contains('jpeg') || v.contains('jpg')) return 'image/jpeg';
+  if (v.contains('png')) return 'image/png';
+  if (v.contains('webp')) return 'image/webp';
+  if (v.startsWith('image/')) return v;
+
+  return '';
 }
 
-Future<CapturedMediaBytes?> capturePhotoBytesViaPopup({
-  Duration timeout = const Duration(minutes: 2),
-}) {
-  return _captureViaPopup(mode: 'photo', timeout: timeout);
+Future<CapturedPhotoBytes?> capturePhotoBytesViaPopup(BuildContext context) async {
+  return showDialog<CapturedPhotoBytes?>(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => const _WebCameraCaptureDialog(),
+  );
 }
 
-Future<CapturedMediaBytes?> captureVideoBytesViaPopup({
-  Duration timeout = const Duration(minutes: 3),
-}) {
-  return _captureViaPopup(mode: 'video', timeout: timeout);
+class _WebCameraCaptureDialog extends StatefulWidget {
+  const _WebCameraCaptureDialog();
+
+  @override
+  State<_WebCameraCaptureDialog> createState() => _WebCameraCaptureDialogState();
 }
 
-/// Backward compatible aliases (your older code may call these)
-Future<CapturedMediaBytes?> capturePhotoViaPopupPage() => capturePhotoBytesViaPopup();
-Future<CapturedMediaBytes?> captureVideoViaPopupPage() => captureVideoBytesViaPopup();
+class _WebCameraCaptureDialogState extends State<_WebCameraCaptureDialog> {
+  html.MediaStream? _stream;
+  html.VideoElement? _video;
 
-Future<CapturedMediaBytes?> _captureViaPopup({
-  required String mode, // photo | video
-  required Duration timeout,
-}) async {
-  final completer = Completer<CapturedMediaBytes?>();
+  String? _error;
+  bool _ready = false;
+  bool _capturing = false;
 
-  html.WindowBase? popup;
-  StreamSubscription<html.MessageEvent>? sub;
-  Timer? closedPoll;
+  late final String _viewType;
+  static int _seq = 0;
 
-  try {
-    final url = 'camera_capture.html?mode=$mode';
+  StreamSubscription? _subLoadedMetadata;
+  StreamSubscription? _subCanPlay;
 
-    // MUST open synchronously from the user gesture callstack to avoid popup blockers.
-    popup = html.window.open(
-      url,
-      'autoscopecapture_$mode',
-      'width=420,height=780,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes',
-    );
+  @override
+  void initState() {
+    super.initState();
+    _viewType = 'webcam_photo_view_${_seq++}';
+    _setup();
+  }
 
-    if (popup == null) {
-      // popup blocked
-      return null;
+  Future<void> _setup() async {
+    try {
+      final devices = html.window.navigator.mediaDevices;
+      if (devices == null) throw Exception('mediaDevices not supported');
+
+      final video = html.VideoElement()
+        ..autoplay = true
+        ..muted = true
+        ..controls = false;
+
+      video.setAttribute('playsinline', 'true');
+      video.setAttribute('webkit-playsinline', 'true');
+
+      video.style.width = '100%';
+      video.style.height = '100%';
+      video.style.objectFit = 'cover';
+
+      _video = video;
+
+      final stream = await devices.getUserMedia({
+        'video': {
+          'facingMode': {'ideal': 'environment'},
+          'width': {'ideal': 1280},
+          'height': {'ideal': 720},
+        },
+        'audio': false,
+      });
+
+      _stream = stream;
+      video.srcObject = stream;
+
+      try {
+        // ignore: discarded_futures
+        video.play();
+      } catch (_) {}
+
+      ui.platformViewRegistry.registerViewFactory(_viewType, (int viewId) => video);
+
+      await _waitForVideoReady(video);
+
+      if (!mounted) return;
+      setState(() => _ready = true);
+    } catch (e) {
+      await _stopStream();
+      if (!mounted) return;
+      setState(() => _error = _friendlyError('$e'));
+    }
+  }
+
+  String _friendlyError(String raw) {
+    final v = raw.toLowerCase();
+    if (v.contains('notallowed') || v.contains('permission')) {
+      return 'Camera permission denied. Allow camera access in Safari settings and try again.';
+    }
+    if (v.contains('notfound')) return 'No camera found on this device.';
+    if (v.contains('notreadable')) return 'Camera is in use by another app/browser.';
+    if (v.contains('https') || v.contains('secure')) {
+      return 'Camera requires HTTPS. Open the site on https://';
+    }
+    return raw;
+  }
+
+  Future<void> _waitForVideoReady(html.VideoElement video) async {
+    if (video.videoWidth > 0 && video.videoHeight > 0) return;
+
+    final c = Completer<void>();
+    void done() {
+      if (!c.isCompleted) c.complete();
     }
 
-    sub = html.window.onMessage.listen((event) {
-      // Security: only accept messages from same origin
-      if (event.origin != html.window.location.origin) return;
+    _subLoadedMetadata = video.onLoadedMetadata.listen((_) => done());
+    _subCanPlay = video.onCanPlay.listen((_) => done());
 
-      final data = event.data;
-
-      if (data is! Map) return;
-      if ((data['kind'] ?? '').toString() != 'autoscopecapture') return;
-
-      final media = (data['media'] ?? '').toString().toLowerCase();
-      if (media != mode) return;
-
-      final ct = normalizeContentType((data['contentType'] ?? '').toString());
-      final name = (data['fileName'] ?? '').toString().trim();
-
-      final buf = data['buffer'];
-
-      Uint8List bytes;
-      if (buf is ByteBuffer) {
-        bytes = Uint8List.view(buf);
-      } else if (buf is Uint8List) {
-        bytes = buf;
-      } else if (buf is List<int>) {
-        bytes = Uint8List.fromList(buf);
-      } else {
-        // unexpected payload
-        return;
-      }
-
-      if (!completer.isCompleted) {
-        completer.complete(
-          CapturedMediaBytes(
-            bytes: bytes,
-            contentType: ct,
-            fileName: name.isNotEmpty ? name : '${mode}_${DateTime.now().millisecondsSinceEpoch}',
-          ),
-        );
-      }
+    Future.delayed(const Duration(seconds: 3), () {
+      if (!c.isCompleted) c.complete();
     });
 
-    // If user closes popup without capturing
-    closedPoll = Timer.periodic(const Duration(milliseconds: 250), (_) {
-      final closed = (popup as dynamic).closed == true;
-      if (closed && !completer.isCompleted) {
-        completer.complete(null);
-      }
+    await c.future;
+    await _subLoadedMetadata?.cancel();
+    await _subCanPlay?.cancel();
+    _subLoadedMetadata = null;
+    _subCanPlay = null;
+  }
+
+  Future<html.Blob> _canvasToBlob(html.CanvasElement canvas, String mime, double quality) async {
+    final html.Blob? b = await canvas.toBlob(mime, quality);
+    if (b == null) throw Exception('Failed to create blob');
+    return b;
+  }
+
+  Future<Uint8List> _blobToBytes(html.Blob blob) async {
+    final c = Completer<Uint8List>();
+    final reader = html.FileReader();
+
+    reader.onLoad.listen((_) {
+      final r = reader.result;
+      if (r is ByteBuffer) c.complete(Uint8List.view(r));
+      else if (r is Uint8List) c.complete(r);
+      else c.completeError(Exception('Unexpected FileReader result type: ${r.runtimeType}'));
     });
 
-    // Timeout safety
-    Future.delayed(timeout, () {
-      if (!completer.isCompleted) completer.complete(null);
+    reader.onError.listen((_) {
+      c.completeError(reader.error ?? Exception('Failed to read blob'));
     });
 
-    final res = await completer.future;
-    return res;
-  } finally {
+    reader.readAsArrayBuffer(blob);
+    return c.future;
+  }
+
+  Future<void> _stopStream() async {
     try {
-      await sub?.cancel();
+      final s = _stream;
+      if (s != null) {
+        for (final t in s.getTracks()) {
+          try {
+            t.stop();
+          } catch (_) {}
+        }
+      }
+      _stream = null;
+      _video?.srcObject = null;
     } catch (_) {}
-    closedPoll?.cancel();
+  }
+
+  Future<void> _capture() async {
+    if (_capturing || !_ready || _video == null) return;
+    setState(() => _capturing = true);
+
+    try {
+      final video = _video!;
+      final w = video.videoWidth > 0 ? video.videoWidth : 1280;
+      final h = video.videoHeight > 0 ? video.videoHeight : 720;
+
+      final canvas = html.CanvasElement(width: w, height: h);
+      canvas.context2D.drawImage(video, 0, 0);
+
+      final blob = await _canvasToBlob(canvas, 'image/jpeg', 0.92);
+      final bytes = await _blobToBytes(blob);
+
+      final fileName = 'capture_${DateTime.now().millisecondsSinceEpoch}.jpg';
+
+      await _stopStream();
+
+      if (!mounted) return;
+      Navigator.pop(
+        context,
+        CapturedPhotoBytes(bytes: bytes, fileName: fileName, contentType: 'image/jpeg'),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = 'Capture failed: $e');
+    } finally {
+      if (mounted) setState(() => _capturing = false);
+    }
+  }
+
+  Future<bool> _onWillPop() async {
+    if (_capturing) return false;
+    await _stopStream();
+    return true;
+  }
+
+  Future<void> _close() async {
+    await _stopStream();
+    if (!mounted) return;
+    Navigator.pop(context, null);
+  }
+
+  @override
+  void dispose() {
+    _subLoadedMetadata?.cancel();
+    _subCanPlay?.cancel();
+    _stopStream();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return WillPopScope(
+      onWillPop: _onWillPop,
+      child: Dialog(
+        insetPadding: const EdgeInsets.all(12),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.photo_camera_outlined),
+                    const SizedBox(width: 8),
+                    Text('Capture Photo',
+                        style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+                    const Spacer(),
+                    IconButton(onPressed: _capturing ? null : _close, icon: const Icon(Icons.close)),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                if (_error != null)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(10),
+                      color: Colors.red.withOpacity(0.08),
+                    ),
+                    child: Text(_error!, style: const TextStyle(color: Colors.red)),
+                  ),
+                if (_error == null) ...[
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: AspectRatio(
+                      aspectRatio: 4 / 3,
+                      child: Container(
+                        color: Colors.black12,
+                        child: _ready
+                            ? HtmlElementView(viewType: _viewType)
+                            : const Center(child: CircularProgressIndicator()),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: _capturing ? null : _close,
+                          child: const Text('Cancel'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: (_ready && !_capturing) ? _capture : null,
+                          icon: _capturing
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.camera_alt_outlined),
+                          label: Text(_capturing ? 'Capturing...' : 'Capture'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
