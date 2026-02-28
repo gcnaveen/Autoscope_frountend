@@ -85,7 +85,6 @@ class _InspectorDashboardPageState extends State<InspectorDashboardPage> {
     return s == 'completed' || s.contains('completed');
   }
 
-
   Color _statusBg(String s) {
     final v = s.toLowerCase();
     if (v.contains('complete')) return Colors.green.withOpacity(0.15);
@@ -102,23 +101,20 @@ class _InspectorDashboardPageState extends State<InspectorDashboardPage> {
     return Colors.black.withOpacity(0.14);
   }
 
-  // void _openRequest(Map<String, dynamic> r) {
-  //   final id = _idOf(r);
-  //   if (id.isEmpty) return;
-
-  //   // ✅ Update this route if your router differs
-  //   context.go('/dashboard/inspector/requests/$id/start');
-  // }
   void _openRequest(Map<String, dynamic> r) {
     final id = _idOf(r);
     if (id.isEmpty) return;
 
-    // ✅ Step 2: open details page (NOT start)
+    // open details page (NOT start)
     context.push('/dashboard/inspector/requests/$id');
   }
 
   @override
   Widget build(BuildContext context) {
+    final screenW = MediaQuery.sizeOf(context).width;
+    final isMobile = screenW < 700;
+    final isVeryNarrow = screenW < 380;
+
     return AppShell(
       title: 'Inspector Dashboard',
       child: Center(
@@ -142,27 +138,47 @@ class _InspectorDashboardPageState extends State<InspectorDashboardPage> {
               }
 
               final jobs = snap.data ?? const [];
-              final width = MediaQuery.of(context).size.width;
-              final isMobile = width < 700;
 
               return ListView(
                 padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
                 children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'Assigned Jobs',
-                          style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
+                  if (!isMobile)
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Assigned Jobs',
+                            style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
+                          ),
                         ),
-                      ),
-                      IconButton(
-                        tooltip: 'Refresh',
-                        onPressed: _refresh,
-                        icon: const Icon(Icons.refresh),
-                      ),
-                    ],
-                  ),
+                        IconButton(
+                          tooltip: 'Refresh',
+                          onPressed: _refresh,
+                          icon: const Icon(Icons.refresh),
+                        ),
+                      ],
+                    )
+                  else
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Assigned Jobs',
+                                style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Refresh',
+                              onPressed: _refresh,
+                              icon: const Icon(Icons.refresh),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   const SizedBox(height: 12),
 
                   if (jobs.isEmpty)
@@ -180,6 +196,21 @@ class _InspectorDashboardPageState extends State<InspectorDashboardPage> {
                     final addr = _formatAddress(r['address']);
                     final when = _formatWhen(r);
 
+                    final statusChip = Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: _statusBg(status),
+                        border: Border.all(color: _statusBorder(status)),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(status, style: const TextStyle(fontWeight: FontWeight.w800)),
+                    );
+
+                    final openBtn = FilledButton.tonal(
+                      onPressed: isCompleted ? null : () => _openRequest(r),
+                      child: const Text('Open'),
+                    );
+
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 12),
                       child: Card(
@@ -188,7 +219,6 @@ class _InspectorDashboardPageState extends State<InspectorDashboardPage> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              // top row (responsive)
                               Row(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
@@ -223,6 +253,8 @@ class _InspectorDashboardPageState extends State<InspectorDashboardPage> {
                                           Text(
                                             when,
                                             style: const TextStyle(color: Colors.black54),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
                                           ),
                                         ],
                                       ],
@@ -231,51 +263,44 @@ class _InspectorDashboardPageState extends State<InspectorDashboardPage> {
 
                                   const SizedBox(width: 10),
 
-                                  // trailing area - don't crush text on mobile
                                   if (!isMobile)
                                     Row(
                                       children: [
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                          decoration: BoxDecoration(
-                                            color: _statusBg(status),
-                                            border: Border.all(color: _statusBorder(status)),
-                                            borderRadius: BorderRadius.circular(999),
-                                          ),
-                                          child: Text(status, style: const TextStyle(fontWeight: FontWeight.w800)),
-                                        ),
+                                        statusChip,
                                         const SizedBox(width: 10),
-                                        FilledButton.tonal(
-                                          onPressed: isCompleted ? null : () => _openRequest(r),
-                                          child: const Text('Open'),
-                                        ),
+                                        SizedBox(height: 36, child: openBtn),
                                       ],
                                     ),
                                 ],
                               ),
 
-                              // mobile actions go below so UI doesn't distort
                               if (isMobile) ...[
                                 const SizedBox(height: 12),
-                                Wrap(
-                                  spacing: 10,
-                                  runSpacing: 10,
-                                  children: [
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                      decoration: BoxDecoration(
-                                        color: _statusBg(status),
-                                        border: Border.all(color: _statusBorder(status)),
-                                        borderRadius: BorderRadius.circular(999),
+
+                                // On very narrow screens make Open button full-width
+                                if (isVeryNarrow)
+                                  Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      statusChip,
+                                      const SizedBox(height: 10),
+                                      SizedBox(
+                                        width: double.infinity,
+                                        height: 40,
+                                        child: openBtn,
                                       ),
-                                      child: Text(status, style: const TextStyle(fontWeight: FontWeight.w800)),
-                                    ),
-                                    FilledButton.tonal(
-                                      onPressed: isCompleted ? null : () => _openRequest(r),
-                                      child: const Text('Open'),
-                                    ),
-                                  ],
-                                ),
+                                    ],
+                                  )
+                                else
+                                  Wrap(
+                                    spacing: 10,
+                                    runSpacing: 10,
+                                    crossAxisAlignment: WrapCrossAlignment.center,
+                                    children: [
+                                      statusChip,
+                                      SizedBox(height: 36, child: openBtn),
+                                    ],
+                                  ),
                               ],
                             ],
                           ),
@@ -292,4 +317,3 @@ class _InspectorDashboardPageState extends State<InspectorDashboardPage> {
     );
   }
 }
-

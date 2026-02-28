@@ -24,9 +24,6 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
     _future = checklistTemplatesService.listAllAdmin(page: _page, limit: _limit);
   }
 
-  // void _reload() {
-  //   setState(() => _future = checklistTemplatesService.listAllAdmin(page: _page, limit: _limit));
-  // }
   void _reload() {
     setState(() {
       _future = checklistTemplatesService.listAllAdmin(page: _page, limit: _limit);
@@ -53,22 +50,11 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
     if (changed == true) _reload();
   }
 
-  void _toastOk(String msg) {
-    showTopSnack(context, msg);
-  }
+  void _toastOk(String msg) => showTopSnack(context, msg);
+  void _toastWarn(String msg) => showTopSnack(context, msg, variant: 'warning');
+  void _toastErr(String msg) => showTopSnack(context, msg, variant: 'error');
 
-  void _toastWarn(String msg) {
-    showTopSnack(context, msg, variant: 'warning');
-  }
-
-  void _toastErr(String msg) {
-    showTopSnack(context, msg, variant: 'error');
-  }
-
-  Future<void> _cloneTemplate({
-    required String id,
-    required String name,
-  }) async {
+  Future<void> _cloneTemplate({required String id, required String name}) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -94,9 +80,7 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
       final newName = _getName(cloned);
 
       _toastOk(
-        newId.isNotEmpty
-            ? 'Cloned: ${newName.isNotEmpty ? newName : "New template"}'
-            : 'Template cloned successfully',
+        newId.isNotEmpty ? 'Cloned: ${newName.isNotEmpty ? newName : "New template"}' : 'Template cloned successfully',
       );
     } catch (e) {
       if (!mounted) return;
@@ -139,6 +123,8 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
     try {
       await checklistTemplatesService.deleteTemplate(id);
       _reload();
+      if (!mounted) return;
+      _toastOk('Deleted: $name');
     } catch (e) {
       if (!mounted) return;
       _toastErr('Delete failed: $e');
@@ -155,9 +141,7 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Switch active template?'),
-        content: Text(
-          'This will deactivate "$currentActiveName" and activate "$nextName". Continue?',
-        ),
+        content: Text('This will deactivate "$currentActiveName" and activate "$nextName". Continue?'),
         actions: [
           TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
           FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Yes, switch')),
@@ -180,14 +164,12 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
     final targetName = _getName(target);
     final targetIsActive = (target['isActive'] ?? false) as bool;
 
-    // --- Rule: if only 1 template, it can never become inactive ---
     if (total == 1 && newValue == false) {
       if (!mounted) return;
       _toastWarn('At least one template must remain active.');
       return;
     }
 
-    // --- Turning OFF: disallow if it would result in 0 active templates ---
     if (newValue == false) {
       final activeCount = templates.where((x) => (x['isActive'] ?? false) == true).length;
       if (activeCount <= 1 && targetIsActive) {
@@ -209,7 +191,6 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
       return;
     }
 
-    // --- Turning ON: ensure only one active at a time ---
     final currentActive = templates.firstWhere(
       (x) => (x['isActive'] ?? false) == true,
       orElse: () => <String, dynamic>{},
@@ -218,7 +199,6 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
     final currentActiveId = _getId(currentActive);
     final currentActiveName = _getName(currentActive);
 
-    // If there is an active template and it's different from target, confirm switch
     if (currentActiveId.isNotEmpty && currentActiveId != targetId) {
       final ok = await _confirmSwitchActive(
         currentActiveName: currentActiveName.isEmpty ? 'Current template' : currentActiveName,
@@ -228,7 +208,6 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
 
       setState(() => _busy = true);
       try {
-        // Deactivate old, activate new (only one active)
         await checklistTemplatesService.setActive(currentActiveId, false);
         await checklistTemplatesService.setActive(targetId, true);
         _reload();
@@ -241,7 +220,6 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
       return;
     }
 
-    // If no active template found or target already active, just set active true
     if (!targetIsActive) {
       setState(() => _busy = true);
       try {
@@ -258,6 +236,9 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
 
   @override
   Widget build(BuildContext context) {
+    final w = MediaQuery.sizeOf(context).width;
+    final isMobile = w < 720;
+
     return AppShell(
       title: 'Checklist Templates',
       child: FutureBuilder<Map<String, dynamic>>(
@@ -307,10 +288,6 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
           final templates = (data['templates'] as List?)?.cast<Map<String, dynamic>>() ?? <Map<String, dynamic>>[];
           final pagination = (data['pagination'] as Map?)?.cast<String, dynamic>() ?? <String, dynamic>{};
 
-          final w = MediaQuery.sizeOf(context).width;
-          final isMobile = w < 900;
-
-          // delete rules
           final allowDelete = templates.length > 1;
 
           return Center(
@@ -319,27 +296,54 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
                 children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
+                  if (!isMobile)
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Checklist Templates',
+                            style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
+                          ),
+                        ),
+                        FilledButton.icon(
+                          onPressed: _busy
+                              ? null
+                              : () async {
+                                  final changed = await context.push<bool>('/dashboard/admin/checklists/new');
+                                  if (changed == true) _reload();
+                                },
+                          icon: const Icon(Icons.add),
+                          label: const Text('Add'),
+                        ),
+                      ],
+                    )
+                  else
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
                           'Checklist Templates',
                           style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
                         ),
-                      ),
-                      FilledButton.icon(
-                        onPressed: _busy
-                            ? null
-                            : () async {
-                                final changed = await context.push<bool>('/dashboard/admin/checklists/new');
-                                if (changed == true) _reload();
-                              },
-                        icon: const Icon(Icons.add),
-                        label: const Text('Add'),
-                      ),
-                    ],
-                  ),
+                        const SizedBox(height: 10),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            onPressed: _busy
+                                ? null
+                                : () async {
+                                    final changed = await context.push<bool>('/dashboard/admin/checklists/new');
+                                    if (changed == true) _reload();
+                                  },
+                            icon: const Icon(Icons.add),
+                            label: const Text('Add'),
+                          ),
+                        ),
+                      ],
+                    ),
+
                   const SizedBox(height: 12),
+
                   Card(
                     child: Padding(
                       padding: const EdgeInsets.all(14),
@@ -361,8 +365,6 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
 
                             final onlyOneTemplate = templates.length == 1;
                             final activeCount = templates.where((x) => (x['isActive'] ?? false) == true).length;
-
-                            // cannot turn off if it's the last active (or only one template)
                             final cannotTurnOff = isActive && (onlyOneTemplate || activeCount <= 1);
 
                             final switchDisabled = id.isEmpty || _busy;
@@ -371,79 +373,31 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
                             final switchOnChanged = switchDisabled
                                 ? null
                                 : (bool v) async {
-                                    // Hard block OFF if last active
                                     if (v == false && cannotTurnOff) {
                                       _toastWarn('At least one template must remain active.');
                                       return;
                                     }
-
-                                    // If turning ON the already-active one: do nothing
                                     if (v == true && isActive == true) return;
-
                                     await _handleToggleActive(templates: templates, target: t, newValue: v);
                                   };
 
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 10),
-                              child: Card(
-                                elevation: 0,
-                                color: Colors.black.withOpacity(0.02),
-                                child: ListTile(
-                                  leading: CircleAvatar(
-                                    backgroundColor: const Color(0xFF1E5EFF).withOpacity(0.10),
-                                    foregroundColor: const Color(0xFF1E5EFF),
-                                    child: const Icon(Icons.playlist_add_check_outlined),
-                                  ),
-                                  title: Row(
-                                    children: [
-                                      Expanded(child: Text(name, style: const TextStyle(fontWeight: FontWeight.w900))),
-                                      const SizedBox(width: 8),
-                                      _StatusChip(active: isActive),
-                                    ],
-                                  ),
-                                  subtitle: Text(
-                                    '$itemsCount items • $typesCount sections • v$version'
-                                    '${desc.trim().isEmpty ? '' : '\n$desc'}',
-                                  ),
-                                  isThreeLine: desc.trim().isNotEmpty,
-                                  trailing: Wrap(
-                                    spacing: 10,
-                                    crossAxisAlignment: WrapCrossAlignment.center,
-                                    children: [
-                                      if (!isMobile) Text(isActive ? 'Active' : 'Inactive'),
-
-                                      // toggle
-                                      Switch(value: switchValue, onChanged: switchOnChanged),
-
-                                      // EDIT always enabled (even when _busy), only depends on id existing
-                                      FilledButton.tonal(
-                                        onPressed: id.isEmpty ? null : () => _goEdit(id),
-                                        child: const Text('Edit'),
-                                      ),
-
-                                      // CLONE
-                                      IconButton(
-                                        tooltip: 'Clone',
-                                        onPressed: (id.isEmpty || _busy) ? null : () => _cloneTemplate(id: id, name: name),
-                                        icon: const Icon(Icons.copy_outlined),
-                                      ),
-
-                                      // DELETE (disabled if only one template)
-                                      IconButton(
-                                        tooltip: allowDelete ? 'Delete' : 'Cannot delete the last template',
-                                        onPressed: (id.isEmpty || _busy)
-                                            ? null
-                                            : () => _deleteTemplate(
-                                                  id: id,
-                                                  name: name,
-                                                  allowDelete: allowDelete,
-                                                ),
-                                        icon: const Icon(Icons.delete_outline),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
+                            return _TemplateCard(
+                              isMobile: isMobile,
+                              name: name,
+                              desc: desc,
+                              isActive: isActive,
+                              version: version,
+                              itemsCount: itemsCount,
+                              typesCount: typesCount,
+                              showActiveLabel: !isMobile, // desktop shows label near switch
+                              switchValue: switchValue,
+                              switchOnChanged: switchOnChanged,
+                              onEdit: id.isEmpty ? null : () => _goEdit(id),
+                              onClone: (id.isEmpty || _busy) ? null : () => _cloneTemplate(id: id, name: name),
+                              onDelete: (id.isEmpty || _busy)
+                                  ? null
+                                  : () => _deleteTemplate(id: id, name: name, allowDelete: allowDelete),
+                              allowDelete: allowDelete,
                             );
                           }),
                           const SizedBox(height: 8),
@@ -472,6 +426,171 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
             ),
           );
         },
+      ),
+    );
+  }
+}
+
+class _TemplateCard extends StatelessWidget {
+  final bool isMobile;
+
+  final String name;
+  final String desc;
+  final bool isActive;
+  final String version;
+  final int itemsCount;
+  final int typesCount;
+
+  final bool showActiveLabel;
+  final bool switchValue;
+  final ValueChanged<bool>? switchOnChanged;
+
+  final VoidCallback? onEdit;
+  final VoidCallback? onClone;
+  final VoidCallback? onDelete;
+
+  final bool allowDelete;
+
+  const _TemplateCard({
+    required this.isMobile,
+    required this.name,
+    required this.desc,
+    required this.isActive,
+    required this.version,
+    required this.itemsCount,
+    required this.typesCount,
+    required this.showActiveLabel,
+    required this.switchValue,
+    required this.switchOnChanged,
+    required this.onEdit,
+    required this.onClone,
+    required this.onDelete,
+    required this.allowDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final meta = '$itemsCount items • $typesCount sections • v$version';
+    final hasDesc = desc.trim().isNotEmpty;
+
+    if (!isMobile) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: Card(
+          elevation: 0,
+          color: Colors.black.withOpacity(0.02),
+          child: ListTile(
+            leading: CircleAvatar(
+              backgroundColor: const Color(0xFF1E5EFF).withOpacity(0.10),
+              foregroundColor: const Color(0xFF1E5EFF),
+              child: const Icon(Icons.playlist_add_check_outlined),
+            ),
+            title: Row(
+              children: [
+                Expanded(child: Text(name, style: const TextStyle(fontWeight: FontWeight.w900))),
+                const SizedBox(width: 8),
+                _StatusChip(active: isActive),
+              ],
+            ),
+            subtitle: Text('$meta${hasDesc ? '\n$desc' : ''}'),
+            isThreeLine: hasDesc,
+            trailing: Wrap(
+              spacing: 10,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                if (showActiveLabel) Text(isActive ? 'Active' : 'Inactive'),
+                Switch(value: switchValue, onChanged: switchOnChanged),
+                FilledButton.tonal(onPressed: onEdit, child: const Text('Edit')),
+                IconButton(
+                  tooltip: 'Clone',
+                  onPressed: onClone,
+                  icon: const Icon(Icons.copy_outlined),
+                ),
+                IconButton(
+                  tooltip: allowDelete ? 'Delete' : 'Cannot delete the last template',
+                  onPressed: allowDelete ? onDelete : null,
+                  icon: const Icon(Icons.delete_outline),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    // Mobile layout: title stays wide, actions go below (no vertical text)
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Card(
+        elevation: 0,
+        color: Colors.black.withOpacity(0.02),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  CircleAvatar(
+                    backgroundColor: const Color(0xFF1E5EFF).withOpacity(0.10),
+                    foregroundColor: const Color(0xFF1E5EFF),
+                    child: const Icon(Icons.playlist_add_check_outlined),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      softWrap: false,
+                      style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  _StatusChip(active: isActive),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(meta, style: const TextStyle(color: Colors.black54)),
+              if (hasDesc) ...[
+                const SizedBox(height: 6),
+                Text(desc, style: const TextStyle(color: Colors.black54)),
+              ],
+              const SizedBox(height: 10),
+
+              // switch row
+              Row(
+                children: [
+                  Text(isActive ? 'Active' : 'Inactive', style: const TextStyle(color: Colors.black54)),
+                  const Spacer(),
+                  Switch(value: switchValue, onChanged: switchOnChanged),
+                ],
+              ),
+              const SizedBox(height: 6),
+
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  SizedBox(
+                    height: 36,
+                    child: FilledButton.tonal(onPressed: onEdit, child: const Text('Edit')),
+                  ),
+                  IconButton(
+                    tooltip: 'Clone',
+                    onPressed: onClone,
+                    icon: const Icon(Icons.copy_outlined),
+                  ),
+                  IconButton(
+                    tooltip: allowDelete ? 'Delete' : 'Cannot delete the last template',
+                    onPressed: allowDelete ? onDelete : null,
+                    icon: const Icon(Icons.delete_outline),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -520,15 +639,36 @@ class _PaginationBar extends StatelessWidget {
     final totalPages = pagination['totalPages'];
     final totalCount = pagination['totalCount'];
 
-    return Row(
+    final w = MediaQuery.sizeOf(context).width;
+    final isNarrow = w < 520;
+
+    final label =
+        'Page $page${totalPages != null ? ' / $totalPages' : ''}${totalCount != null ? ' • $totalCount total' : ''}';
+
+    if (!isNarrow) {
+      return Row(
+        children: [
+          Text(label),
+          const Spacer(),
+          FilledButton.tonal(onPressed: onPrev, child: const Text('Prev')),
+          const SizedBox(width: 8),
+          FilledButton.tonal(onPressed: onNext, child: const Text('Next')),
+        ],
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Page $page${totalPages != null ? ' / $totalPages' : ''}${totalCount != null ? ' • $totalCount total' : ''}',
+        Text(label),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(child: FilledButton.tonal(onPressed: onPrev, child: const Text('Prev'))),
+            const SizedBox(width: 8),
+            Expanded(child: FilledButton.tonal(onPressed: onNext, child: const Text('Next'))),
+          ],
         ),
-        const Spacer(),
-        FilledButton.tonal(onPressed: onPrev, child: const Text('Prev')),
-        const SizedBox(width: 8),
-        FilledButton.tonal(onPressed: onNext, child: const Text('Next')),
       ],
     );
   }

@@ -25,15 +25,12 @@ class _InspectorRequestDetailsPageState extends State<InspectorRequestDetailsPag
   Future<Map<String, dynamic>> _load() async {
     final res = await inspectionRequestsService.getRequestById(widget.requestId);
 
-    // Common backend formats:
-    // { success, data: { request: {...} } }
     if (res is Map && res['data'] is Map) {
       final data = Map<String, dynamic>.from(res['data']);
       if (data['request'] is Map) return Map<String, dynamic>.from(data['request']);
       return data;
     }
 
-    // { success, data: {...} }
     if (res is Map && res['data'] is Map && res['data']['request'] == null) {
       return Map<String, dynamic>.from(res['data']);
     }
@@ -50,6 +47,10 @@ class _InspectorRequestDetailsPageState extends State<InspectorRequestDetailsPag
 
   @override
   Widget build(BuildContext context) {
+    final screenW = MediaQuery.sizeOf(context).width;
+    final isMobile = screenW < 720;
+    final isVeryNarrow = screenW < 420;
+
     return AppShell(
       title: 'Request Details',
       child: Center(
@@ -89,7 +90,8 @@ class _InspectorRequestDetailsPageState extends State<InspectorRequestDetailsPag
               final email = (user['email'] ?? '').toString();
               final phone = (user['phone'] ?? '').toString();
 
-              final vehicle = (r['vehicleInfo'] is Map) ? Map<String, dynamic>.from(r['vehicleInfo']) : <String, dynamic>{};
+              final vehicle =
+                  (r['vehicleInfo'] is Map) ? Map<String, dynamic>.from(r['vehicleInfo']) : <String, dynamic>{};
               final make = (vehicle['make'] ?? '').toString();
               final model = (vehicle['model'] ?? '').toString();
               final year = (vehicle['year'] ?? '').toString();
@@ -107,78 +109,215 @@ class _InspectorRequestDetailsPageState extends State<InspectorRequestDetailsPag
 
               final notes = (r['notes'] ?? '').toString();
 
+              final customerCard = _SectionCard(
+                title: 'Customer',
+                icon: Icons.person_outline,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _kv(context, 'Name', name.isEmpty ? '-' : name),
+                    _kv(context, 'Email', email.isEmpty ? '-' : email),
+                    _kv(context, 'Phone', phone.isEmpty ? '-' : phone),
+                  ],
+                ),
+              );
+
+              final vehicleCard = _SectionCard(
+                title: 'Vehicle',
+                icon: Icons.directions_car_outlined,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _kv(context, 'Make', make.isEmpty ? '-' : make),
+                    _kv(context, 'Model', model.isEmpty ? '-' : model),
+                    _kv(context, 'Year', year.isEmpty ? '-' : year),
+                    _kv(context, 'VIN', vin.isEmpty ? '-' : vin),
+                    _kv(context, 'Plate', plate.isEmpty ? '-' : plate),
+                  ],
+                ),
+              );
+
+              final scheduleCard = _SectionCard(
+                title: 'Schedule',
+                icon: Icons.event_available_outlined,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _kv(context, 'Preferred Date', preferredDate == null ? '-' : _fmt(preferredDate)),
+                    _kv(context, 'Preferred Time', preferredTime.isEmpty ? '-' : preferredTime),
+                  ],
+                ),
+              );
+
+              final locationCard = _SectionCard(
+                title: 'Location',
+                icon: Icons.location_on_outlined,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _kv(context, 'Address', address.isEmpty ? '-' : address),
+                    _kv(context, 'City', city.isEmpty ? '-' : city),
+                    _kv(context, 'State', state.isEmpty ? '-' : state),
+                    _kv(context, 'Zip', zip.isEmpty ? '-' : zip),
+                  ],
+                ),
+              );
+
+              final notesCard = _SectionCard(
+                title: 'Notes',
+                icon: Icons.notes_outlined,
+                child: Text(notes.isEmpty ? '-' : notes),
+              );
+
               return ListView(
                 padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
                 children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
+                  // Header
+                  if (!isMobile)
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '$requestId • $type',
+                            style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        Chip(label: Text(status)),
+                        const SizedBox(width: 10),
+                        IconButton(onPressed: _reload, icon: const Icon(Icons.refresh)),
+                      ],
+                    )
+                  else
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
                           '$requestId • $type',
                           style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                      ),
-                      Chip(label: Text(status)),
-                      const SizedBox(width: 10),
-                      IconButton(onPressed: _reload, icon: const Icon(Icons.refresh)),
-                    ],
-                  ),
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 10,
+                          runSpacing: 10,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            Chip(label: Text(status)),
+                            OutlinedButton.icon(
+                              onPressed: _reload,
+                              icon: const Icon(Icons.refresh, size: 18),
+                              label: const Text('Refresh'),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+
                   const SizedBox(height: 12),
+
+                  // Sections (re-ordered for desktop)
+                  LayoutBuilder(
+                    builder: (context, c) {
+                      final wide = c.maxWidth >= 900;
+                      if (!wide) {
+                        // Mobile order stays one by one (existing order)
+                        return Column(
+                          children: [
+                            customerCard,
+                            const SizedBox(height: 12),
+                            vehicleCard,
+                            const SizedBox(height: 12),
+                            scheduleCard,
+                            const SizedBox(height: 12),
+                            locationCard,
+                            const SizedBox(height: 12),
+                            notesCard,
+                          ],
+                        );
+                      }
+
+                      // ✅ Desktop order requested:
+                      // vehicle -> location
+                      // schedule -> customer
+                      return Column(
+                        children: [
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(child: vehicleCard),
+                              const SizedBox(width: 12),
+                              Expanded(child: locationCard),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(child: scheduleCard),
+                              const SizedBox(width: 12),
+                              Expanded(child: customerCard),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          notesCard,
+                        ],
+                      );
+                    },
+                  ),
+
+                  const SizedBox(height: 14),
+
+                  // Actions
                   Card(
                     child: Padding(
                       padding: const EdgeInsets.all(14),
                       child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          _section('Customer'),
-                          _kv('Name', name.isEmpty ? '-' : name),
-                          _kv('Email', email.isEmpty ? '-' : email),
-                          _kv('Phone', phone.isEmpty ? '-' : phone),
-
-                          const SizedBox(height: 12),
-                          _section('Vehicle'),
-                          _kv('Make', make.isEmpty ? '-' : make),
-                          _kv('Model', model.isEmpty ? '-' : model),
-                          _kv('Year', year.isEmpty ? '-' : year),
-                          _kv('VIN', vin.isEmpty ? '-' : vin),
-                          _kv('Plate', plate.isEmpty ? '-' : plate),
-
-                          const SizedBox(height: 12),
-                          _section('Schedule'),
-                          _kv('Preferred Date', preferredDate == null ? '-' : _fmt(preferredDate)),
-                          _kv('Preferred Time', preferredTime.isEmpty ? '-' : preferredTime),
-
-                          const SizedBox(height: 12),
-                          _section('Location'),
-                          _kv('Address', address.isEmpty ? '-' : address),
-                          _kv('City', city.isEmpty ? '-' : city),
-                          _kv('State', state.isEmpty ? '-' : state),
-                          _kv('Zip', zip.isEmpty ? '-' : zip),
-
-                          const SizedBox(height: 12),
-                          _section('Notes'),
-                          Text(notes.isEmpty ? '-' : notes),
-
-                          const SizedBox(height: 16),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: OutlinedButton(
-                                  onPressed: () => context.pop(),
-                                  child: const Text('Back'),
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: FilledButton(
-                                  onPressed: () => context.go(
-                                    '/dashboard/inspector/requests/${widget.requestId}/start',
+                          if (!isVeryNarrow)
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: OutlinedButton(
+                                    onPressed: () => context.pop(),
+                                    child: const Text('Back'),
                                   ),
-                                  child: const Text('Start Inspection'),
                                 ),
-                              ),
-                            ],
-                          ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: FilledButton(
+                                    onPressed: () => context.go(
+                                      '/dashboard/inspector/requests/${widget.requestId}/start',
+                                    ),
+                                    child: const Text('Start Inspection'),
+                                  ),
+                                ),
+                              ],
+                            )
+                          else
+                            Column(
+                              children: [
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: FilledButton(
+                                    onPressed: () => context.go(
+                                      '/dashboard/inspector/requests/${widget.requestId}/start',
+                                    ),
+                                    child: const Text('Start Inspection'),
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: OutlinedButton(
+                                    onPressed: () => context.pop(),
+                                    child: const Text('Back'),
+                                  ),
+                                ),
+                              ],
+                            ),
                         ],
                       ),
                     ),
@@ -192,12 +331,12 @@ class _InspectorRequestDetailsPageState extends State<InspectorRequestDetailsPag
     );
   }
 
-  static Widget _section(String t) => Padding(
-        padding: const EdgeInsets.only(bottom: 6),
-        child: Text(t, style: const TextStyle(fontWeight: FontWeight.w900)),
-      );
+  static Widget _kv(BuildContext context, String k, String v) {
+    final w = MediaQuery.sizeOf(context).width;
+    final isMobile = w < 720;
 
-  static Widget _kv(String k, String v) => Padding(
+    if (!isMobile) {
+      return Padding(
         padding: const EdgeInsets.only(bottom: 6),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -208,7 +347,76 @@ class _InspectorRequestDetailsPageState extends State<InspectorRequestDetailsPag
           ],
         ),
       );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(k, style: const TextStyle(color: Colors.black54, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 4),
+          Text(v),
+        ],
+      ),
+    );
+  }
 
   static String _fmt(DateTime d) =>
       '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+}
+
+class _SectionCard extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final Widget child;
+
+  const _SectionCard({
+    required this.title,
+    required this.icon,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Card(
+      elevation: 0,
+      color: Colors.black.withOpacity(0.02),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.05),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(icon, size: 18, color: Colors.black87),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            child,
+          ],
+        ),
+      ),
+    );
+  }
 }

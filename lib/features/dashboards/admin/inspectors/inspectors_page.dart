@@ -18,7 +18,7 @@ class _InspectorsPageState extends State<InspectorsPage> {
   late Future<List<AppUser>> _future;
   final _searchCtrl = TextEditingController();
 
-  int _tick = 0; // ✅ must be inside state, not global
+  int _tick = 0;
 
   @override
   void initState() {
@@ -36,7 +36,6 @@ class _InspectorsPageState extends State<InspectorsPage> {
   Future<List<AppUser>> _load() async {
     final all = await usersService.listUsers();
 
-    // Inspectors = users with role "inspector"
     return all.where((u) {
       final role = u.role.toString().toLowerCase();
       return role == 'inspector' || role.contains('inspector');
@@ -56,9 +55,7 @@ class _InspectorsPageState extends State<InspectorsPage> {
       builder: (_) => const AddInspectorDialog(),
     );
 
-    if (ok == true) {
-      _reload();
-    }
+    if (ok == true) _reload();
   }
 
   Future<void> _openManageInspector(AppUser u) async {
@@ -67,15 +64,14 @@ class _InspectorsPageState extends State<InspectorsPage> {
       builder: (_) => InspectorManageDialog(inspector: u),
     );
 
-    // Save changes in dialog returns AppUser
-    if (updated != null) {
-      _reload();
-    }
+    if (updated != null) _reload();
   }
 
   @override
   Widget build(BuildContext context) {
     final q = _searchCtrl.text.trim().toLowerCase();
+    final w = MediaQuery.sizeOf(context).width;
+    final isMobile = w < 720;
 
     return AppShell(
       title: 'Inspectors',
@@ -85,31 +81,60 @@ class _InspectorsPageState extends State<InspectorsPage> {
           child: ListView(
             padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
             children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      'Inspectors',
-                      style: Theme.of(context)
-                          .textTheme
-                          .headlineSmall
-                          ?.copyWith(fontWeight: FontWeight.w900),
+              if (!isMobile)
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Inspectors',
+                        style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
+                      ),
                     ),
-                  ),
-                  IconButton(
-                    tooltip: 'Refresh',
-                    onPressed: _reload,
-                    icon: const Icon(Icons.refresh),
-                  ),
-                  const SizedBox(width: 10),
-                  FilledButton.icon(
-                    onPressed: _openAddInspectorDialog,
-                    icon: const Icon(Icons.add),
-                    label: const Text('Add Inspector'),
-                  ),
-                ],
-              ),
+                    IconButton(
+                      tooltip: 'Refresh',
+                      onPressed: _reload,
+                      icon: const Icon(Icons.refresh),
+                    ),
+                    const SizedBox(width: 10),
+                    FilledButton.icon(
+                      onPressed: _openAddInspectorDialog,
+                      icon: const Icon(Icons.add),
+                      label: const Text('Add Inspector'),
+                    ),
+                  ],
+                )
+              else
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Inspectors',
+                            style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: 'Refresh',
+                          onPressed: _reload,
+                          icon: const Icon(Icons.refresh),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: _openAddInspectorDialog,
+                        icon: const Icon(Icons.add),
+                        label: const Text('Add Inspector'),
+                      ),
+                    ),
+                  ],
+                ),
               const SizedBox(height: 12),
+
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(14),
@@ -126,8 +151,9 @@ class _InspectorsPageState extends State<InspectorsPage> {
                         ),
                       ),
                       const SizedBox(height: 12),
+
                       FutureBuilder<List<AppUser>>(
-                        key: ValueKey(_tick), // ✅ force rebuild snapshot
+                        key: ValueKey(_tick),
                         future: _future,
                         builder: (context, snap) {
                           if (snap.connectionState == ConnectionState.waiting) {
@@ -164,9 +190,7 @@ class _InspectorsPageState extends State<InspectorsPage> {
                                   final name = u.fullName.toLowerCase();
                                   final email = u.email.toLowerCase();
                                   final phone = (u.phone ?? '').toLowerCase();
-                                  return name.contains(q) ||
-                                      email.contains(q) ||
-                                      phone.contains(q);
+                                  return name.contains(q) || email.contains(q) || phone.contains(q);
                                 }).toList();
 
                           if (filtered.isEmpty) {
@@ -174,13 +198,9 @@ class _InspectorsPageState extends State<InspectorsPage> {
                               padding: EdgeInsets.all(18),
                               child: Column(
                                 children: [
-                                  Icon(Icons.badge_outlined,
-                                      size: 42, color: Colors.black26),
+                                  Icon(Icons.badge_outlined, size: 42, color: Colors.black26),
                                   SizedBox(height: 10),
-                                  Text(
-                                    'No inspectors found.',
-                                    style: TextStyle(color: Colors.black54),
-                                  ),
+                                  Text('No inspectors found.', style: TextStyle(color: Colors.black54)),
                                 ],
                               ),
                             );
@@ -188,10 +208,12 @@ class _InspectorsPageState extends State<InspectorsPage> {
 
                           return Column(
                             children: filtered
-                                .map((x) => _InspectorCard(
-                                      u: x,
-                                      onManage: () => _openManageInspector(x),
-                                    ))
+                                .map(
+                                  (x) => _InspectorCard(
+                                    u: x,
+                                    onManage: () => _openManageInspector(x),
+                                  ),
+                                )
                                 .toList(),
                           );
                         },
@@ -216,62 +238,135 @@ class _InspectorCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final w = MediaQuery.sizeOf(context).width;
+    final isMobile = w < 720;
+
     final statusRaw = (u.availableStatus ?? u.status).toString();
     final status = statusRaw.isEmpty ? 'unknown' : statusRaw;
 
-    final isAvailable = status.toLowerCase().contains('available') ||
-        status.toLowerCase().contains('active');
-
+    final isAvailable = status.toLowerCase().contains('available') || status.toLowerCase().contains('active');
     final assigned = u.isAssigned == true;
 
+    final email = (u.email).trim();
+    final phone = (u.phone ?? '').trim();
+
+    if (!isMobile) {
+      // Desktop: keep old ListTile look
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: Card(
+          elevation: 0,
+          color: Colors.black.withOpacity(0.02),
+          child: ListTile(
+            leading: CircleAvatar(
+              backgroundColor: const Color(0xFF1E5EFF).withOpacity(0.10),
+              foregroundColor: const Color(0xFF1E5EFF),
+              child: const Icon(Icons.badge_outlined),
+            ),
+            title: Text(u.fullName, style: const TextStyle(fontWeight: FontWeight.w900)),
+            subtitle: Text('$email\n${phone.isEmpty ? '-' : phone}'),
+            isThreeLine: true,
+            trailing: Wrap(
+              spacing: 10,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Chip(
+                  label: Text(assigned ? 'assigned' : 'not assigned'),
+                  backgroundColor: assigned ? Colors.purple.withOpacity(0.12) : Colors.grey.withOpacity(0.12),
+                  side: BorderSide(
+                    color: assigned ? Colors.purple.withOpacity(0.20) : Colors.grey.withOpacity(0.20),
+                  ),
+                ),
+                Chip(
+                  label: Text(status),
+                  backgroundColor: isAvailable ? Colors.green.withOpacity(0.12) : Colors.orange.withOpacity(0.12),
+                  side: BorderSide(
+                    color: isAvailable ? Colors.green.withOpacity(0.20) : Colors.orange.withOpacity(0.20),
+                  ),
+                ),
+                FilledButton.tonal(onPressed: onManage, child: const Text('Manage')),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    // Mobile: no trailing. Actions move below (prevents vertical letters)
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Card(
         elevation: 0,
         color: Colors.black.withOpacity(0.02),
-        child: ListTile(
-          leading: CircleAvatar(
-            backgroundColor: const Color(0xFF1E5EFF).withOpacity(0.10),
-            foregroundColor: const Color(0xFF1E5EFF),
-            child: const Icon(Icons.badge_outlined),
-          ),
-          title: Text(u.fullName,
-              style: const TextStyle(fontWeight: FontWeight.w900)),
-          subtitle: Text('${u.email}\n${u.phone ?? '-'}'),
-          isThreeLine: true,
-          trailing: Wrap(
-            spacing: 10,
-            crossAxisAlignment: WrapCrossAlignment.center,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ✅ assigned chip
-              Chip(
-                label: Text(assigned ? 'assigned' : 'not assigned'),
-                backgroundColor: assigned
-                    ? Colors.purple.withOpacity(0.12)
-                    : Colors.grey.withOpacity(0.12),
-                side: BorderSide(
-                  color: assigned
-                      ? Colors.purple.withOpacity(0.20)
-                      : Colors.grey.withOpacity(0.20),
-                ),
+              Row(
+                children: [
+                  CircleAvatar(
+                    backgroundColor: const Color(0xFF1E5EFF).withOpacity(0.10),
+                    foregroundColor: const Color(0xFF1E5EFF),
+                    child: const Icon(Icons.badge_outlined),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          u.fullName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          email.isEmpty ? '-' : email,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Colors.black54),
+                        ),
+                        if (phone.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            phone,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(color: Colors.black54),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
               ),
-
-              // ✅ status chip
-              Chip(
-                label: Text(status),
-                backgroundColor: isAvailable
-                    ? Colors.green.withOpacity(0.12)
-                    : Colors.orange.withOpacity(0.12),
-                side: BorderSide(
-                  color: isAvailable
-                      ? Colors.green.withOpacity(0.20)
-                      : Colors.orange.withOpacity(0.20),
-                ),
-              ),
-
-              FilledButton.tonal(
-                onPressed: onManage,
-                child: const Text('Manage'),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Chip(
+                    label: Text(assigned ? 'assigned' : 'not assigned'),
+                    backgroundColor: assigned ? Colors.purple.withOpacity(0.12) : Colors.grey.withOpacity(0.12),
+                    side: BorderSide(
+                      color: assigned ? Colors.purple.withOpacity(0.20) : Colors.grey.withOpacity(0.20),
+                    ),
+                  ),
+                  Chip(
+                    label: Text(status),
+                    backgroundColor: isAvailable ? Colors.green.withOpacity(0.12) : Colors.orange.withOpacity(0.12),
+                    side: BorderSide(
+                      color: isAvailable ? Colors.green.withOpacity(0.20) : Colors.orange.withOpacity(0.20),
+                    ),
+                  ),
+                  SizedBox(
+                    height: 36,
+                    child: FilledButton.tonal(onPressed: onManage, child: const Text('Manage')),
+                  ),
+                ],
               ),
             ],
           ),

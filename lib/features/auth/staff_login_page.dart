@@ -60,49 +60,117 @@ class _LoginHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Container(
-          height: 44,
-          width: 44,
-          decoration: BoxDecoration(
-            color: const Color(0xFF0B1220),
-            borderRadius: BorderRadius.circular(14),
+    final w = MediaQuery.sizeOf(context).width;
+    final isMobile = w < 420;
+
+    final badge = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF1F4FA),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.black12),
+      ),
+      child: Text(
+        badgeText,
+        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
+      ),
+    );
+
+    final switchBtn = TextButton(
+      onPressed: onSwitch,
+      child: Text(switchText),
+    );
+
+    if (!isMobile) {
+      return Row(
+        children: [
+          Container(
+            height: 44,
+            width: 44,
+            decoration: BoxDecoration(
+              color: const Color(0xFF0B1220),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: const Icon(Icons.admin_panel_settings, color: Colors.white),
           ),
-          child: const Icon(Icons.admin_panel_settings, color: Colors.white),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    badge,
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(subtitle, style: const TextStyle(color: Colors.black54)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          switchBtn,
+        ],
+      );
+    }
+
+    // ✅ Mobile: move the switch button below so header never gets cramped
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              height: 44,
+              width: 44,
+              decoration: BoxDecoration(
+                color: const Color(0xFF0B1220),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: const Icon(Icons.admin_panel_settings, color: Colors.white),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(title, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF1F4FA),
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: Colors.black12),
-                    ),
-                    child: Text(
-                      badgeText,
-                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          title,
+                          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      badge,
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(color: Colors.black54),
                   ),
                 ],
               ),
-              const SizedBox(height: 4),
-              Text(subtitle, style: const TextStyle(color: Colors.black54)),
-            ],
-          ),
+            ),
+          ],
         ),
-        const SizedBox(width: 12),
-        TextButton(
-          onPressed: onSwitch,
-          child: Text(switchText),
+        const SizedBox(height: 10),
+        Align(
+          alignment: Alignment.centerRight,
+          child: switchBtn,
         ),
       ],
     );

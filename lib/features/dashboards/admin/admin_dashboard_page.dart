@@ -521,7 +521,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }
 
   void _reload() {
-    setState(() => _future = _svc.getDashboard());
+    // setState(() => _future = _svc.getDashboard());
+    setState(() {
+      _future = _svc.getDashboard();
+    });
   }
 
   @override
