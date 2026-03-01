@@ -7,7 +7,7 @@ import 'dart:typed_data';
 import 'dart:ui_web' as ui;
 
 import 'package:flutter/material.dart';
-import 'web_camera_capture_web.dart'; // for normalizeContentType
+import 'web_camera_capture_web.dart'; // normalizeContentType
 
 class CapturedVideoBytes {
   final Uint8List bytes;
@@ -29,9 +29,14 @@ Future<CapturedVideoBytes?> captureVideoBytesViaPopup(
   return showDialog<CapturedVideoBytes?>(
     context: context,
     barrierDismissible: false,
-    builder: (_) => _WebVideoRecorderDialog(includeAudio: includeAudio, maxSeconds: maxSeconds),
+    builder: (_) => _WebVideoRecorderDialog(
+      includeAudio: includeAudio,
+      maxSeconds: maxSeconds,
+    ),
   );
 }
+
+enum _VideoMode { live, review }
 
 class _WebVideoRecorderDialog extends StatefulWidget {
   final bool includeAudio;
@@ -48,34 +53,46 @@ class _WebVideoRecorderDialog extends StatefulWidget {
 
 class _WebVideoRecorderDialogState extends State<_WebVideoRecorderDialog> {
   html.MediaStream? _stream;
-  html.VideoElement? _video;
+
+  html.VideoElement? _liveVideo;
+  html.VideoElement? _playbackVideo;
 
   html.MediaRecorder? _recorder;
   final List<html.Blob> _chunks = [];
 
   html.Blob? _recordedBlob;
   String? _recordedType;
+  String? _objectUrl;
 
   String? _error;
   bool _ready = false;
   bool _recording = false;
-  int _sec = 0;
+  bool _busy = false;
 
+  _VideoMode _mode = _VideoMode.live;
+
+  // ✅ timer without rebuilding whole dialog
+  final ValueNotifier<int> _secVN = ValueNotifier<int>(0);
   Timer? _timer;
 
-  late final String _viewType;
+  // review play/pause
+  bool _playing = false;
+
+  late final String _liveViewType;
+  late final String _playViewType;
   static int _seq = 0;
 
   @override
   void initState() {
     super.initState();
-    _viewType = 'webcam_video_view_${_seq++}';
+    final n = _seq++;
+    _liveViewType = 'webcam_video_live_$n';
+    _playViewType = 'webcam_video_play_$n';
     _setup();
   }
 
   Future<void> _setup() async {
     try {
-      // MediaRecorder support
       if (html.MediaRecorder == null) {
         throw Exception('Video recording is not supported on this browser. Use Upload instead.');
       }
@@ -83,43 +100,76 @@ class _WebVideoRecorderDialogState extends State<_WebVideoRecorderDialog> {
       final devices = html.window.navigator.mediaDevices;
       if (devices == null) throw Exception('mediaDevices not supported');
 
-      final video = html.VideoElement()
+      // Live preview element (GPU hint)
+      final live = html.VideoElement()
         ..autoplay = true
-        ..muted = true // allow autoplay
+        ..muted = true
         ..controls = false;
 
-      video.setAttribute('playsinline', 'true');
-      video.setAttribute('webkit-playsinline', 'true');
+      live.setAttribute('playsinline', 'true');
+      live.setAttribute('webkit-playsinline', 'true');
 
-      video.style.width = '100%';
-      video.style.height = '100%';
-      video.style.objectFit = 'cover';
+      live.style.width = '100%';
+      live.style.height = '100%';
+      live.style.objectFit = 'cover';
+      live.style.pointerEvents = 'none';
+      live.style.transform = 'translateZ(0)';
+      live.style.willChange = 'transform';
 
-      _video = video;
+      _liveVideo = live;
 
-      // Try with audio, fallback to no-audio if denied
+      // Playback element (review)
+      final play = html.VideoElement()
+        ..autoplay = false
+        ..muted = true
+        ..controls = false
+        ..loop = false;
+
+      play.setAttribute('playsinline', 'true');
+      play.setAttribute('webkit-playsinline', 'true');
+
+      play.style.width = '100%';
+      play.style.height = '100%';
+      play.style.objectFit = 'cover';
+      play.style.pointerEvents = 'none';
+      play.style.transform = 'translateZ(0)';
+      play.style.willChange = 'transform';
+
+      _playbackVideo = play;
+
+      // Register factories once (kept mounted)
+      ui.platformViewRegistry.registerViewFactory(_liveViewType, (int viewId) => live);
+      ui.platformViewRegistry.registerViewFactory(_playViewType, (int viewId) => play);
+
+      // ✅ BALANCED constraints for smoother recording preview
       html.MediaStream stream;
+      final constraints = {
+        'video': {
+          'facingMode': {'ideal': 'environment'},
+          'width': {'ideal': 1280},
+          'height': {'ideal': 720},
+          'frameRate': {'ideal': 24, 'max': 30},
+        },
+        'audio': widget.includeAudio,
+      };
+
       try {
-        stream = await devices.getUserMedia({
-          'video': {'facingMode': {'ideal': 'environment'}},
-          'audio': widget.includeAudio,
-        });
+        stream = await devices.getUserMedia(constraints);
       } catch (_) {
+        // fallback without audio
         stream = await devices.getUserMedia({
-          'video': {'facingMode': {'ideal': 'environment'}},
+          'video': constraints['video'],
           'audio': false,
         });
       }
 
       _stream = stream;
-      video.srcObject = stream;
+      live.srcObject = stream;
 
       try {
         // ignore: discarded_futures
-        video.play();
+        live.play();
       } catch (_) {}
-
-      ui.platformViewRegistry.registerViewFactory(_viewType, (int viewId) => video);
 
       if (!mounted) return;
       setState(() => _ready = true);
@@ -132,10 +182,9 @@ class _WebVideoRecorderDialogState extends State<_WebVideoRecorderDialog> {
 
   String _pickMimeType() {
     final candidates = <String>[
-      'video/webm;codecs=vp9,opus',
       'video/webm;codecs=vp8,opus',
       'video/webm',
-      'video/mp4', // some Safari versions
+      'video/mp4', // Safari variants
     ];
 
     for (final t in candidates) {
@@ -143,19 +192,18 @@ class _WebVideoRecorderDialogState extends State<_WebVideoRecorderDialog> {
         if (html.MediaRecorder.isTypeSupported(t)) return t;
       } catch (_) {}
     }
-    return ''; // let browser decide
+    return '';
   }
 
   void _startTimer() {
     _timer?.cancel();
-    _sec = 0;
+    _secVN.value = 0;
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      setState(() {
-        _sec++;
-        if (_sec >= widget.maxSeconds && _recording) {
-          _stopRecording();
-        }
-      });
+      final next = _secVN.value + 1;
+      _secVN.value = next;
+      if (next >= widget.maxSeconds && _recording) {
+        _stopRecording();
+      }
     });
   }
 
@@ -165,7 +213,7 @@ class _WebVideoRecorderDialogState extends State<_WebVideoRecorderDialog> {
   }
 
   Future<void> _startRecording() async {
-    if (!_ready || _stream == null || _recording) return;
+    if (!_ready || _stream == null || _recording || _busy) return;
 
     setState(() {
       _error = null;
@@ -173,57 +221,58 @@ class _WebVideoRecorderDialogState extends State<_WebVideoRecorderDialog> {
       _recordedType = null;
       _chunks.clear();
       _recording = true;
+      _mode = _VideoMode.live;
+      _playing = false;
     });
+
+    _clearPlayback();
 
     try {
       final mime = _pickMimeType();
-      final rec = mime.isNotEmpty
-          ? html.MediaRecorder(_stream!, {'mimeType': mime})
-          : html.MediaRecorder(_stream!);
 
+      // ✅ bitrate options to reduce encoding load
+      final options = <String, dynamic>{
+        // 2.5 Mbps is usually smooth on mobiles
+        'videoBitsPerSecond': 2500000,
+        'audioBitsPerSecond': 128000,
+      };
+      if (mime.isNotEmpty) options['mimeType'] = mime;
+
+      final rec = html.MediaRecorder(_stream!, options);
       _recorder = rec;
-
-      // rec.onDataAvailable.listen((ev) {
-      //   final b = ev.data;
-      //   if (b != null && b.size > 0) _chunks.add(b);
-      // });
-
-      // rec.onStop.listen((_) {
-      //   final t = rec.mimeType ?? mime;
-      //   final blob = html.Blob(_chunks, t.isNotEmpty ? t : 'video/webm');
-      //   setState(() {
-      //     _recordedBlob = blob;
-      //     _recordedType = blob.type;
-      //     _recording = false;
-      //   });
-      //   _stopTimer();
-      // });
 
       rec.addEventListener('dataavailable', (html.Event e) {
         try {
-          final data = (e as dynamic).data; // BlobEvent.data
-          if (data is html.Blob && data.size > 0) {
-            _chunks.add(data);
-          }
+          final data = (e as dynamic).data;
+          if (data is html.Blob && data.size > 0) _chunks.add(data);
         } catch (_) {}
       });
 
       rec.addEventListener('stop', (html.Event e) {
-        final t = mime.isNotEmpty ? mime : 'video/webm';
-        final blob = html.Blob(_chunks, t);
+        final usedType = (rec.mimeType != null && (rec.mimeType ?? '').trim().isNotEmpty)
+            ? rec.mimeType!
+            : (mime.isNotEmpty ? mime : 'video/webm');
+
+        final blob = html.Blob(_chunks, usedType);
 
         if (!mounted) return;
         setState(() {
           _recordedBlob = blob;
           _recordedType = blob.type;
           _recording = false;
+          _mode = _VideoMode.review;
+          _playing = false;
         });
+
         _stopTimer();
+        _loadPlaybackPreview(blob);
       });
 
-      rec.start(250);
+      // ✅ fewer callbacks = less jank
+      rec.start(2000);
       _startTimer();
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _recording = false;
         _error = 'Recorder error: $e';
@@ -235,8 +284,47 @@ class _WebVideoRecorderDialogState extends State<_WebVideoRecorderDialog> {
   void _stopRecording() {
     try {
       final r = _recorder;
-      if (r != null && r.state != 'inactive') {
-        r.stop();
+      if (r != null && r.state != 'inactive') r.stop();
+    } catch (_) {}
+  }
+
+  void _loadPlaybackPreview(html.Blob blob) {
+    try {
+      _revokeObjectUrl();
+      final url = html.Url.createObjectUrlFromBlob(blob);
+      _objectUrl = url;
+
+      final pv = _playbackVideo;
+      if (pv != null) {
+        pv.src = url;
+        pv.loop = false;
+        pv.muted = true;
+        pv.autoplay = false;
+        pv.controls = false;
+        pv.load();
+
+        // Show first frame (paused)
+        pv.currentTime = 0;
+        pv.pause();
+      }
+
+      try {
+        _liveVideo?.pause();
+      } catch (_) {}
+    } catch (_) {}
+  }
+
+  Future<void> _togglePlayPause() async {
+    final pv = _playbackVideo;
+    if (pv == null) return;
+
+    try {
+      if (pv.paused == true) {
+        await pv.play();
+        setState(() => _playing = true);
+      } else {
+        pv.pause();
+        setState(() => _playing = false);
       }
     } catch (_) {}
   }
@@ -262,10 +350,13 @@ class _WebVideoRecorderDialogState extends State<_WebVideoRecorderDialog> {
 
   Future<void> _useVideo() async {
     final blob = _recordedBlob;
-    if (blob == null) return;
+    if (blob == null || _busy) return;
+
+    setState(() => _busy = true);
 
     try {
       final bytes = await _blobToBytes(blob);
+
       final rawType = _recordedType ?? blob.type;
       final ct = normalizeContentType(rawType);
       final safeCt = ct.isEmpty ? 'video/webm' : ct;
@@ -281,13 +372,59 @@ class _WebVideoRecorderDialogState extends State<_WebVideoRecorderDialog> {
         CapturedVideoBytes(bytes: bytes, fileName: fileName, contentType: safeCt),
       );
     } catch (e) {
+      if (!mounted) return;
       setState(() => _error = 'Use video failed: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<void> _retake() async {
+    if (_busy) return;
+
+    setState(() {
+      _recordedBlob = null;
+      _recordedType = null;
+      _mode = _VideoMode.live;
+      _error = null;
+      _playing = false;
+    });
+
+    _clearPlayback();
+
+    try {
+      // ignore: discarded_futures
+      _liveVideo?.play();
+    } catch (_) {}
+  }
+
+  void _clearPlayback() {
+    try {
+      _playbackVideo?.pause();
+      _playbackVideo?.src = '';
+    } catch (_) {}
+    _revokeObjectUrl();
+  }
+
+  void _revokeObjectUrl() {
+    final u = _objectUrl;
+    if (u != null) {
+      try {
+        html.Url.revokeObjectUrl(u);
+      } catch (_) {}
+    }
+    _objectUrl = null;
   }
 
   Future<void> _stopStream() async {
     _stopTimer();
+    _clearPlayback();
+
     try {
+      try {
+        if (_recording) _stopRecording();
+      } catch (_) {}
+
       final s = _stream;
       if (s != null) {
         for (final t in s.getTracks()) {
@@ -297,11 +434,17 @@ class _WebVideoRecorderDialogState extends State<_WebVideoRecorderDialog> {
         }
       }
       _stream = null;
-      _video?.srcObject = null;
+
+      try {
+        _liveVideo?.pause();
+      } catch (_) {}
+
+      _liveVideo?.srcObject = null;
     } catch (_) {}
   }
 
   Future<void> _close() async {
+    if (_busy) return;
     try {
       if (_recording) _stopRecording();
     } catch (_) {}
@@ -311,7 +454,7 @@ class _WebVideoRecorderDialogState extends State<_WebVideoRecorderDialog> {
   }
 
   Future<bool> _onWillPop() async {
-    if (_recording) return false;
+    if (_recording || _busy) return false;
     await _stopStream();
     return true;
   }
@@ -319,117 +462,219 @@ class _WebVideoRecorderDialogState extends State<_WebVideoRecorderDialog> {
   @override
   void dispose() {
     _stopTimer();
+    _secVN.dispose();
+    // ignore: discarded_futures
     _stopStream();
     super.dispose();
   }
 
+  String _fmt(int s) {
+    final m = (s ~/ 60).toString().padLeft(2, '0');
+    final ss = (s % 60).toString().padLeft(2, '0');
+    return '$m:$ss';
+  }
+
+  Widget _pill(String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(999),
+        color: Colors.black.withOpacity(0.35),
+        border: Border.all(color: Colors.white24),
+      ),
+      child: Text(text, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    String fmt(int s) {
-      final m = (s ~/ 60).toString().padLeft(2, '0');
-      final ss = (s % 60).toString().padLeft(2, '0');
-      return '$m:$ss';
-    }
-
-    final canUse = _recordedBlob != null && !_recording;
+    final isReview = _mode == _VideoMode.review && _recordedBlob != null && !_recording;
 
     return WillPopScope(
       onWillPop: _onWillPop,
       child: Dialog(
-        insetPadding: const EdgeInsets.all(12),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
-                  children: [
-                    const Icon(Icons.videocam_outlined),
-                    const SizedBox(width: 8),
-                    Text('Capture Video',
-                        style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
-                    const Spacer(),
-                    IconButton(onPressed: _recording ? null : _close, icon: const Icon(Icons.close)),
-                  ],
+        insetPadding: EdgeInsets.zero,
+        backgroundColor: Colors.black,
+        child: SizedBox(
+          width: double.infinity,
+          height: MediaQuery.sizeOf(context).height,
+          child: Stack(
+            children: [
+              // keep both mounted; fade only
+              Positioned.fill(
+                child: IgnorePointer(
+                  ignoring: isReview,
+                  child: AnimatedOpacity(
+                    opacity: isReview ? 0 : 1,
+                    duration: const Duration(milliseconds: 120),
+                    child: _ready
+                        ? HtmlElementView(viewType: _liveViewType)
+                        : const Center(child: CircularProgressIndicator()),
+                  ),
                 ),
-                const SizedBox(height: 10),
-                if (_error != null)
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(10),
+              ),
+              Positioned.fill(
+                child: IgnorePointer(
+                  ignoring: !isReview,
+                  child: AnimatedOpacity(
+                    opacity: isReview ? 1 : 0,
+                    duration: const Duration(milliseconds: 120),
+                    child: HtmlElementView(viewType: _playViewType),
+                  ),
+                ),
+              ),
+
+              // Top bar
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: SafeArea(
+                  bottom: false,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    child: Row(
+                      children: [
+                        IconButton(
+                          onPressed: (_recording || _busy) ? null : _close,
+                          icon: const Icon(Icons.close, color: Colors.white),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          isReview ? 'Review Video' : 'Camera',
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+                        ),
+                        const Spacer(),
+                        if (_busy)
+                          const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+
+              if (_error != null)
+                Positioned(
+                  left: 12,
+                  right: 12,
+                  top: 80,
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(10),
-                      color: Colors.red.withOpacity(0.08),
+                      color: Colors.red.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.red.withOpacity(0.25)),
                     ),
-                    child: Text(_error!, style: const TextStyle(color: Colors.red)),
+                    child: Text(_error!, style: const TextStyle(color: Colors.white)),
                   ),
-                if (_error == null) ...[
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(14),
-                    child: AspectRatio(
-                      aspectRatio: 4 / 3,
-                      child: Container(
-                        color: Colors.black12,
-                        child: _ready
-                            ? HtmlElementView(viewType: _viewType)
-                            : const Center(child: CircularProgressIndicator()),
+                ),
+
+              // timer + status
+              Positioned(
+                left: 16,
+                bottom: 120,
+                child: SafeArea(
+                  top: false,
+                  child: ValueListenableBuilder<int>(
+                    valueListenable: _secVN,
+                    builder: (_, sec, __) {
+                      final status = _recording ? 'REC' : (isReview ? 'PREVIEW' : 'READY');
+                      return Row(
+                        children: [
+                          _pill(_fmt(sec)),
+                          const SizedBox(width: 10),
+                          _pill(status),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+              ),
+
+              // review play button (no autoplay loop)
+              if (isReview)
+                Positioned.fill(
+                  child: Center(
+                    child: IconButton(
+                      onPressed: _togglePlayPause,
+                      iconSize: 72,
+                      icon: Icon(
+                        _playing ? Icons.pause_circle_filled : Icons.play_circle_fill,
+                        color: Colors.white.withOpacity(0.92),
                       ),
                     ),
                   ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(999),
-                          border: Border.all(color: Colors.black12),
-                        ),
-                        child: Text(fmt(_sec), style: const TextStyle(fontWeight: FontWeight.w800)),
-                      ),
-                      const Spacer(),
-                      Text(
-                        _recording ? 'Recording…' : (canUse ? 'Recorded' : 'Ready'),
-                        style: const TextStyle(color: Colors.black54, fontWeight: FontWeight.w700),
-                      ),
-                    ],
+                ),
+
+              // bottom controls
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: SafeArea(
+                  top: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 18),
+                    child: isReview
+                        ? Row(
+                            children: [
+                              Expanded(
+                                child: OutlinedButton(
+                                  onPressed: _busy ? null : _retake,
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.white,
+                                    side: const BorderSide(color: Colors.white54),
+                                    padding: const EdgeInsets.symmetric(vertical: 14),
+                                  ),
+                                  child: const Text('Retake'),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: ElevatedButton(
+                                  onPressed: _busy ? null : _useVideo,
+                                  style: ElevatedButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(vertical: 14),
+                                  ),
+                                  child: const Text('Use Video'),
+                                ),
+                              ),
+                            ],
+                          )
+                        : Center(
+                            child: GestureDetector(
+                              onTap: (!_ready || _busy)
+                                  ? null
+                                  : (_recording ? _stopRecording : _startRecording),
+                              child: Container(
+                                width: 78,
+                                height: 78,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: Colors.white.withOpacity(0.12),
+                                  border: Border.all(
+                                    color: _recording ? Colors.redAccent : Colors.white,
+                                    width: 4,
+                                  ),
+                                ),
+                                child: Center(
+                                  child: Icon(
+                                    _recording ? Icons.stop : Icons.fiber_manual_record,
+                                    color: _recording ? Colors.redAccent : Colors.white,
+                                    size: 34,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
                   ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: _recording ? null : _close,
-                          child: const Text('Cancel'),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          onPressed: !_ready
-                              ? null
-                              : (_recording ? _stopRecording : _startRecording),
-                          icon: Icon(_recording ? Icons.stop : Icons.fiber_manual_record),
-                          label: Text(_recording ? 'Stop' : 'Record'),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: FilledButton.icon(
-                          onPressed: canUse ? _useVideo : null,
-                          icon: const Icon(Icons.check),
-                          label: const Text('Use'),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ],
-            ),
+                ),
+              ),
+            ],
           ),
         ),
       ),
