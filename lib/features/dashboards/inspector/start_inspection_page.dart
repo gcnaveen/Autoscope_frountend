@@ -104,6 +104,8 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
   final registrationNoCtrl = TextEditingController();
   final emiratesRegAtCtrl = TextEditingController();
   final chassisNoCtrl = TextEditingController();
+  String? _chassisNoPhotoUrl;
+
   final ownershipTypeCtrl = TextEditingController();
 
   // Service & Warranty Overview
@@ -234,6 +236,11 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
     return v.split(' ').first.trim();
   }
 
+  bool _isHttpUrl(String s) {
+    final u = Uri.tryParse(s.trim());
+    return u != null && (u.scheme == 'http' || u.scheme == 'https');
+  }
+
   @override
   void initState() {
     super.initState();
@@ -332,7 +339,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _startError = e.toString());
-      _snack('Failed to start inspection: $e', 'error');
+      // _snack('Failed to start inspection: $e', 'error');
     } finally {
       if (mounted) setState(() => _startingInspection = false);
     }
@@ -444,7 +451,12 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
         odometerCtrl.text = (d['odometerReading'] ?? odometerCtrl.text).toString().trim();
         registrationNoCtrl.text = (d['registrationNo'] ?? registrationNoCtrl.text).toString().trim();
         emiratesRegAtCtrl.text = (d['emiratesRegAt'] ?? emiratesRegAtCtrl.text).toString().trim();
-        chassisNoCtrl.text = (d['chassisNo'] ?? chassisNoCtrl.text).toString().trim();
+
+        // ✅ chassisNo restored (URL expected)
+        final rawChassis = (d['chassisNo'] ?? '').toString().trim();
+        chassisNoCtrl.text = rawChassis;
+        _chassisNoPhotoUrl = _isHttpUrl(rawChassis) ? rawChassis : null;
+
         ownershipTypeCtrl.text = (d['ownershipType'] ?? ownershipTypeCtrl.text).toString().trim();
         break;
 
@@ -852,7 +864,10 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
         'odometerReading': odometerCtrl.text.trim(),
         'registrationNo': registrationNoCtrl.text.trim(),
         'emiratesRegAt': emiratesRegAtCtrl.text.trim(),
+
+        // ✅ chassisNo now holds the uploaded photo URL
         'chassisNo': chassisNoCtrl.text.trim(),
+
         'ownershipType': ownershipTypeCtrl.text.trim(),
       };
     }
@@ -1039,8 +1054,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
     );
 
     if (picked == null) return;
-    final s =
-        '${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
+    final s = '${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
     setState(() => lastServiceDateCtrl.text = s);
   }
 
@@ -1058,12 +1072,8 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
 
     if (picked == null) return;
 
-    const months = [
-      'Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'
-    ];
-    final mmmyy =
-        '${months[picked.month - 1]}-${(picked.year % 100).toString().padLeft(2, '0')}'
-            .toUpperCase();
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    final mmmyy = '${months[picked.month - 1]}-${(picked.year % 100).toString().padLeft(2, '0')}'.toUpperCase();
     setState(() => warrantyEndsInCtrl.text = mmmyy);
   }
 
@@ -1279,9 +1289,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
                     },
               decoration: _dec(
                 label: 'Model',
-                hint: selectedMake == null
-                    ? 'Select make first'
-                    : (loadingModels ? 'Loading models…' : 'Select model'),
+                hint: selectedMake == null ? 'Select make first' : (loadingModels ? 'Loading models…' : 'Select model'),
                 icon: Icons.car_repair_outlined,
               ),
               validator: (v) => v == null ? 'Model is required' : null,
@@ -1424,12 +1432,70 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
 
             const SizedBox(height: 12),
 
-            TextFormField(
-              controller: chassisNoCtrl,
+            // ✅ CHASSIS PHOTO FIELD (single image -> URL stored into chassisNoCtrl)
+            FormField<String>(
               autovalidateMode: AutovalidateMode.onUserInteraction,
-              inputFormatters: [LengthLimitingTextInputFormatter(25), _upper],
-              decoration: _dec(label: 'Chassis No.', hint: 'e.g. JH4KA9650MC000000', icon: Icons.numbers_outlined),
-              validator: (v) => _alphaNumValidator(v, fieldName: 'Chassis No', min: 6),
+              validator: (_) {
+                if ((_chassisNoPhotoUrl ?? '').trim().isEmpty) {
+                  return 'Chassis photo is required';
+                }
+                return null;
+              },
+              builder: (state) {
+                final has = (_chassisNoPhotoUrl ?? '').trim().isNotEmpty;
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.numbers_outlined, size: 18),
+                        const SizedBox(width: 8),
+                        const Text(
+                          'Chassis No. (Photo)',
+                          style: TextStyle(fontWeight: FontWeight.w900),
+                        ),
+                        const Spacer(),
+                        if (has)
+                          TextButton.icon(
+                            onPressed: () {
+                              setState(() {
+                                _chassisNoPhotoUrl = null;
+                                chassisNoCtrl.text = '';
+                              });
+                              state.didChange('');
+                            },
+                            icon: const Icon(Icons.delete_outline, size: 18),
+                            label: const Text('Remove'),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    ImageUploader(
+                      typeName: 'vehicle_details',
+                      inspectionRequestId: widget.requestId,
+                      title: 'Upload / Capture',
+                      initialImages: has ? [_chassisNoPhotoUrl!] : const [],
+                      onChanged: (urls) {
+                        final next = urls.isEmpty ? '' : urls.last; // keep last => single
+                        setState(() {
+                          _chassisNoPhotoUrl = next.isEmpty ? null : next;
+                          chassisNoCtrl.text = next; // ✅ keeps existing API key working
+                        });
+                        state.didChange(next);
+                      },
+                      enabled: true,
+                      mediaType: 'photos',
+                    ),
+                    if (state.hasError) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        state.errorText ?? '',
+                        style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w700),
+                      ),
+                    ],
+                  ],
+                );
+              },
             ),
 
             const SizedBox(height: 12),
@@ -1863,10 +1929,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
                       Expanded(
                         child: Text(
                           'Start Inspection',
-                          style: Theme.of(context)
-                              .textTheme
-                              .headlineSmall
-                              ?.copyWith(fontWeight: FontWeight.w900),
+                          style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
                         ),
                       ),
                       if (_startingInspection)
@@ -1901,9 +1964,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
                                 child: DropdownButton<ChecklistTemplate>(
                                   value: selected,
                                   isExpanded: true,
-                                  items: templates
-                                      .map((t) => DropdownMenuItem(value: t, child: Text(t.name ?? t.id)))
-                                      .toList(),
+                                  items: templates.map((t) => DropdownMenuItem(value: t, child: Text(t.name ?? t.id))).toList(),
                                   onChanged: (v) {
                                     if (v == null) return;
                                     setState(() {
@@ -2039,7 +2100,10 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
         'odometerReading': odometerCtrl.text.trim(),
         'registrationNo': registrationNoCtrl.text.trim(),
         'emiratesRegAt': emiratesRegAtCtrl.text.trim(),
+
+        // ✅ still chassisNo key, but value is URL of chassis photo
         'chassisNo': chassisNoCtrl.text.trim(),
+
         'ownershipType': ownershipTypeCtrl.text.trim(),
       },
       'serviceWarrantyOverview': {
@@ -2094,14 +2158,12 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
         });
       }
 
-      final overallRemarksText =
-          type.allowOverallRemarks ? _overallRemarks[ti]?.text.trim() : null;
+      final overallRemarksText = type.allowOverallRemarks ? _overallRemarks[ti]?.text.trim() : null;
 
       out.add({
         'typeName': type.typeName,
         'checklistItems': items,
-        'overallRemarks':
-            (overallRemarksText != null && overallRemarksText.isNotEmpty) ? overallRemarksText : '',
+        'overallRemarks': (overallRemarksText != null && overallRemarksText.isNotEmpty) ? overallRemarksText : '',
         'overallPhotos': _overallPhotos[ti] ?? [],
         'videos': _overallVideos[ti] ?? [],
       });
@@ -2116,16 +2178,18 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
     if (!_applyMakeModelToControllersNoNetwork()) return;
     if (!_validateChecklistAll()) return;
 
+    // ✅ Ensure chassis photo exists before submit
+    if ((_chassisNoPhotoUrl ?? '').trim().isEmpty) {
+      _snack('Please upload chassis number photo', 'warning');
+      return;
+    }
+
     setState(() => _submitting = true);
 
     try {
-      final makeName = _makeIsOther
-          ? otherMakeCtrl.text.trim().toUpperCase()
-          : (selectedMake ?? '').trim().toUpperCase();
+      final makeName = _makeIsOther ? otherMakeCtrl.text.trim().toUpperCase() : (selectedMake ?? '').trim().toUpperCase();
 
-      final modelName = _modelIsOther
-          ? otherModelCtrl.text.trim().toUpperCase()
-          : (selectedModel ?? '').trim().toUpperCase();
+      final modelName = _modelIsOther ? otherModelCtrl.text.trim().toUpperCase() : (selectedModel ?? '').trim().toUpperCase();
 
       String? makeId = selectedMakeId;
 

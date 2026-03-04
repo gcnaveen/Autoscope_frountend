@@ -1,5 +1,9 @@
+// lib/features/dashboards/user/inspection_report_page.dart
 import 'package:flutter/foundation.dart' show kIsWeb;
+// ignore: avoid_web_libraries_in_flutter
 import 'dart:html' as html;
+import 'dart:ui_web' as ui;
+
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'dart:typed_data';
@@ -71,8 +75,9 @@ class _InspectionReportPageState extends State<InspectionReportPage> {
               final success = root['success'] == true;
               final message = (root['message'] ?? '').toString();
 
-              final data =
-                  (root['data'] is Map) ? Map<String, dynamic>.from(root['data'] as Map) : const <String, dynamic>{};
+              final data = (root['data'] is Map)
+                  ? Map<String, dynamic>.from(root['data'] as Map)
+                  : const <String, dynamic>{};
 
               final inspection = (data['inspection'] is Map)
                   ? Map<String, dynamic>.from(data['inspection'] as Map)
@@ -122,6 +127,10 @@ class _ReportViewState extends State<_ReportView> {
   late final List<_PhotoRef> _photos;
   late final Map<String, List<int>> _sectionToPhotoIdx;
 
+  // ✅ Videos
+  late final List<_VideoRef> _videos;
+  late final Map<String, List<int>> _sectionToVideoIdx;
+
   @override
   void initState() {
     super.initState();
@@ -129,6 +138,10 @@ class _ReportViewState extends State<_ReportView> {
     final built = _buildAllPhotos(widget.inspection);
     _photos = built.$1;
     _sectionToPhotoIdx = built.$2;
+
+    final builtV = _buildAllVideos(widget.inspection);
+    _videos = builtV.$1;
+    _sectionToVideoIdx = builtV.$2;
 
     _scrollCtrl.addListener(() {
       final show = _scrollCtrl.offset > 520 && _photos.isNotEmpty;
@@ -194,6 +207,28 @@ class _ReportViewState extends State<_ReportView> {
           height: 420,
           borderRadius: BorderRadius.circular(14),
           fit: BoxFit.contain,
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
+        ],
+      ),
+    );
+  }
+
+  void _openVideoDialog(String url) {
+    final u = url.trim();
+    if (u.isEmpty) return;
+
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Video'),
+        content: SizedBox(
+          width: 900,
+          child: AspectRatio(
+            aspectRatio: 16 / 9,
+            child: _HtmlVideoPlayer(url: u),
+          ),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
@@ -353,7 +388,14 @@ class _ReportViewState extends State<_ReportView> {
                   LayoutBuilder(
                     builder: (context, c) {
                       final wide = c.maxWidth >= 900;
-                      final vehicleDetailsCard = _SubSectionMapCard(title: 'Vehicle Details', data: vehicleDetails);
+
+                      // ✅ Vehicle details card that shows Chassis as IMAGE instead of URL text
+                      final vehicleDetailsCard = _VehicleDetailsCard(
+                        title: 'Vehicle Details',
+                        data: vehicleDetails,
+                        onOpenImage: _openUrlInViewer,
+                      );
+
                       final exteriorCard = _SubSectionMapCard(title: 'Exterior Details', data: exteriorDetails);
                       final interiorCard = _SubSectionMapCard(title: 'Interior Details', data: interiorDetails);
                       final serviceCard =
@@ -415,7 +457,7 @@ class _ReportViewState extends State<_ReportView> {
 
             const SizedBox(height: 12),
 
-            // Overall Rating + Section Overview (Option 2: use right column properly)
+            // Overall Rating + Section Overview
             LayoutBuilder(
               builder: (context, c) {
                 final wide = c.maxWidth >= 950;
@@ -521,6 +563,22 @@ class _ReportViewState extends State<_ReportView> {
               onOpenViewer: () => _openViewer(_heroIndex),
             ),
 
+            // ✅ Videos
+            if (_videos.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _VideosBlock(
+                videos: _videos,
+                sectionToVideoIdx: _sectionToVideoIdx,
+                onOpen: (url) => _openVideoDialog(url),
+              ),
+            ] else ...[
+              const SizedBox(height: 12),
+              const _Card(
+                title: 'Videos',
+                child: Text('No videos uploaded.'),
+              ),
+            ],
+
             const SizedBox(height: 18),
 
             // Checklist
@@ -581,6 +639,13 @@ class _ReportViewState extends State<_ReportView> {
       sectionMap.putIfAbsent(section, () => []).add(idx);
     }
 
+    // ✅ Add chassis photo into Photos viewer under "Vehicle Details"
+    final vehicleDetails = _asMap(inspection['vehicleDetails']);
+    final chassis = _cleanStr(vehicleDetails['chassisNo']);
+    if (_isHttpUrl(chassis)) {
+      add(chassis, 'Vehicle Details');
+    }
+
     for (final t in types) {
       final tm = _asMap(t);
       final section = _cleanStr(tm['typeName']).isEmpty ? 'Section' : _cleanStr(tm['typeName']);
@@ -601,6 +666,40 @@ class _ReportViewState extends State<_ReportView> {
     for (final d in damages) {
       for (final u in d.images) {
         add(u, 'Damages');
+      }
+    }
+
+    return (refs, sectionMap);
+  }
+
+  // returns (videosList, section->indexes)
+  (List<_VideoRef>, Map<String, List<int>>) _buildAllVideos(Map<String, dynamic> inspection) {
+    final types = (inspection['types'] as List?) ?? const [];
+    final refs = <_VideoRef>[];
+    final seen = <String>{};
+    final sectionMap = <String, List<int>>{};
+
+    void add(String url, String section) {
+      final u = url.trim();
+      if (u.isEmpty) return;
+      if (seen.contains(u)) return;
+      seen.add(u);
+      final idx = refs.length;
+      refs.add(_VideoRef(url: u, section: section));
+      sectionMap.putIfAbsent(section, () => []).add(idx);
+    }
+
+    for (final t in types) {
+      final tm = _asMap(t);
+      final section = _cleanStr(tm['typeName']).isEmpty ? 'Section' : _cleanStr(tm['typeName']);
+
+      // Support both keys (depends on backend response)
+      final vids = (tm['videos'] as List?) ?? (tm['overallVideos'] as List?) ?? const [];
+
+      for (final v in vids) {
+        final u = _cleanStr(v);
+        if (u.isEmpty) continue;
+        add(u, section);
       }
     }
 
@@ -662,7 +761,6 @@ class _SectionOverviewGrid extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, c) {
-        // ✅ two columns on desktop card width; one column on narrow
         final cols = c.maxWidth >= 520 ? 2 : 1;
         const gap = 12.0;
 
@@ -1460,6 +1558,135 @@ class _ThumbTile extends StatelessWidget {
 }
 
 /* =========================
+   Videos
+========================= */
+
+class _VideosBlock extends StatelessWidget {
+  final List<_VideoRef> videos;
+  final Map<String, List<int>> sectionToVideoIdx;
+  final void Function(String url) onOpen;
+
+  const _VideosBlock({
+    required this.videos,
+    required this.sectionToVideoIdx,
+    required this.onOpen,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final sections = sectionToVideoIdx.keys.toList();
+
+    return Card(
+      elevation: 0,
+      color: Colors.black.withOpacity(0.02),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Videos  (${videos.length}) • click to play',
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 12),
+            for (final s in sections) ...[
+              Text(s, style: const TextStyle(fontWeight: FontWeight.w900)),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  for (final idx in sectionToVideoIdx[s] ?? const [])
+                    _VideoTile(
+                      url: videos[idx].url,
+                      onTap: () => onOpen(videos[idx].url),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _VideoTile extends StatelessWidget {
+  final String url;
+  final VoidCallback onTap;
+
+  const _VideoTile({required this.url, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 170,
+      height: 110,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: InkWell(
+          onTap: onTap,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              color: Colors.black.withOpacity(0.08),
+              child: const Center(
+                child: Icon(Icons.play_circle_fill, size: 44),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+final Set<String> _registeredVideoViews = <String>{};
+
+class _HtmlVideoPlayer extends StatefulWidget {
+  final String url;
+  const _HtmlVideoPlayer({required this.url});
+
+  @override
+  State<_HtmlVideoPlayer> createState() => _HtmlVideoPlayerState();
+}
+
+class _HtmlVideoPlayerState extends State<_HtmlVideoPlayer> {
+  late final String _viewType;
+
+  @override
+  void initState() {
+    super.initState();
+    _viewType = 'report-video-${widget.url.hashCode}';
+
+    if (!_registeredVideoViews.contains(_viewType)) {
+      _registeredVideoViews.add(_viewType);
+
+      ui.platformViewRegistry.registerViewFactory(_viewType, (int viewId) {
+        final v = html.VideoElement()
+          ..src = widget.url
+          ..controls = true
+          ..preload = 'metadata'
+          ..style.width = '100%'
+          ..style.height = '100%';
+
+        // iOS Safari inline playback
+        v.setAttribute('playsinline', 'true');
+        v.setAttribute('webkit-playsinline', 'true');
+
+        return v;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return HtmlElementView(viewType: _viewType);
+  }
+}
+
+/* =========================
    Viewer Overlay
 ========================= */
 
@@ -1895,6 +2122,147 @@ class _FloatingPhotosButton extends StatelessWidget {
   }
 }
 
+/* =========================
+   Vehicle Details Card (Chassis as Image)
+========================= */
+
+class _VehicleDetailsCard extends StatelessWidget {
+  final String title;
+  final Map<String, dynamic> data;
+  final void Function(String url) onOpenImage;
+
+  const _VehicleDetailsCard({
+    required this.title,
+    required this.data,
+    required this.onOpenImage,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (data.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.6),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.black.withOpacity(0.06)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: const TextStyle(fontWeight: FontWeight.w900)),
+            const SizedBox(height: 8),
+            const Text('-', style: TextStyle(color: Colors.black54)),
+          ],
+        ),
+      );
+    }
+
+    const order = [
+      'make',
+      'model',
+      'gradeVariant',
+      'engineCapacity',
+      'modelYear',
+      'cylinderSize',
+      'transmission',
+      'fuelType',
+      'driveTrain',
+      'specs',
+      'odometerReading',
+      'registrationNo',
+      'emiratesRegAt',
+      'chassisNo',
+      'ownershipType',
+    ];
+
+    final keys = <String>[
+      ...order.where((k) => data.containsKey(k)),
+      ...data.keys.where((k) => !order.contains(k)),
+    ];
+
+    final chassisValue = _cleanStr(data['chassisNo']);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.6),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.black.withOpacity(0.06)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: const TextStyle(fontWeight: FontWeight.w900)),
+          const SizedBox(height: 10),
+          for (final k in keys)
+            if (k == 'chassisNo')
+              _kvChassis(
+                label: _prettyKey(k),
+                value: chassisValue,
+                onOpen: onOpenImage,
+              )
+            else
+              _kv(
+                _prettyKey(k),
+                _cleanStr(data[k]).isEmpty ? '-' : _cleanStr(data[k]),
+              ),
+        ],
+      ),
+    );
+  }
+
+  Widget _kvChassis({
+    required String label,
+    required String value,
+    required void Function(String url) onOpen,
+  }) {
+    final v = value.trim();
+
+    if (v.isEmpty || !_isHttpUrl(v)) {
+      return _kv(label, v.isEmpty ? '-' : v);
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 140,
+            child: Text(
+              '$label:',
+              style: const TextStyle(fontWeight: FontWeight.w900),
+            ),
+          ),
+          Expanded(
+            child: Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                _NetImageBox(
+                  url: v,
+                  width: 140,
+                  height: 90,
+                  onTap: () => onOpen(v),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () => onOpen(v),
+                  icon: const Icon(Icons.open_in_new, size: 18),
+                  label: const Text('Open'),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _SubSectionMapCard extends StatelessWidget {
   final String title;
   final Map<String, dynamic> data;
@@ -2125,6 +2493,12 @@ class _PhotoRef {
   const _PhotoRef({required this.url, required this.section});
 }
 
+class _VideoRef {
+  final String url;
+  final String section;
+  const _VideoRef({required this.url, required this.section});
+}
+
 class _DamagePoint {
   final String id;
   final String description;
@@ -2202,6 +2576,11 @@ String _fmtIso(dynamic iso) {
   if (dt == null) return s;
   String two(int x) => x.toString().padLeft(2, '0');
   return '${dt.year}-${two(dt.month)}-${two(dt.day)} ${two(dt.hour)}:${two(dt.minute)}';
+}
+
+bool _isHttpUrl(String s) {
+  final u = Uri.tryParse(s.trim());
+  return u != null && (u.scheme == 'http' || u.scheme == 'https');
 }
 
 Widget _kv(String k, String v) {
