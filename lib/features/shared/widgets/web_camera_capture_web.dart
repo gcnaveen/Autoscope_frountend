@@ -68,6 +68,8 @@ class _WebCameraCaptureDialogState extends State<_WebCameraCaptureDialog> {
 
   Uint8List? _captured; // frozen preview bytes
 
+  double _zoom = 1.0;
+
   late final String _viewType;
   static int _seq = 0;
 
@@ -214,8 +216,9 @@ class _WebCameraCaptureDialogState extends State<_WebCameraCaptureDialog> {
     // objectFit: cover => scale by max ratio
     final scale = math.max(cw / vw, ch / vh);
 
-    final cropW = cw / scale;
-    final cropH = ch / scale;
+    // Divide crop area by zoom so canvas captures the zoomed-in center
+    final cropW = (cw / scale) / _zoom;
+    final cropH = (ch / scale) / _zoom;
 
     final sx = (vw - cropW) / 2.0;
     final sy = (vh - cropH) / 2.0;
@@ -260,6 +263,10 @@ class _WebCameraCaptureDialogState extends State<_WebCameraCaptureDialog> {
       } catch (_) {}
 
       _video?.srcObject = null;
+      // Tell browser to fully release camera hardware
+      try {
+        _video?.load();
+      } catch (_) {}
     } catch (_) {}
   }
 
@@ -324,6 +331,12 @@ class _WebCameraCaptureDialogState extends State<_WebCameraCaptureDialog> {
     if (_busy) return false;
     await _stopStream();
     return true;
+  }
+
+  void _setZoom(double z) {
+    setState(() => _zoom = z);
+    _video?.style.transform = 'scale($z)';
+    _video?.style.transformOrigin = 'center';
   }
 
   Future<void> _close() async {
@@ -424,6 +437,44 @@ class _WebCameraCaptureDialogState extends State<_WebCameraCaptureDialog> {
                       border: Border.all(color: Colors.red.withOpacity(0.25)),
                     ),
                     child: Text(_error!, style: const TextStyle(color: Colors.white)),
+                  ),
+                ),
+
+              // Zoom slider (only while live preview is active)
+              if (_ready && !isReview)
+                Positioned(
+                  left: 24,
+                  right: 24,
+                  bottom: 120,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '${_zoom.toStringAsFixed(1)}×',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                          shadows: [Shadow(blurRadius: 4)],
+                        ),
+                      ),
+                      SliderTheme(
+                        data: SliderTheme.of(context).copyWith(
+                          thumbColor: Colors.white,
+                          activeTrackColor: Colors.white,
+                          inactiveTrackColor: Colors.white38,
+                          overlayColor: Colors.white24,
+                          trackHeight: 2,
+                          thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
+                        ),
+                        child: Slider(
+                          value: _zoom,
+                          min: 1.0,
+                          max: 4.0,
+                          divisions: 30,
+                          onChanged: _setZoom,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
 

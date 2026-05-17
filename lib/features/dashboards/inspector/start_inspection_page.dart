@@ -848,6 +848,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
     final ok = _validateCurrentSection(selected);
     if (!ok) {
       _snack('Please fix the highlighted fields.', 'warning');
+      _scrollToTop();
       return;
     }
 

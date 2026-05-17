@@ -6,7 +6,6 @@ import 'dart:ui_web' as ui;
 
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import 'dart:typed_data';
 
 import '../../shared/app_shell.dart';
 import '../../../services/service_locator.dart';
@@ -116,6 +115,12 @@ class _ReportView extends StatefulWidget {
 
 class _ReportViewState extends State<_ReportView> {
   final _scrollCtrl = ScrollController();
+  // Anchor placed as the first child of the ListView (a RenderObjectWidget),
+  // used as the Y=0 reference for section scroll calculations.
+  final _scrollAnchorKey = GlobalKey();
+
+  // #22/25 – one GlobalKey per checklist section, keyed by typeName
+  final Map<String, GlobalKey> _sectionKeys = {};
 
   bool _showFloatingPhotos = false;
 
@@ -140,6 +145,13 @@ class _ReportViewState extends State<_ReportView> {
   @override
   void initState() {
     super.initState();
+
+    // Pre-populate section keys for #22/25 hyperlink-scroll
+    final rawTypes = (widget.inspection['types'] as List?) ?? const [];
+    for (final t in rawTypes) {
+      final name = _cleanStr(_asMap(t)['typeName']);
+      if (name.isNotEmpty) _sectionKeys[name] = GlobalKey();
+    }
 
     final built = _buildAllPhotos(widget.inspection);
     _photos = built.$1;
@@ -184,6 +196,28 @@ class _ReportViewState extends State<_ReportView> {
   void dispose() {
     _scrollCtrl.dispose();
     super.dispose();
+  }
+
+  void _scrollToSection(String typeName) {
+    final key = _sectionKeys[typeName];
+    if (!_scrollCtrl.hasClients) return;
+    final ctx = key?.currentContext;
+    if (ctx == null) return;
+
+    final sectionBox = ctx.findRenderObject() as RenderBox?;
+    if (sectionBox == null || !sectionBox.attached) return;
+
+    final anchorBox = _scrollAnchorKey.currentContext?.findRenderObject() as RenderBox?;
+    if (anchorBox == null) return;
+
+    final target = (sectionBox.localToGlobal(Offset.zero).dy - anchorBox.localToGlobal(Offset.zero).dy)
+        .clamp(_scrollCtrl.position.minScrollExtent, _scrollCtrl.position.maxScrollExtent);
+
+    _scrollCtrl.animateTo(
+      target,
+      duration: const Duration(milliseconds: 400),
+      curve: Curves.easeInOut,
+    );
   }
 
   void _openViewer(int index) {
@@ -297,47 +331,6 @@ class _ReportViewState extends State<_ReportView> {
     );
   }
 
-  void _openDamageDialog(_DamagePoint d, int idx) {
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: Text('Damage #$idx'),
-        content: SizedBox(
-          width: 720,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Damage ID: ${d.id}'),
-              const SizedBox(height: 8),
-              Text('Description: ${d.description.trim().isEmpty ? '-' : d.description.trim()}'),
-              const SizedBox(height: 12),
-              if (d.images.isEmpty)
-                const Text('No photos uploaded.')
-              else
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: [
-                    for (final url in d.images)
-                      _NetImageBox(
-                        url: url,
-                        width: 170,
-                        height: 110,
-                        onTap: () => _openUrlInViewer(url),
-                      ),
-                  ],
-                ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final inspection = widget.inspection;
@@ -356,6 +349,7 @@ class _ReportViewState extends State<_ReportView> {
     final damages = _parseDamages(inspection);
 
     final id = (inspection['_id'] ?? inspection['id'] ?? '').toString();
+    final virId = id.isEmpty ? '-' : _formatVirId(id, inspection['inspectionDate']);
     final overallRating = _toDouble(inspection['overallRating']);
 
     final inspectionDate = _fmtIso(inspection['inspectionDate']);
@@ -370,7 +364,11 @@ class _ReportViewState extends State<_ReportView> {
         ListView(
           controller: _scrollCtrl,
           padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
+          // Force all children to be built eagerly so GlobalKeys are attached
+          // even before the user scrolls down to the checklist section.
+          cacheExtent: 9999999,
           children: [
+            SizedBox(key: _scrollAnchorKey, height: 0),
             _HeaderRow(
               title: 'Inspection Report',
               onDownload: _downloadReport,
@@ -391,7 +389,7 @@ class _ReportViewState extends State<_ReportView> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _kv('Inspection ID', id),
+                      _kv('Inspection ID', virId),
                       _kv('Overall Rating', overallRating == null ? '-' : overallRating.toStringAsFixed(2)),
                       _kv('Inspection Date', inspectionDate.isEmpty ? '-' : inspectionDate),
                       if (completedAt.isNotEmpty) _kv('Completed At', completedAt),
@@ -553,7 +551,10 @@ class _ReportViewState extends State<_ReportView> {
 
                 final sectionOverviewCard = _Card(
                   title: 'Section Overview',
-                  child: _SectionOverviewGrid(types: types),
+                  child: _SectionOverviewGrid(
+                    types: types,
+                    onTapSection: _scrollToSection,
+                  ),
                 );
 
                 final summaryCard = _QuickSummaryCard(
@@ -650,7 +651,18 @@ class _ReportViewState extends State<_ReportView> {
                 children: [
                   for (final t in types) ...[
                     const SizedBox(height: 6),
-                    _ChecklistSection(type: _asMap(t)),
+                    (() {
+                      final tm = _asMap(t);
+                      final typeName = _cleanStr(tm['typeName']);
+                      final gk = _sectionKeys[typeName];
+                      // SizedBox (a RenderObjectWidget) is required — KeyedSubtree has no
+                      // RenderObject so Scrollable.ensureVisible can't find its position.
+                      return SizedBox(
+                        key: gk,
+                        width: double.infinity,
+                        child: _ChecklistSection(type: tm),
+                      );
+                    })(),
                     const SizedBox(height: 12),
                   ]
                 ],
@@ -1003,7 +1015,8 @@ class _ReviewDialogState extends State<_ReviewDialog> {
 
 class _SectionOverviewGrid extends StatelessWidget {
   final List<dynamic> types;
-  const _SectionOverviewGrid({required this.types});
+  final void Function(String typeName)? onTapSection;
+  const _SectionOverviewGrid({required this.types, this.onTapSection});
 
   @override
   Widget build(BuildContext context) {
@@ -1027,7 +1040,12 @@ class _SectionOverviewGrid extends StatelessWidget {
             for (final t in list)
               SizedBox(
                 width: tileW,
-                child: _SectionOverviewTile(type: t),
+                child: _SectionOverviewTile(
+                  type: t,
+                  onTap: onTapSection == null
+                      ? null
+                      : () => onTapSection!(_cleanStr(t['typeName'])),
+                ),
               ),
           ],
         );
@@ -1038,7 +1056,8 @@ class _SectionOverviewGrid extends StatelessWidget {
 
 class _SectionOverviewTile extends StatelessWidget {
   final Map<String, dynamic> type;
-  const _SectionOverviewTile({required this.type});
+  final VoidCallback? onTap;
+  const _SectionOverviewTile({required this.type, this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -1061,7 +1080,12 @@ class _SectionOverviewTile extends StatelessWidget {
       return fg.withValues(alpha: 0.10);
     }
 
-    return Container(
+    return MouseRegion(
+      cursor: onTap != null ? SystemMouseCursors.click : MouseCursor.defer,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.65),
@@ -1129,6 +1153,8 @@ class _SectionOverviewTile extends StatelessWidget {
             ),
           ),
         ],
+      ),
+        ),
       ),
     );
   }
@@ -1398,122 +1424,6 @@ class _DamageMarker extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-}
-
-class _DamageList extends StatelessWidget {
-  final List<_DamagePoint> damages;
-  final void Function(_DamagePoint d, int index) onTapDamage;
-  final void Function(String url) onOpenImage;
-
-  const _DamageList({
-    required this.damages,
-    required this.onTapDamage,
-    required this.onOpenImage,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.6),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
-      ),
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        children: [
-          for (int i = 0; i < damages.length; i++) ...[
-            _DamageTile(
-              index: i + 1,
-              d: damages[i],
-              onTap: () => onTapDamage(damages[i], i + 1),
-              onOpenImage: onOpenImage,
-            ),
-            if (i != damages.length - 1) const Divider(height: 18),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _DamageTile extends StatelessWidget {
-  final int index;
-  final _DamagePoint d;
-  final VoidCallback onTap;
-  final void Function(String url) onOpenImage;
-
-  const _DamageTile({
-    required this.index,
-    required this.d,
-    required this.onTap,
-    required this.onOpenImage,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final desc = d.description.trim().isEmpty ? '-' : d.description.trim();
-
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          width: 28,
-          height: 28,
-          decoration: BoxDecoration(
-            color: Colors.redAccent.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: Colors.redAccent.withValues(alpha: 0.25)),
-          ),
-          child: Center(
-            child: Text(
-              '$index',
-              style: const TextStyle(fontWeight: FontWeight.w900, color: Colors.redAccent),
-            ),
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              MouseRegion(
-                cursor: SystemMouseCursors.click,
-                child: InkWell(
-                  onTap: onTap,
-                  child: Text(
-                    'Damage #$index',
-                    style: const TextStyle(fontWeight: FontWeight.w900),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text('Description: $desc', style: const TextStyle(color: Colors.black87)),
-              const SizedBox(height: 6),
-              Text('Damage ID: ${d.id}', style: const TextStyle(color: Colors.black54)),
-              const SizedBox(height: 10),
-              if (d.images.isEmpty)
-                const Text('No damage photos uploaded.', style: TextStyle(color: Colors.black54))
-              else
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: [
-                    for (final url in d.images)
-                      _NetImageBox(
-                        url: url,
-                        width: 120,
-                        height: 78,
-                        onTap: () => onOpenImage(url),
-                      ),
-                  ],
-                ),
-            ],
-          ),
-        ),
-      ],
     );
   }
 }
@@ -2406,6 +2316,12 @@ class _HeaderRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
+        Image.asset(
+          'assets/logo/autoscope_logo_old.png',
+          height: 36,
+          errorBuilder: (_, _, _) => const SizedBox.shrink(),
+        ),
+        const SizedBox(width: 10),
         Expanded(
           child: Text(
             title,
@@ -2845,7 +2761,7 @@ class _NetImageBox extends StatelessWidget {
         fit: fit,
         width: width == double.infinity ? null : width,
         height: height == double.infinity ? null : height,
-        errorBuilder: (_, __, ___) => Container(
+        errorBuilder: (_, _, _) => Container(
           width: width == double.infinity ? null : width,
           height: height == double.infinity ? null : height,
           color: Colors.black.withValues(alpha: 0.06),
@@ -2958,6 +2874,16 @@ double? _toDouble(dynamic v) {
   if (v == null) return null;
   if (v is num) return v.toDouble();
   return double.tryParse(v.toString());
+}
+
+String _formatVirId(String rawId, dynamic isoDate) {
+  final dt = DateTime.tryParse(_cleanStr(isoDate))?.toLocal();
+  final yyyy = dt?.year.toString() ?? 'XXXX';
+  final mm = dt?.month.toString().padLeft(2, '0') ?? 'XX';
+  final suffix = rawId.length >= 5
+      ? rawId.substring(rawId.length - 5).toUpperCase()
+      : rawId.toUpperCase().padLeft(5, '0');
+  return 'VIR-$yyyy-$mm-$suffix';
 }
 
 String _fmtIso(dynamic iso) {
