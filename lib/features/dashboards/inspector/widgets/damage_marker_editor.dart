@@ -242,7 +242,9 @@ class _DamageMarkerEditorState extends State<DamageMarkerEditor> {
       },
     );
 
-    descCtrl.dispose();
+    // Defer dispose so the dialog's widget tree fully deactivates before
+    // the controller is torn down — avoids _dependents.isEmpty assertion.
+    WidgetsBinding.instance.addPostFrameCallback((_) => descCtrl.dispose());
     return result;
   }
 
@@ -267,7 +269,7 @@ class _DamageMarkerEditorState extends State<DamageMarkerEditor> {
                 borderRadius: BorderRadius.circular(16),
                 child: Container(
                   decoration: BoxDecoration(
-                    border: Border.all(color: Colors.black.withOpacity(0.12)),
+                    border: Border.all(color: Colors.black.withValues(alpha: 0.12)),
                     color: Colors.white,
                   ),
                   child: GestureDetector(
@@ -314,7 +316,7 @@ class _DamageMarkerEditorState extends State<DamageMarkerEditor> {
                                   border: Border.all(color: Colors.white, width: 2),
                                   boxShadow: [
                                     BoxShadow(
-                                      color: Colors.black.withOpacity(0.25),
+                                      color: Colors.black.withValues(alpha: 0.25),
                                       blurRadius: 6,
                                       offset: const Offset(0, 3),
                                     )
@@ -345,7 +347,7 @@ class _DamageMarkerEditorState extends State<DamageMarkerEditor> {
         if (_items.isEmpty)
           Text(
             'No damages marked yet.',
-            style: TextStyle(color: Colors.black.withOpacity(0.6)),
+            style: TextStyle(color: Colors.black.withValues(alpha: 0.6)),
           )
         else
           Column(

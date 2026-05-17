@@ -127,6 +127,12 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
   final exteriorColorCtrl = TextEditingController();
   final doorsCtrl = TextEditingController();
   final wheelSizeCtrl = TextEditingController();
+  String? _wheelType;
+  final wheelTypeOtherCtrl = TextEditingController();
+  bool _wheelSizeIsOther = false;
+  final wheelSizeOtherCtrl = TextEditingController();
+  bool _specsIsOther = false;
+  final specsOtherCtrl = TextEditingController();
   String? exteriorModificationDone; // Yes/No
 
   // ============================
@@ -196,7 +202,25 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
   static const List<String> _gradeVariantOptions = ['XLE', 'LIMITED'];
   static const List<String> _cylinderSizeOptions = ['3', '4', '6', '8'];
   static const List<String> _driveTrainOptions = ['FWD', 'RWD', '4X4'];
-  static const List<String> _specsOptions = ['GCC'];
+  static const List<String> _specsOptions = [
+    'GCC',
+    'AMERICAN',
+    'EUROPEAN',
+    'JAPANESE',
+    'KOREAN',
+    'CANADIAN',
+    'AUSTRALIAN',
+    'CHINESE',
+    'OTHER',
+  ];
+  static const List<String> _wheelSizeOptions = [
+    '14"', '15"', '16"', '17"', '18"', '19"', '20"', '21"', '22"', '23"', 'Other',
+  ];
+  static const List<String> _wheelTypeOptions = [
+    'Alloy Wheel',
+    'Steel Wheel',
+    'Other',
+  ];
   static const List<String> _ownershipTypeOptions = ['INDIVIDUAL', 'COMPANY'];
   static const List<String> _servicedWithOptions = ['AGENCY', 'THIRD PARTY'];
   static const List<String> _seatsOptions = ['2', '4', '5', '6', '7', '8', '9'];
@@ -292,6 +316,9 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
     exteriorColorCtrl.dispose();
     doorsCtrl.dispose();
     wheelSizeCtrl.dispose();
+    wheelSizeOtherCtrl.dispose();
+    wheelTypeOtherCtrl.dispose();
+    specsOtherCtrl.dispose();
 
     otherMakeCtrl.dispose();
     otherModelCtrl.dispose();
@@ -448,6 +475,10 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
         fuelTypeCtrl.text = (d['fuelType'] ?? fuelTypeCtrl.text).toString().trim();
         driveTrainCtrl.text = (d['driveTrain'] ?? driveTrainCtrl.text).toString().trim();
         specsCtrl.text = (d['specs'] ?? specsCtrl.text).toString().trim();
+        // Migrate old 'US SPECS' to renamed 'AMERICAN'
+        if (specsCtrl.text == 'US SPECS') specsCtrl.text = 'AMERICAN';
+        specsOtherCtrl.text = (d['specsOther'] ?? specsOtherCtrl.text).toString().trim();
+        _specsIsOther = specsCtrl.text == 'OTHER';
         odometerCtrl.text = (d['odometerReading'] ?? odometerCtrl.text).toString().trim();
         registrationNoCtrl.text = (d['registrationNo'] ?? registrationNoCtrl.text).toString().trim();
         emiratesRegAtCtrl.text = (d['emiratesRegAt'] ?? emiratesRegAtCtrl.text).toString().trim();
@@ -481,6 +512,15 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
         exteriorColorCtrl.text = (d['exteriorColor'] ?? exteriorColorCtrl.text).toString().trim();
         doorsCtrl.text = (d['doors'] ?? doorsCtrl.text).toString().trim();
         wheelSizeCtrl.text = (d['wheelSize'] ?? wheelSizeCtrl.text).toString().trim();
+        // Migrate wheel size stored without inch symbol (backend may strip '"')
+        if (wheelSizeCtrl.text.isNotEmpty && !wheelSizeCtrl.text.endsWith('"') && wheelSizeCtrl.text != 'Other') {
+          final candidate = '${wheelSizeCtrl.text}"';
+          if (_wheelSizeOptions.contains(candidate)) wheelSizeCtrl.text = candidate;
+        }
+        wheelSizeOtherCtrl.text = (d['wheelSizeOther'] ?? wheelSizeOtherCtrl.text).toString().trim();
+        _wheelSizeIsOther = wheelSizeCtrl.text == 'Other';
+        _wheelType = (d['wheelType'] ?? _wheelType)?.toString();
+        wheelTypeOtherCtrl.text = (d['wheelTypeOther'] ?? wheelTypeOtherCtrl.text).toString().trim();
         exteriorModificationDone = (d['modificationDone'] ?? exteriorModificationDone)?.toString();
         break;
 
@@ -673,8 +713,10 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
       final list = await inspectionRequestsService.listVehicleModels(makeId);
 
       if (!mounted) return;
+      final uniqueModels = list.map((e) => e.toString().trim().toUpperCase()).toSet().toList()
+        ..sort((a, b) => a.compareTo(b));
       setState(() {
-        models = [...list.map((e) => e.toString().trim().toUpperCase()), 'OTHER'];
+        models = [...uniqueModels, 'OTHER'];
         if (models.isEmpty) models = const ['OTHER'];
       });
     } catch (e) {
@@ -861,6 +903,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
         'fuelType': fuelTypeCtrl.text.trim(),
         'driveTrain': driveTrainCtrl.text.trim(),
         'specs': specsCtrl.text.trim(),
+        'specsOther': _specsIsOther ? specsOtherCtrl.text.trim() : '',
         'odometerReading': odometerCtrl.text.trim(),
         'registrationNo': registrationNoCtrl.text.trim(),
         'emiratesRegAt': emiratesRegAtCtrl.text.trim(),
@@ -898,6 +941,8 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
         'exteriorColor': exteriorColorCtrl.text.trim(),
         'doors': doorsCtrl.text.trim(),
         'wheelSize': wheelSizeCtrl.text.trim(),
+        'wheelSizeOther': _wheelSizeIsOther ? wheelSizeOtherCtrl.text.trim() : '',
+        'wheelType': _wheelType == 'Other' ? wheelTypeOtherCtrl.text.trim() : (_wheelType ?? ''),
         'modificationDone': exteriorModificationDone,
       };
     }
@@ -1165,8 +1210,9 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
     IconData? icon,
     String? Function(String?)? validator,
   }) {
+    final safeValue = (value != null && options.contains(value)) ? value : null;
     return DropdownButtonFormField<String>(
-      value: value,
+      value: safeValue,
       autovalidateMode: AutovalidateMode.onUserInteraction,
       items: options.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(),
       onChanged: onChanged,
@@ -1188,7 +1234,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
           children: [
             // MAKE
             DropdownButtonFormField<String>(
-              value: selectedMake,
+              value: (selectedMake != null && makes.contains(selectedMake)) ? selectedMake : null,
               autovalidateMode: AutovalidateMode.onUserInteraction,
               items: makes.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
               onChanged: loadingMakes
@@ -1262,7 +1308,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
 
             // MODEL
             DropdownButtonFormField<String>(
-              value: selectedModel,
+              value: (selectedModel != null && models.contains(selectedModel)) ? selectedModel : null,
               autovalidateMode: AutovalidateMode.onUserInteraction,
               items: models.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
               onChanged: (selectedMake == null || loadingModels)
@@ -1396,8 +1442,29 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
               icon: Icons.public_outlined,
               hint: 'Select specs',
               validator: (v) => v == null ? 'Specs is required' : null,
-              onChanged: (v) => setState(() => specsCtrl.text = v ?? ''),
+              onChanged: (v) {
+                setState(() {
+                  specsCtrl.text = v ?? '';
+                  _specsIsOther = v == 'OTHER';
+                  if (!_specsIsOther) specsOtherCtrl.clear();
+                });
+              },
             ),
+
+            if (_specsIsOther) ...[
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: specsOtherCtrl,
+                autovalidateMode: AutovalidateMode.onUserInteraction,
+                inputFormatters: [LengthLimitingTextInputFormatter(40), _upper],
+                decoration: _dec(label: 'Other Specs', hint: 'ENTER SPECS', icon: Icons.edit_outlined),
+                validator: (v) {
+                  if (!_specsIsOther) return null;
+                  if (v == null || v.trim().isEmpty) return 'Other specs is required';
+                  return null;
+                },
+              ),
+            ],
 
             const SizedBox(height: 12),
 
@@ -1416,8 +1483,8 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
               controller: registrationNoCtrl,
               autovalidateMode: AutovalidateMode.onUserInteraction,
               inputFormatters: [LengthLimitingTextInputFormatter(20), _upper],
-              decoration: _dec(label: 'Registration No.', hint: 'e.g. ABC123', icon: Icons.confirmation_number_outlined),
-              validator: (v) => _alphaNumValidator(v, fieldName: 'Registration No', min: 3),
+              decoration: _dec(label: 'Registration Number', hint: 'e.g. ABC123', icon: Icons.confirmation_number_outlined),
+              validator: (v) => _alphaNumValidator(v, fieldName: 'Registration Number', min: 3),
             ),
 
             const SizedBox(height: 12),
@@ -1426,8 +1493,8 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
               controller: emiratesRegAtCtrl,
               autovalidateMode: AutovalidateMode.onUserInteraction,
               inputFormatters: [LengthLimitingTextInputFormatter(20), _upper],
-              decoration: _dec(label: 'Emirates Reg. At', hint: 'e.g. DUBAI', icon: Icons.location_city_outlined),
-              validator: (v) => _alphaNumValidator(v, fieldName: 'Emirates Reg. At', min: 2),
+              decoration: _dec(label: 'Emirates Registered At', hint: 'e.g. DUBAI', icon: Icons.location_city_outlined),
+              validator: (v) => _alphaNumValidator(v, fieldName: 'Emirates Registered At', min: 2),
             ),
 
             const SizedBox(height: 12),
@@ -1451,7 +1518,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
                         const Icon(Icons.numbers_outlined, size: 18),
                         const SizedBox(width: 8),
                         const Text(
-                          'Chassis No. (Photo)',
+                          'Chassis Number (Photo)',
                           style: TextStyle(fontWeight: FontWeight.w900),
                         ),
                         const Spacer(),
@@ -1677,14 +1744,51 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
               onChanged: (v) => setState(() => doorsCtrl.text = v ?? ''),
             ),
             const SizedBox(height: 12),
-            TextFormField(
-              controller: wheelSizeCtrl,
-              autovalidateMode: AutovalidateMode.onUserInteraction,
-              keyboardType: TextInputType.number,
-              inputFormatters: _digitsFormatters(max: 2),
-              decoration: _dec(label: 'Wheel Size', hint: 'e.g. 20', icon: Icons.circle_outlined),
-              validator: (v) => _numberValidator(v, fieldName: 'Wheel Size', max: 2),
+            _dropField(
+              label: 'Wheel Size',
+              value: wheelSizeCtrl.text.isEmpty ? null : wheelSizeCtrl.text,
+              options: _wheelSizeOptions,
+              icon: Icons.circle_outlined,
+              hint: 'Select wheel size',
+              validator: (v) => v == null ? 'Wheel Size is required' : null,
+              onChanged: (v) {
+                setState(() {
+                  wheelSizeCtrl.text = v ?? '';
+                  _wheelSizeIsOther = v == 'Other';
+                  if (!_wheelSizeIsOther) wheelSizeOtherCtrl.clear();
+                });
+              },
             ),
+            if (_wheelSizeIsOther) ...[
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: wheelSizeOtherCtrl,
+                autovalidateMode: AutovalidateMode.onUserInteraction,
+                inputFormatters: [LengthLimitingTextInputFormatter(20)],
+                decoration: _dec(label: 'Wheel Size (specify)', hint: 'e.g. 24"', icon: Icons.edit_outlined),
+                validator: (v) => (v == null || v.trim().isEmpty) ? 'Please specify wheel size' : null,
+              ),
+            ],
+            const SizedBox(height: 12),
+            _dropField(
+              label: 'Wheel Type',
+              value: _wheelType,
+              options: _wheelTypeOptions,
+              icon: Icons.tire_repair_outlined,
+              hint: 'Select wheel type',
+              validator: (v) => v == null ? 'Wheel Type is required' : null,
+              onChanged: (v) => setState(() => _wheelType = v),
+            ),
+            if (_wheelType == 'Other') ...[
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: wheelTypeOtherCtrl,
+                autovalidateMode: AutovalidateMode.onUserInteraction,
+                inputFormatters: [LengthLimitingTextInputFormatter(40)],
+                decoration: _dec(label: 'Wheel Type (specify)', hint: 'Enter wheel type', icon: Icons.edit_outlined),
+                validator: (v) => (v == null || v.trim().isEmpty) ? 'Please specify wheel type' : null,
+              ),
+            ],
             const SizedBox(height: 12),
             _dropField(
               label: 'Modification Done',
@@ -1827,7 +1931,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
                       const SizedBox(height: 12),
 
                       DropdownButtonFormField<String>(
-                        value: _grade[key],
+                        value: (_grade[key] != null && _gradeOptions.contains(_grade[key])) ? _grade[key] : null,
                         autovalidateMode: AutovalidateMode.onUserInteraction,
                         items: _gradeOptions.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(),
                         onChanged: (v) => setState(() => _grade[key] = v),
@@ -2096,7 +2200,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
         'transmission': transmissionCtrl.text.trim(),
         'fuelType': fuelTypeCtrl.text.trim(),
         'driveTrain': driveTrainCtrl.text.trim(),
-        'specs': specsCtrl.text.trim(),
+        'specs': _specsIsOther ? specsOtherCtrl.text.trim() : specsCtrl.text.trim(),
         'odometerReading': odometerCtrl.text.trim(),
         'registrationNo': registrationNoCtrl.text.trim(),
         'emiratesRegAt': emiratesRegAtCtrl.text.trim(),
@@ -2124,7 +2228,8 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
       'exteriorDetails': {
         'exteriorColor': exteriorColorCtrl.text.trim(),
         'doors': doorsCtrl.text.trim(),
-        'wheelSize': wheelSizeCtrl.text.trim(),
+        'wheelSize': _wheelSizeIsOther ? wheelSizeOtherCtrl.text.trim() : wheelSizeCtrl.text.trim(),
+        'wheelType': _wheelType == 'Other' ? wheelTypeOtherCtrl.text.trim() : (_wheelType ?? ''),
         'modificationDone': exteriorModificationDone,
       },
     };

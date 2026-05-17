@@ -1021,9 +1021,10 @@ class _RequestPageState extends State<RequestPage> {
 
   // Location
   final addressCtrl = TextEditingController();
-  final cityCtrl = TextEditingController();
+  String? selectedCity;
+  bool _cityIsOther = false;
+  final otherCityCtrl = TextEditingController();
   final stateCtrl = TextEditingController();
-  final zipCtrl = TextEditingController();
 
   // Notes
   final notesCtrl = TextEditingController();
@@ -1085,14 +1086,13 @@ class _RequestPageState extends State<RequestPage> {
     preferredTimeCtrl.dispose();
 
     addressCtrl.dispose();
-    cityCtrl.dispose();
     stateCtrl.dispose();
-    zipCtrl.dispose();
 
     notesCtrl.dispose();
 
     otherMakeCtrl.dispose();
     otherModelCtrl.dispose();
+    otherCityCtrl.dispose();
 
     super.dispose();
   }
@@ -1242,16 +1242,6 @@ Dummy Terms & Conditions
     return null;
   }
 
-  String? _zipValidator(String? v) {
-    final r = _req(v, msg: 'Zip code is required');
-    if (r != null) return r;
-
-    final s = v!.trim();
-    if (s.length < 3 || s.length > 10) return 'Zip code should be 3 to 10 characters';
-    if (!RegExp(r"^[A-Za-z0-9\-]+$").hasMatch(s)) return 'Zip code can contain letters/numbers and "-"';
-    return null;
-  }
-
   // ✅ for make/model OTHER textboxes (allow A4, X-TRAIL, etc.)
   String? _vehicleTextValidator(String? v, {required String fieldName, int min = 2}) {
     final r = _req(v, msg: '$fieldName is required');
@@ -1301,12 +1291,6 @@ Dummy Terms & Conditions
   List<TextInputFormatter> _colorFormatters() => [
         LengthLimitingTextInputFormatter(20),
         FilteringTextInputFormatter.allow(RegExp(r"[A-Za-z\s]")),
-        _upper,
-      ];
-
-  List<TextInputFormatter> _zipFormatters() => [
-        LengthLimitingTextInputFormatter(10),
-        FilteringTextInputFormatter.allow(RegExp(r"[0-9\-]")),
         _upper,
       ];
 
@@ -1557,9 +1541,8 @@ Dummy Terms & Conditions
         "preferredTime": preferredTimeCtrl.text.trim(),
         "location": {
           "address": addressCtrl.text.trim(),
-          "city": cityCtrl.text.trim(),
+          "city": _cityIsOther ? otherCityCtrl.text.trim() : (selectedCity ?? ''),
           "state": stateCtrl.text.trim(),
-          "zipCode": zipCtrl.text.trim(),
         },
         "notes": notesCtrl.text.trim(),
       };
@@ -1860,7 +1843,7 @@ Dummy Terms & Conditions
                                 Divider(color: Colors.black.withOpacity(0.08)),
                                 const SizedBox(height: 18),
 
-                                _sectionTitle('Vehicle Info',
+                                _sectionTitle('Vehicle Information',
                                     icon: Icons.directions_car_outlined),
                                 const SizedBox(height: 10),
                                 Wrap(
@@ -2126,47 +2109,66 @@ Dummy Terms & Conditions
                                       ),
                                     ),
                                     field(
-                                      TextFormField(
-                                        controller: cityCtrl,
-                                        autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
-                                        inputFormatters:
-                                            _nameFormatters(max: 30),
+                                      DropdownButtonFormField<String>(
+                                        value: selectedCity,
+                                        autovalidateMode: AutovalidateMode.onUserInteraction,
                                         decoration: _dec(
                                           label: 'City',
-                                          hint: 'DUBAI',
+                                          hint: 'Select city',
                                           icon: Icons.location_city_outlined,
                                         ),
-                                        validator: (v) =>
-                                            _req(v, msg: 'City is required'),
+                                        items: const [
+                                          'Abu Dhabi',
+                                          'Ajman',
+                                          'Dubai',
+                                          'Fujairah',
+                                          'Ras Al Khaimah',
+                                          'Sharjah',
+                                          'Umm Al Quwain',
+                                          'Other',
+                                        ].map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                                        onChanged: (v) {
+                                          setState(() {
+                                            selectedCity = v;
+                                            _cityIsOther = v == 'Other';
+                                            if (!_cityIsOther) otherCityCtrl.clear();
+                                          });
+                                        },
+                                        validator: (v) => v == null ? 'City is required' : null,
                                       ),
                                     ),
+                                    if (_cityIsOther)
+                                      field(
+                                        TextFormField(
+                                          controller: otherCityCtrl,
+                                          autovalidateMode: AutovalidateMode.onUserInteraction,
+                                          inputFormatters: [
+                                            LengthLimitingTextInputFormatter(40),
+                                            _upper,
+                                          ],
+                                          decoration: _dec(
+                                            label: 'Other City',
+                                            hint: 'ENTER CITY NAME',
+                                            icon: Icons.edit_outlined,
+                                          ),
+                                          validator: (v) {
+                                            if (!_cityIsOther) return null;
+                                            if (v == null || v.trim().isEmpty) return 'City is required';
+                                            return null;
+                                          },
+                                        ),
+                                      ),
                                     field(
                                       TextFormField(
                                         controller: stateCtrl,
-                                        autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
-                                        inputFormatters:
-                                            _nameFormatters(max: 30),
+                                        autovalidateMode: AutovalidateMode.onUserInteraction,
+                                        inputFormatters: _nameFormatters(max: 30),
                                         decoration: _dec(
-                                          label: 'State',
+                                          label: 'State / Area',
                                           hint: 'UAE',
                                           icon: Icons.map_outlined,
                                         ),
-                                        validator: (v) =>
-                                            _req(v, msg: 'State is required'),
-                                      ),
-                                    ),
-                                    field(
-                                      TextFormField(
-                                        controller: zipCtrl,
-                                        autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
-                                        inputFormatters: _zipFormatters(),
-                                        decoration: _dec(
-                                          label: 'Zip Code',
-                                          hint: '00000',
-                                          icon:
-                                              Icons.local_post_office_outlined,
-                                        ),
-                                        validator: _zipValidator,
+                                        validator: (v) => _req(v, msg: 'State is required'),
                                       ),
                                     ),
                                   ],

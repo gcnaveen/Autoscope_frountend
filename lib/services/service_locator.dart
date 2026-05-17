@@ -9,6 +9,8 @@ import 'admin_dashboard_service.dart';
 import 'inspection_requests_service.dart';
 import 'contact_service.dart';
 import 'user_requests_service.dart';
+import 'reviews_service.dart';
+
 
 final apiClient = ApiClient(baseUrl: ApiConfig.apiBaseUrl);
 
@@ -21,6 +23,7 @@ final contactService = ContactService(apiClient: apiClient);
 final userRequestsService = UserRequestsService(apiClient: apiClient);
 final checklistTemplatesService = ChecklistTemplatesService(apiClient: apiClient);
 final uploadService = UploadService(apiClient: apiClient);
+final reviewsService = ReviewsService(apiClient: apiClient);
 
 
 

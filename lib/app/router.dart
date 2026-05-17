@@ -223,6 +223,7 @@ import '../features/dashboards/admin/users/users_page.dart';
 import '../features/dashboards/admin/inspectors/inspectors_page.dart';
 import '../features/dashboards/admin/inspections/inspection_requests_page.dart';
 import '../features/dashboards/admin/checklists/checklist_templates_page.dart';
+import '../features/dashboards/admin/manage_reviews/manage_reviews_page.dart';
 
 import '../features/dashboards/admin/vehicle_catalog_page.dart';
 
@@ -365,6 +366,11 @@ GoRouter buildRouter() {
           final id = state.pathParameters['inspectionId']!;
           return InspectionReportPage(inspectionId: id);
         },
+      ),
+
+      GoRoute(
+        path: '/dashboard/admin/reviews',
+        builder: (context, state) => const ManageReviewsPage(),
       ),
 
       GoRoute(

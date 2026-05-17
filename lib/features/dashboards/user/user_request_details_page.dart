@@ -309,7 +309,7 @@ class _UserRequestDetailsPageState extends State<UserRequestDetailsPage> {
                     child: Column(
                       children: [
                         _Section(
-                          title: 'Vehicle Info',
+                          title: 'Vehicle Information',
                           child: _editing
                               ? _VehicleEditForm(
                                   makeCtrl: makeCtrl,

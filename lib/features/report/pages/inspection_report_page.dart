@@ -1,4 +1,4 @@
-// lib/features/dashboards/user/inspection_report_page.dart
+﻿// lib/features/dashboards/user/inspection_report_page.dart
 import 'package:flutter/foundation.dart' show kIsWeb;
 // ignore: avoid_web_libraries_in_flutter
 import 'dart:html' as html;
@@ -131,6 +131,12 @@ class _ReportViewState extends State<_ReportView> {
   late final List<_VideoRef> _videos;
   late final Map<String, List<int>> _sectionToVideoIdx;
 
+  // ✅ Reviews
+  late final String _inspectionRequestId;
+  bool _canReview = false;
+  bool _reviewSubmitted = false;
+  bool _reviewPopupDismissed = false;
+
   @override
   void initState() {
     super.initState();
@@ -151,6 +157,27 @@ class _ReportViewState extends State<_ReportView> {
     });
 
     if (_photos.isNotEmpty) _heroIndex = 0;
+
+    // ✅ Review eligibility: only when completed + has inspectionRequestId
+    final status = _cleanStr(widget.inspection['status']).toLowerCase();
+    final completedAt = _cleanStr(widget.inspection['completedAt']);
+    final isCompleted = status == 'completed' || completedAt.isNotEmpty;
+
+    _inspectionRequestId = _extractId(widget.inspection['inspectionRequestId']);
+    _canReview = isCompleted && _inspectionRequestId.isNotEmpty;
+
+    if (_canReview) {
+      _reviewSubmitted = _lsBool('review_submitted_$_inspectionRequestId');
+      _reviewPopupDismissed = _lsBool('review_popup_dismissed_$_inspectionRequestId');
+
+      // auto popup only if not submitted and not dismissed before
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (!_reviewSubmitted && !_reviewPopupDismissed) {
+          _openReviewDialog(auto: true);
+        }
+      });
+    }
   }
 
   @override
@@ -179,6 +206,16 @@ class _ReportViewState extends State<_ReportView> {
   void _prev() {
     if (_photos.isEmpty) return;
     setState(() => _viewerIndex = (_viewerIndex - 1 + _photos.length) % _photos.length);
+  }
+
+  void _nextHero() {
+    if (_photos.isEmpty) return;
+    setState(() => _heroIndex = (_heroIndex + 1) % _photos.length);
+  }
+
+  void _prevHero() {
+    if (_photos.isEmpty) return;
+    setState(() => _heroIndex = (_heroIndex - 1 + _photos.length) % _photos.length);
   }
 
   void _setHero(int index, {bool openViewer = false}) {
@@ -237,6 +274,29 @@ class _ReportViewState extends State<_ReportView> {
     );
   }
 
+  // ✅ Review dialog
+  void _openReviewDialog({required bool auto}) {
+    if (!_canReview) return;
+    if (_reviewSubmitted) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _ReviewDialog(
+        inspectionRequestId: _inspectionRequestId,
+        onSubmitted: () {
+          if (!mounted) return;
+          setState(() => _reviewSubmitted = true);
+          _setLsBool('review_submitted_$_inspectionRequestId', true);
+        },
+        onDismissed: () {
+          _setLsBool('review_popup_dismissed_$_inspectionRequestId', true);
+          _reviewPopupDismissed = true;
+        },
+      ),
+    );
+  }
+
   void _openDamageDialog(_DamagePoint d, int idx) {
     showDialog(
       context: context,
@@ -282,7 +342,6 @@ class _ReportViewState extends State<_ReportView> {
   Widget build(BuildContext context) {
     final inspection = widget.inspection;
 
-    final template = _asMap(inspection['checklistTemplateId']);
     final inspector = _asMap(inspection['inspectorId']);
 
     // vehicle sections from your API response
@@ -315,6 +374,9 @@ class _ReportViewState extends State<_ReportView> {
             _HeaderRow(
               title: 'Inspection Report',
               onDownload: _downloadReport,
+              showReview: _canReview,
+              reviewSubmitted: _reviewSubmitted,
+              onReview: (_canReview && !_reviewSubmitted) ? () => _openReviewDialog(auto: false) : null,
             ),
             const SizedBox(height: 12),
 
@@ -325,7 +387,7 @@ class _ReportViewState extends State<_ReportView> {
                 final gap = 12.0;
 
                 final left = _Card(
-                  title: 'Report Info',
+                  title: 'Report Information',
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -340,12 +402,10 @@ class _ReportViewState extends State<_ReportView> {
                 );
 
                 final right = _Card(
-                  title: 'Template & Inspector',
+                  title: 'Inspector',
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _kv('Template', _cleanStr(template['name']).isEmpty ? '-' : _cleanStr(template['name'])),
-                      _kv('Version', _cleanStr(template['version']).isEmpty ? '-' : _cleanStr(template['version'])),
                       _kv(
                         'Inspector',
                         '${_cleanStr(inspector['firstName'])} ${_cleanStr(inspector['lastName'])}'.trim().isEmpty
@@ -380,9 +440,9 @@ class _ReportViewState extends State<_ReportView> {
 
             const SizedBox(height: 12),
 
-            // Vehicle Info (sub-sections)
+            // Vehicle Information (sub-sections)
             _Card(
-              title: 'Vehicle Info',
+              title: 'Vehicle Information',
               child: Column(
                 children: [
                   LayoutBuilder(
@@ -444,15 +504,6 @@ class _ReportViewState extends State<_ReportView> {
                   ),
                 ],
               ),
-            ),
-
-            // Damages block (map + list)
-            const SizedBox(height: 12),
-            _DamagesBlock(
-              damages: damages,
-              carTopAssetPath: kCarTopDamageAsset,
-              onTapDamage: (d, idx) => _openDamageDialog(d, idx),
-              onOpenImage: (url) => _openUrlInViewer(url),
             ),
 
             const SizedBox(height: 12),
@@ -543,6 +594,14 @@ class _ReportViewState extends State<_ReportView> {
               },
             ),
 
+            // Damage Overview — below Service Overview and Overall Rating
+            const SizedBox(height: 12),
+            _DamagesBlock(
+              damages: damages,
+              carTopAssetPath: kCarTopDamageAsset,
+              onOpenImage: (url) => _openUrlInViewer(url),
+            ),
+
             if (notes.isNotEmpty) ...[
               const SizedBox(height: 12),
               _Card(
@@ -559,8 +618,10 @@ class _ReportViewState extends State<_ReportView> {
               sectionToPhotoIdx: _sectionToPhotoIdx,
               heroIndex: _heroIndex,
               onHeroOpen: () => _openViewer(_heroIndex),
-              onThumbClick: (index) => _setHero(index, openViewer: true),
+              onThumbClick: (index) => _setHero(index, openViewer: false),
               onOpenViewer: () => _openViewer(_heroIndex),
+              onPrevHero: _prevHero,
+              onNextHero: _nextHero,
             ),
 
             // ✅ Videos
@@ -595,6 +656,62 @@ class _ReportViewState extends State<_ReportView> {
                 ],
               ),
             ),
+
+            const SizedBox(height: 12),
+
+            // Disclaimer
+            _Card(
+              title: 'Disclaimer',
+              child: const Text(
+                'Auto Scope inspects vehicles to the best of its ability based on visible and accessible '
+                'components at the time of inspection. This report does not constitute a guarantee or '
+                'warranty of the vehicle\'s condition. Auto Scope shall not be liable for any latent '
+                'defects or issues that were not visible or accessible during inspection. The findings '
+                'in this report are valid at the time of inspection only and may change over time. '
+                'This report is prepared solely for the use of the commissioning party and must not '
+                'be relied upon by any third party without written consent from Auto Scope.',
+                style: TextStyle(color: Colors.black87, height: 1.6),
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            // Company signature & stamp
+            _Card(
+              title: 'Authorized By',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Auto Scope Vehicle Inspection Services',
+                    style: TextStyle(fontWeight: FontWeight.w900, fontSize: 15),
+                  ),
+                  const SizedBox(height: 20),
+                  LayoutBuilder(
+                    builder: (context, c) {
+                      final wide = c.maxWidth >= 500;
+                      final stampBox = _SignatureBox(label: 'Company Stamp');
+                      final sigBox = _SignatureBox(label: 'Authorized Signature');
+                      if (!wide) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [stampBox, const SizedBox(height: 16), sigBox],
+                        );
+                      }
+                      return Row(
+                        children: [
+                          stampBox,
+                          const SizedBox(width: 40),
+                          sigBox,
+                        ],
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 18),
           ],
         ),
 
@@ -744,6 +861,143 @@ class _ReportViewState extends State<_ReportView> {
 }
 
 /* =========================
+   Review Dialog
+========================= */
+
+class _ReviewDialog extends StatefulWidget {
+  final String inspectionRequestId;
+  final VoidCallback onSubmitted;
+  final VoidCallback onDismissed;
+
+  const _ReviewDialog({
+    required this.inspectionRequestId,
+    required this.onSubmitted,
+    required this.onDismissed,
+  });
+
+  @override
+  State<_ReviewDialog> createState() => _ReviewDialogState();
+}
+
+class _ReviewDialogState extends State<_ReviewDialog> {
+  int _rating = 0;
+  final _ctrl = TextEditingController();
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final comment = _ctrl.text.trim();
+    if (_rating <= 0) return;
+    if (comment.isEmpty) return;
+
+    setState(() => _busy = true);
+    try {
+      final res = await reviewsService.submitReview(
+        inspectionRequestId: widget.inspectionRequestId,
+        rating: _rating,
+        comment: comment,
+      );
+
+      final ok = res['success'] == true;
+      if (!mounted) return;
+
+      if (ok) {
+        widget.onSubmitted();
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Thanks! Your review is submitted for approval.')),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Submit failed: ${res['message'] ?? 'Unknown error'}')),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Submit failed: $e')));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Widget _star(int i) {
+    final filled = i <= _rating;
+    return IconButton(
+      onPressed: _busy ? null : () => setState(() => _rating = i),
+      icon: Icon(filled ? Icons.star : Icons.star_border, color: Colors.amber.shade700),
+      tooltip: '$i',
+    );
+  }
+
+  void _dismiss() {
+    widget.onDismissed();
+    Navigator.pop(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final canSubmit = !_busy && _rating > 0 && _ctrl.text.trim().isNotEmpty;
+
+    return AlertDialog(
+      title: Row(
+        children: [
+          const Expanded(child: Text('Rate your inspection')),
+          IconButton(
+            tooltip: 'Close',
+            onPressed: _busy ? null : _dismiss,
+            icon: const Icon(Icons.close),
+          ),
+        ],
+      ),
+      content: SizedBox(
+        width: 520,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Your review will appear on the website after admin approval.',
+              style: TextStyle(color: Colors.black54),
+            ),
+            const SizedBox(height: 12),
+            Row(children: [_star(1), _star(2), _star(3), _star(4), _star(5)]),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _ctrl,
+              enabled: !_busy,
+              maxLines: 4,
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(
+                labelText: 'Comment',
+                hintText: 'Write your experience…',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _busy ? null : _dismiss,
+          child: const Text('Later'),
+        ),
+        FilledButton(
+          onPressed: canSubmit ? _submit : null,
+          child: _busy
+              ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+              : const Text('Submit'),
+        ),
+      ],
+    );
+  }
+}
+
+/* =========================
    Section Overview
 ========================= */
 
@@ -804,15 +1058,15 @@ class _SectionOverviewTile extends StatelessWidget {
 
     Color toneBg() {
       final fg = toneFg();
-      return fg.withOpacity(0.10);
+      return fg.withValues(alpha: 0.10);
     }
 
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.65),
+        color: Colors.white.withValues(alpha: 0.65),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.black.withOpacity(0.06)),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -823,7 +1077,7 @@ class _SectionOverviewTile extends StatelessWidget {
                 width: 28,
                 height: 28,
                 decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.05),
+                  color: Colors.black.withValues(alpha: 0.05),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: const Icon(Icons.view_list_outlined, size: 16),
@@ -843,7 +1097,7 @@ class _SectionOverviewTile extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: toneBg(),
                   borderRadius: BorderRadius.circular(999),
-                  border: Border.all(color: toneFg().withOpacity(0.18)),
+                  border: Border.all(color: toneFg().withValues(alpha: 0.18)),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -870,8 +1124,8 @@ class _SectionOverviewTile extends StatelessWidget {
             child: LinearProgressIndicator(
               value: v,
               minHeight: 6,
-              backgroundColor: Colors.black.withOpacity(0.06),
-              valueColor: AlwaysStoppedAnimation<Color>(toneFg().withOpacity(0.85)),
+              backgroundColor: Colors.black.withValues(alpha: 0.06),
+              valueColor: AlwaysStoppedAnimation<Color>(toneFg().withValues(alpha: 0.85)),
             ),
           ),
         ],
@@ -942,9 +1196,9 @@ class _MiniStat extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.6),
+        color: Colors.white.withValues(alpha: 0.6),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.black.withOpacity(0.06)),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -964,74 +1218,64 @@ class _MiniStat extends StatelessWidget {
    Damages (Map + List)
 ========================= */
 
-class _DamagesBlock extends StatelessWidget {
+class _DamagesBlock extends StatefulWidget {
   final List<_DamagePoint> damages;
   final String carTopAssetPath;
-  final void Function(_DamagePoint d, int index) onTapDamage;
   final void Function(String url) onOpenImage;
 
   const _DamagesBlock({
     required this.damages,
     required this.carTopAssetPath,
-    required this.onTapDamage,
     required this.onOpenImage,
   });
 
   @override
+  State<_DamagesBlock> createState() => _DamagesBlockState();
+}
+
+class _DamagesBlockState extends State<_DamagesBlock> {
+  int? _selectedIdx;
+
+  @override
   Widget build(BuildContext context) {
-    if (damages.isEmpty) {
+    if (widget.damages.isEmpty) {
       return const _Card(title: 'Damages', child: Text('No damages marked.'));
     }
 
+    final selected = _selectedIdx != null ? widget.damages[_selectedIdx!] : null;
+
     return Card(
       elevation: 0,
-      color: Colors.black.withOpacity(0.02),
+      color: Colors.black.withValues(alpha: 0.02),
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Damages (${damages.length})',
+              'Damages (${widget.damages.length})',
               style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
             ),
             const SizedBox(height: 10),
-            LayoutBuilder(
-              builder: (context, c) {
-                final wide = c.maxWidth >= 950;
-
-                final map = _CarDamageMap(
-                  assetPath: carTopAssetPath,
-                  damages: damages,
-                  onTapMarker: onTapDamage,
-                );
-
-                final list = _DamageList(
-                  damages: damages,
-                  onTapDamage: onTapDamage,
-                  onOpenImage: onOpenImage,
-                );
-
-                if (!wide) {
-                  return Column(
-                    children: [
-                      map,
-                      const SizedBox(height: 12),
-                      list,
-                    ],
-                  );
-                }
-
-                return Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(flex: 7, child: map),
-                    const SizedBox(width: 12),
-                    Expanded(flex: 5, child: list),
-                  ],
-                );
+            // Full-width landscape damage map
+            _CarDamageMap(
+              assetPath: widget.carTopAssetPath,
+              damages: widget.damages,
+              onTapMarker: (d, idx) {
+                setState(() {
+                  _selectedIdx = (_selectedIdx == idx - 1) ? null : idx - 1;
+                });
               },
             ),
+            // Inline preview shown when a marker is tapped
+            if (selected != null) ...[
+              const SizedBox(height: 12),
+              _DamagePreview(
+                damage: selected,
+                index: _selectedIdx! + 1,
+                onOpenImage: widget.onOpenImage,
+              ),
+            ],
           ],
         ),
       ),
@@ -1055,104 +1299,51 @@ class _CarDamageMap extends StatefulWidget {
 }
 
 class _CarDamageMapState extends State<_CarDamageMap> {
-  Size? _imgSize;
-  ImageStream? _stream;
-  ImageStreamListener? _listener;
-
-  @override
-  void initState() {
-    super.initState();
-    _resolveImageSize();
-  }
-
-  @override
-  void didUpdateWidget(covariant _CarDamageMap oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.assetPath != widget.assetPath) {
-      _disposeStream();
-      _imgSize = null;
-      _resolveImageSize();
-    }
-  }
-
-  void _resolveImageSize() {
-    final provider = AssetImage(widget.assetPath);
-    final stream = provider.resolve(const ImageConfiguration());
-    _stream = stream;
-
-    _listener = ImageStreamListener((info, _) {
-      final s = Size(info.image.width.toDouble(), info.image.height.toDouble());
-      if (mounted) setState(() => _imgSize = s);
-    }, onError: (e, _) {
-      if (mounted) setState(() => _imgSize = null);
-    });
-
-    stream.addListener(_listener!);
-  }
-
-  void _disposeStream() {
-    if (_stream != null && _listener != null) {
-      _stream!.removeListener(_listener!);
-    }
-    _stream = null;
-    _listener = null;
-  }
-
-  @override
-  void dispose() {
-    _disposeStream();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(14),
       child: Container(
-        color: Colors.white.withOpacity(0.6),
+        color: Colors.white.withValues(alpha: 0.6),
         padding: const EdgeInsets.all(12),
-        child: AspectRatio(
-          aspectRatio: 16 / 9,
-          child: LayoutBuilder(
-            builder: (context, c) {
-              final w = c.maxWidth;
-              final h = c.maxHeight;
+        child: LayoutBuilder(
+          builder: (context, c) {
+            final w = c.maxWidth;
+            // Car image is portrait (≈0.764:1); rotating 90° CW → landscape ratio ≈ 1.308:1
+            const imgW = 574.0;
+            const imgH = 751.0;
+            final h = w * imgW / imgH; // landscape height after 90° rotation
 
-              final img = _imgSize;
-              if (img == null) {
-                return const Center(child: CircularProgressIndicator(strokeWidth: 2));
-              }
-
-              // BoxFit.contain math
-              final scale = (w / img.width < h / img.height) ? (w / img.width) : (h / img.height);
-              final renderW = img.width * scale;
-              final renderH = img.height * scale;
-              final dx = (w - renderW) / 2;
-              final dy = (h - renderH) / 2;
-
-              return Stack(
+            return SizedBox(
+              width: w,
+              height: h,
+              child: Stack(
                 children: [
                   Positioned.fill(
-                    child: Image.asset(
-                      widget.assetPath,
-                      fit: BoxFit.contain,
-                      errorBuilder: (_, __, ___) => Container(
-                        color: Colors.black.withOpacity(0.06),
-                        child: const Center(child: Text('Car image not found (asset path)')),
+                    child: RotatedBox(
+                      quarterTurns: 1, // 90° CW → portrait car becomes landscape
+                      child: Image.asset(
+                        widget.assetPath,
+                        fit: BoxFit.fill,
+                        errorBuilder: (_, e, st) => Container(
+                          color: Colors.black.withValues(alpha: 0.06),
+                          child: const Center(child: Text('Car image not found')),
+                        ),
                       ),
                     ),
                   ),
+                  // After 90° CW rotation: new_x = old_y, new_y = 1 - old_x
                   for (int i = 0; i < widget.damages.length; i++)
                     _DamageMarker(
                       index: i + 1,
-                      left: (dx + widget.damages[i].x * renderW).clamp(dx, dx + renderW),
-                      top: (dy + widget.damages[i].y * renderH).clamp(dy, dy + renderH),
+                      left: (widget.damages[i].y * w).clamp(0, w),
+                      top: ((1 - widget.damages[i].x) * h).clamp(0, h),
                       onTap: () => widget.onTapMarker(widget.damages[i], i + 1),
                     ),
                 ],
-              );
-            },
-          ),
+              ),
+            );
+          },
         ),
       ),
     );
@@ -1192,7 +1383,7 @@ class _DamageMarker extends StatelessWidget {
               border: Border.all(color: Colors.white, width: 2),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.20),
+                  color: Colors.black.withValues(alpha: 0.20),
                   blurRadius: 8,
                   offset: const Offset(0, 3),
                 ),
@@ -1226,9 +1417,9 @@ class _DamageList extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.6),
+        color: Colors.white.withValues(alpha: 0.6),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.black.withOpacity(0.06)),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
       ),
       padding: const EdgeInsets.all(12),
       child: Column(
@@ -1272,9 +1463,9 @@ class _DamageTile extends StatelessWidget {
           width: 28,
           height: 28,
           decoration: BoxDecoration(
-            color: Colors.redAccent.withOpacity(0.12),
+            color: Colors.redAccent.withValues(alpha: 0.12),
             borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: Colors.redAccent.withOpacity(0.25)),
+            border: Border.all(color: Colors.redAccent.withValues(alpha: 0.25)),
           ),
           child: Center(
             child: Text(
@@ -1327,6 +1518,69 @@ class _DamageTile extends StatelessWidget {
   }
 }
 
+class _DamagePreview extends StatelessWidget {
+  final _DamagePoint damage;
+  final int index;
+  final void Function(String url) onOpenImage;
+
+  const _DamagePreview({
+    required this.damage,
+    required this.index,
+    required this.onOpenImage,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final desc = damage.description.trim().isEmpty ? '-' : damage.description.trim();
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 26,
+                height: 26,
+                decoration: BoxDecoration(
+                  color: Colors.redAccent.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: Colors.redAccent.withValues(alpha: 0.25)),
+                ),
+                child: Center(
+                  child: Text(
+                    '$index',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w900,
+                      color: Colors.redAccent,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Damage #$index',
+                  style: const TextStyle(fontWeight: FontWeight.w900),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(desc, style: const TextStyle(color: Colors.black87)),
+        ],
+      ),
+    );
+  }
+}
+
 /* =========================
    Photos
 ========================= */
@@ -1339,6 +1593,8 @@ class _PhotosBlock extends StatelessWidget {
   final VoidCallback onHeroOpen;
   final void Function(int index) onThumbClick;
   final VoidCallback onOpenViewer;
+  final VoidCallback onPrevHero;
+  final VoidCallback onNextHero;
 
   const _PhotosBlock({
     required this.photos,
@@ -1347,6 +1603,8 @@ class _PhotosBlock extends StatelessWidget {
     required this.onHeroOpen,
     required this.onThumbClick,
     required this.onOpenViewer,
+    required this.onPrevHero,
+    required this.onNextHero,
   });
 
   @override
@@ -1358,11 +1616,12 @@ class _PhotosBlock extends StatelessWidget {
       );
     }
 
-    final heroUrl = photos[heroIndex.clamp(0, photos.length - 1)].url;
+    final clampedIdx = heroIndex.clamp(0, photos.length - 1);
+    final heroRef = photos[clampedIdx];
 
     return Card(
       elevation: 0,
-      color: Colors.black.withOpacity(0.02),
+      color: Colors.black.withValues(alpha: 0.02),
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(
@@ -1372,7 +1631,7 @@ class _PhotosBlock extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    'Photos  (${photos.length}) • click any image to view',
+                    'Photos  (${photos.length}) • click thumbnail to preview',
                     style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
                   ),
                 ),
@@ -1388,7 +1647,13 @@ class _PhotosBlock extends StatelessWidget {
               builder: (context, c) {
                 final wide = c.maxWidth >= 950;
 
-                final hero = _HeroTile(url: heroUrl, onOpen: onHeroOpen);
+                final hero = _HeroTile(
+                  url: heroRef.url,
+                  caption: '${heroRef.section}  •  ${clampedIdx + 1} / ${photos.length}',
+                  onOpen: onHeroOpen,
+                  onPrev: onPrevHero,
+                  onNext: onNextHero,
+                );
 
                 final thumbs = _SectionThumbs(
                   photos: photos,
@@ -1435,20 +1700,31 @@ class _PhotosBlock extends StatelessWidget {
 
 class _HeroTile extends StatelessWidget {
   final String url;
+  final String caption;
   final VoidCallback onOpen;
-  const _HeroTile({required this.url, required this.onOpen});
+  final VoidCallback onPrev;
+  final VoidCallback onNext;
+
+  const _HeroTile({
+    required this.url,
+    required this.caption,
+    required this.onOpen,
+    required this.onPrev,
+    required this.onNext,
+  });
 
   @override
   Widget build(BuildContext context) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(14),
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        child: InkWell(
-          onTap: onOpen,
-          child: Stack(
-            children: [
-              AspectRatio(
+      child: Stack(
+        children: [
+          // Main image (tap to open full viewer)
+          MouseRegion(
+            cursor: SystemMouseCursors.click,
+            child: InkWell(
+              onTap: onOpen,
+              child: AspectRatio(
                 aspectRatio: 16 / 9,
                 child: _NetImageBox(
                   url: url,
@@ -1458,27 +1734,76 @@ class _HeroTile extends StatelessWidget {
                   borderRadius: BorderRadius.zero,
                 ),
               ),
-              Positioned(
-                right: 12,
-                bottom: 12,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.55),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: const Row(
-                    children: [
-                      Icon(Icons.open_in_full, size: 16, color: Colors.white),
-                      SizedBox(width: 8),
-                      Text('Open', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
-                    ],
-                  ),
-                ),
-              )
-            ],
+            ),
           ),
-        ),
+          // Left nav button
+          Positioned(
+            left: 8,
+            top: 0,
+            bottom: 0,
+            child: Center(child: _NavBtn(icon: Icons.chevron_left, onTap: onPrev)),
+          ),
+          // Right nav button
+          Positioned(
+            right: 8,
+            top: 0,
+            bottom: 0,
+            child: Center(child: _NavBtn(icon: Icons.chevron_right, onTap: onNext)),
+          ),
+          // Caption + open button at bottom
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.bottomCenter,
+                  end: Alignment.topCenter,
+                  colors: [
+                    Colors.black.withValues(alpha: 0.65),
+                    Colors.transparent,
+                  ],
+                ),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      caption,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 13,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  InkWell(
+                    onTap: onOpen,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.45),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.open_in_full, size: 14, color: Colors.white),
+                          SizedBox(width: 6),
+                          Text('Open', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 12)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1501,9 +1826,9 @@ class _SectionThumbs extends StatelessWidget {
 
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.6),
+        color: Colors.white.withValues(alpha: 0.6),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.black.withOpacity(0.06)),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
       ),
       padding: const EdgeInsets.all(12),
       child: SingleChildScrollView(
@@ -1578,7 +1903,7 @@ class _VideosBlock extends StatelessWidget {
 
     return Card(
       elevation: 0,
-      color: Colors.black.withOpacity(0.02),
+      color: Colors.black.withValues(alpha: 0.02),
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(
@@ -1630,7 +1955,7 @@ class _VideoTile extends StatelessWidget {
           child: ClipRRect(
             borderRadius: BorderRadius.circular(12),
             child: Container(
-              color: Colors.black.withOpacity(0.08),
+              color: Colors.black.withValues(alpha: 0.08),
               child: const Center(
                 child: Icon(Icons.play_circle_fill, size: 44),
               ),
@@ -1711,7 +2036,7 @@ class _ImageViewerOverlay extends StatelessWidget {
     final item = photos[i];
 
     return Material(
-      color: Colors.black.withOpacity(0.75),
+      color: Colors.black.withValues(alpha: 0.75),
       child: SafeArea(
         child: Stack(
           children: [
@@ -1726,7 +2051,7 @@ class _ImageViewerOverlay extends StatelessWidget {
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(16),
                     child: Container(
-                      color: Colors.black.withOpacity(0.55),
+                      color: Colors.black.withValues(alpha: 0.55),
                       child: Stack(
                         children: [
                           Positioned.fill(
@@ -1813,9 +2138,9 @@ class _NavBtn extends StatelessWidget {
           width: 46,
           height: 46,
           decoration: BoxDecoration(
-            color: Colors.black.withOpacity(0.35),
+            color: Colors.black.withValues(alpha: 0.35),
             borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: Colors.white.withOpacity(0.15)),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
           ),
           child: Icon(icon, color: Colors.white),
         ),
@@ -1866,9 +2191,9 @@ class _ChecklistSection extends StatelessWidget {
         const SizedBox(height: 10),
         Container(
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.6),
+            color: Colors.white.withValues(alpha: 0.6),
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: Colors.black.withOpacity(0.06)),
+            border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
           ),
           child: Column(
             children: [
@@ -1893,44 +2218,56 @@ class _ChecklistRow extends StatelessWidget {
     final rating = item['rating'];
     final remarks = _cleanStr(item['remarks']);
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-      child: Column(
-        children: [
-          Row(
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
+              // Column 1: position + label
               Expanded(
-                flex: 7,
-                child: Wrap(
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  spacing: 10,
-                  runSpacing: 8,
+                flex: 5,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('${pos ?? ''}.', style: const TextStyle(fontWeight: FontWeight.w900)),
-                    Text(label, style: const TextStyle(fontWeight: FontWeight.w800)),
-                    _StatusChip(status: status),
-                    _RatingChip(rating: rating),
+                    Text(
+                      '${pos ?? ''}.',
+                      style: const TextStyle(fontWeight: FontWeight.w900, color: Colors.black54),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(label, style: const TextStyle(fontWeight: FontWeight.w800)),
+                    ),
                   ],
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 8),
+              // Column 2: status chip
+              SizedBox(
+                width: 100,
+                child: _StatusChip(status: status),
+              ),
+              const SizedBox(width: 8),
+              // Column 3: rating chip
+              SizedBox(
+                width: 52,
+                child: _RatingChip(rating: rating),
+              ),
+              const SizedBox(width: 8),
+              // Column 4: remarks
               Expanded(
-                flex: 5,
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    remarks.trim().isEmpty ? '-' : remarks,
-                    style: const TextStyle(color: Colors.black87, height: 1.25),
-                  ),
+                flex: 4,
+                child: Text(
+                  remarks.trim().isEmpty ? '-' : remarks,
+                  style: const TextStyle(color: Colors.black87, height: 1.25),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          const Divider(height: 18),
-        ],
-      ),
+        ),
+        const Divider(height: 1),
+      ],
     );
   }
 }
@@ -1966,7 +2303,7 @@ class _OdometerPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 16
       ..strokeCap = StrokeCap.round
-      ..color = Colors.black.withOpacity(0.08);
+      ..color = Colors.black.withValues(alpha: 0.08);
 
     final rect = Rect.fromCircle(center: center, radius: radius);
 
@@ -1993,7 +2330,7 @@ class _OdometerPainter extends CustomPainter {
     seg(4.5, 5, const Color(0xFF43A047));
 
     final tickPaint = Paint()
-      ..color = Colors.black.withOpacity(0.55)
+      ..color = Colors.black.withValues(alpha: 0.55)
       ..strokeWidth = 2;
 
     for (int i = 0; i <= 5; i++) {
@@ -2031,14 +2368,14 @@ class _OdometerPainter extends CustomPainter {
     );
 
     final needlePaint = Paint()
-      ..color = Colors.black.withOpacity(0.75)
+      ..color = Colors.black.withValues(alpha: 0.75)
       ..strokeWidth = 4
       ..strokeCap = StrokeCap.round;
 
     canvas.drawLine(center, needleEnd, needlePaint);
 
     canvas.drawCircle(center, 5.5, Paint()..color = Colors.white);
-    canvas.drawCircle(center, 4.8, Paint()..color = Colors.black.withOpacity(0.7));
+    canvas.drawCircle(center, 4.8, Paint()..color = Colors.black.withValues(alpha: 0.7));
   }
 
   @override
@@ -2053,9 +2390,16 @@ class _HeaderRow extends StatelessWidget {
   final String title;
   final VoidCallback onDownload;
 
+  final bool showReview;
+  final bool reviewSubmitted;
+  final VoidCallback? onReview;
+
   const _HeaderRow({
     required this.title,
     required this.onDownload,
+    this.showReview = false,
+    this.reviewSubmitted = false,
+    this.onReview,
   });
 
   @override
@@ -2068,6 +2412,29 @@ class _HeaderRow extends StatelessWidget {
             style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
           ),
         ),
+
+        if (showReview)
+          Tooltip(
+            message: reviewSubmitted ? 'Review submitted' : 'Give review',
+            child: InkWell(
+              onTap: onReview,
+              borderRadius: BorderRadius.circular(999),
+              child: Container(
+                padding: const EdgeInsets.all(10),
+                margin: const EdgeInsets.only(right: 10),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.06),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: Colors.black.withValues(alpha: 0.10)),
+                ),
+                child: Icon(
+                  reviewSubmitted ? Icons.star : Icons.star_border,
+                  size: 20,
+                ),
+              ),
+            ),
+          ),
+
         Tooltip(
           message: 'Download (Save as PDF)',
           child: InkWell(
@@ -2076,9 +2443,9 @@ class _HeaderRow extends StatelessWidget {
             child: Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.06),
+                color: Colors.black.withValues(alpha: 0.06),
                 borderRadius: BorderRadius.circular(999),
-                border: Border.all(color: Colors.black.withOpacity(0.10)),
+                border: Border.all(color: Colors.black.withValues(alpha: 0.10)),
               ),
               child: const Icon(Icons.download_outlined, size: 20),
             ),
@@ -2103,7 +2470,7 @@ class _FloatingPhotosButton extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           decoration: BoxDecoration(
-            color: Colors.black.withOpacity(0.75),
+            color: Colors.black.withValues(alpha: 0.75),
             borderRadius: BorderRadius.circular(999),
           ),
           child: Row(
@@ -2144,9 +2511,9 @@ class _VehicleDetailsCard extends StatelessWidget {
         width: double.infinity,
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.6),
+          color: Colors.white.withValues(alpha: 0.6),
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Colors.black.withOpacity(0.06)),
+          border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -2188,9 +2555,9 @@ class _VehicleDetailsCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.6),
+        color: Colors.white.withValues(alpha: 0.6),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.black.withOpacity(0.06)),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2275,9 +2642,9 @@ class _SubSectionMapCard extends StatelessWidget {
         width: double.infinity,
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.6),
+          color: Colors.white.withValues(alpha: 0.6),
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Colors.black.withOpacity(0.06)),
+          border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -2296,9 +2663,9 @@ class _SubSectionMapCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.6),
+        color: Colors.white.withValues(alpha: 0.6),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.black.withOpacity(0.06)),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2321,7 +2688,7 @@ class _Card extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       elevation: 0,
-      color: Colors.black.withOpacity(0.02),
+      color: Colors.black.withValues(alpha: 0.02),
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(
@@ -2333,6 +2700,30 @@ class _Card extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _SignatureBox extends StatelessWidget {
+  final String label;
+  const _SignatureBox({required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(color: Colors.black54, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 8),
+        Container(
+          width: 160,
+          height: 80,
+          decoration: BoxDecoration(
+            border: Border.all(color: Colors.black26),
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -2361,7 +2752,7 @@ class _Badge extends StatelessWidget {
       decoration: BoxDecoration(
         color: bg,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: fg.withOpacity(0.20)),
+        border: Border.all(color: fg.withValues(alpha: 0.20)),
       ),
       child: Text(text, style: TextStyle(fontWeight: FontWeight.w900, color: fg)),
     );
@@ -2379,19 +2770,19 @@ class _StatusChip extends StatelessWidget {
     Color fg;
 
     if (s == 'excellent') {
-      bg = Colors.green.withOpacity(0.12);
+      bg = Colors.green.withValues(alpha: 0.12);
       fg = Colors.green.shade800;
     } else if (s == 'good') {
-      bg = Colors.blue.withOpacity(0.12);
+      bg = Colors.blue.withValues(alpha: 0.12);
       fg = Colors.blue.shade800;
     } else if (s == 'average') {
-      bg = Colors.orange.withOpacity(0.12);
+      bg = Colors.orange.withValues(alpha: 0.12);
       fg = Colors.orange.shade800;
     } else if (s == 'poor') {
-      bg = Colors.red.withOpacity(0.12);
+      bg = Colors.red.withValues(alpha: 0.12);
       fg = Colors.red.shade800;
     } else {
-      bg = Colors.grey.withOpacity(0.12);
+      bg = Colors.grey.withValues(alpha: 0.12);
       fg = Colors.grey.shade800;
     }
 
@@ -2413,7 +2804,7 @@ class _RatingChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.06),
+        color: Colors.black.withValues(alpha: 0.06),
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text('★ $text', style: const TextStyle(fontWeight: FontWeight.w900)),
@@ -2457,7 +2848,7 @@ class _NetImageBox extends StatelessWidget {
         errorBuilder: (_, __, ___) => Container(
           width: width == double.infinity ? null : width,
           height: height == double.infinity ? null : height,
-          color: Colors.black.withOpacity(0.06),
+          color: Colors.black.withValues(alpha: 0.06),
           child: const Center(
             child: Icon(Icons.broken_image_outlined, color: Colors.black45),
           ),
@@ -2467,7 +2858,7 @@ class _NetImageBox extends StatelessWidget {
           return Container(
             width: width == double.infinity ? null : width,
             height: height == double.infinity ? null : height,
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
           );
         },
@@ -2574,8 +2965,9 @@ String _fmtIso(dynamic iso) {
   if (s.isEmpty) return '';
   final dt = DateTime.tryParse(s);
   if (dt == null) return s;
+  final local = dt.toLocal();
   String two(int x) => x.toString().padLeft(2, '0');
-  return '${dt.year}-${two(dt.month)}-${two(dt.day)} ${two(dt.hour)}:${two(dt.minute)}';
+  return '${local.year}-${two(local.month)}-${two(local.day)} ${two(local.hour)}:${two(local.minute)}';
 }
 
 bool _isHttpUrl(String s) {
@@ -2597,6 +2989,32 @@ Widget _kv(String k, String v) {
 }
 
 String _prettyKey(String k) {
+  const overrides = <String, String>{
+    'chassisNo': 'Chassis Number',
+    'registrationNo': 'Registration Number',
+    'emiratesRegAt': 'Emirates Registered At',
+    'odometerReading': 'Odometer Reading',
+    'gradeVariant': 'Grade / Variant',
+    'engineCapacity': 'Engine Capacity',
+    'modelYear': 'Model Year',
+    'cylinderSize': 'Cylinder Size',
+    'fuelType': 'Fuel Type',
+    'driveTrain': 'Drive Train',
+    'ownershipType': 'Ownership Type',
+    'serviceHistory': 'Service History',
+    'servicedWith': 'Serviced With',
+    'lastServiceDate': 'Last Service Date',
+    'warrantyAvailable': 'Warranty Available',
+    'warrantyEndsIn': 'Warranty Ends In',
+    'hadAccidents': 'Had Accidents',
+    'interiorColor': 'Interior Color',
+    'numberOfKeys': 'Number of Keys',
+    'modificationDone': 'Modification Done',
+    'exteriorColor': 'Exterior Color',
+    'wheelSize': 'Wheel Size',
+    'wheelType': 'Wheel Type',
+  };
+  if (overrides.containsKey(k)) return overrides[k]!;
   if (k.isEmpty) return k;
   final out = k.replaceAllMapped(RegExp(r'([a-z])([A-Z])'), (m) => '${m[1]} ${m[2]}');
   return out[0].toUpperCase() + out.substring(1);
@@ -2617,10 +3035,28 @@ class _Tone {
 
 _Tone _badgeTone(String label) {
   final s = label.toLowerCase();
-  if (s.contains('excellent')) return _Tone(Colors.green.withOpacity(0.12), Colors.green.shade800);
-  if (s.contains('good')) return _Tone(Colors.blue.withOpacity(0.12), Colors.blue.shade800);
-  if (s.contains('average')) return _Tone(Colors.orange.withOpacity(0.12), Colors.orange.shade800);
-  if (s.contains('poor')) return _Tone(Colors.red.withOpacity(0.12), Colors.red.shade800);
-  if (s.contains('draft')) return _Tone(Colors.black.withOpacity(0.06), Colors.black87);
-  return _Tone(Colors.grey.withOpacity(0.12), Colors.grey.shade800);
+  if (s.contains('excellent')) return _Tone(Colors.green.withValues(alpha: 0.12), Colors.green.shade800);
+  if (s.contains('good')) return _Tone(Colors.blue.withValues(alpha: 0.12), Colors.blue.shade800);
+  if (s.contains('average')) return _Tone(Colors.orange.withValues(alpha: 0.12), Colors.orange.shade800);
+  if (s.contains('poor')) return _Tone(Colors.red.withValues(alpha: 0.12), Colors.red.shade800);
+  if (s.contains('draft')) return _Tone(Colors.black.withValues(alpha: 0.06), Colors.black87);
+  return _Tone(Colors.grey.withValues(alpha: 0.12), Colors.grey.shade800);
 }
+
+/* =========================
+   Reviews helpers (localStorage + id parsing)
+========================= */
+
+String _extractId(dynamic v) {
+  if (v == null) return '';
+  if (v is String) return v;
+  if (v is Map) {
+    final m = _asMap(v);
+    final id = (m['_id'] ?? m['id'] ?? '').toString();
+    return id;
+  }
+  return '';
+}
+
+bool _lsBool(String key) => html.window.localStorage[key] == '1';
+void _setLsBool(String key, bool value) => html.window.localStorage[key] = value ? '1' : '0';

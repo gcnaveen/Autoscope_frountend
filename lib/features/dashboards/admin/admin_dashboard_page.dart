@@ -640,6 +640,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         icon: Icons.directions_car_filled_outlined,
                         onTap: () => context.go('/dashboard/admin/vehicle-catalog'),
                       ),
+                      _KpiActionCard(
+                        kpiTitle: 'Manage Reviews',
+                        kpiValue: 'Open',
+                        kpiSubtitle: 'Approve / Reject customer reviews',
+                        icon: Icons.rate_review_outlined,
+                        onTap: () => context.go('/dashboard/admin/reviews'),
+                      ),
                     ],
                   ),
 

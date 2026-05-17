@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../services/service_locator.dart';
-import '../../shared/top_snackbar.dart';
 import '../widgets/public_navbar.dart';
 
 class LandingPage extends StatelessWidget {
@@ -58,7 +57,7 @@ class LandingPage extends StatelessWidget {
         appBar: const PublicNavBar(),
         body: SingleChildScrollView(
           child: Column(
-            children: const [
+            children: [
               _HeroSection(),
               _AboutUsSection(),
               _ServicesIntroSection(),
@@ -492,6 +491,7 @@ class _InspectionSection extends StatelessWidget {
     ];
 
     final youReceiveText2 = const [
+      'Detailed vehicle inspection report',
       'Estimated Market Value',
       'Quick Sale Value',
       'Expert guidance on pricing and next steps',
@@ -511,6 +511,12 @@ class _InspectionSection extends StatelessWidget {
       );
     }
 
+    final youReceiveText1 = const [
+      'Detailed vehicle inspection report',
+      'Condition summary with evidence-based notes',
+      'Documented findings across all inspection areas',
+    ];
+
     final inspectionCard = Card(
       child: Padding(
         padding: const EdgeInsets.all(18),
@@ -521,16 +527,26 @@ class _InspectionSection extends StatelessWidget {
                 style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900)),
             const SizedBox(height: 10),
             const Text(
-              'A comprehensive, non-invasive assessment of the vehicle’s condition at the time of inspection.',
+              'A comprehensive, non-invasive assessment of the vehicle\'s condition at the time of inspection.',
               style: TextStyle(color: Colors.black54, height: 1.6),
             ),
             const SizedBox(height: 14),
             ...bulletsText1.map((b) => bullet(b)),
-            const SizedBox(height: 8),
-            const Text(
-              'A detailed inspection report is provided after completion.',
-              style: TextStyle(color: Colors.black54),
-            ),
+            const SizedBox(height: 10),
+            const Text('You receive:', style: TextStyle(fontWeight: FontWeight.w900)),
+            const SizedBox(height: 10),
+            ...youReceiveText1.map((b) {
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Row(
+                  children: [
+                    const Icon(Icons.check, size: 18, color: Color(0xFF1E5EFF)),
+                    const SizedBox(width: 10),
+                    Expanded(child: Text(b)),
+                  ],
+                ),
+              );
+            }),
           ],
         ),
       ),
@@ -542,11 +558,11 @@ class _InspectionSection extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Professional Inspection & Valuation',
+            Text('Professional Vehicle Inspection & Valuation',
                 style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900)),
             const SizedBox(height: 10),
             const Text(
-              'Get a clear and realistic understanding of your vehicle’s worth in the current UAE market.',
+              'Get a clear and realistic understanding of your vehicle\'s worth in the current UAE market.',
               style: TextStyle(color: Colors.black54, height: 1.6),
             ),
             const SizedBox(height: 14),
@@ -653,7 +669,7 @@ class _CtaLeft extends StatelessWidget {
         const SizedBox(height: 10),
         const Text(
           'Choose an inspection or valuation service and submit your request in minutes. '
-          'We’ll coordinate the visit and share a clear report after completion.',
+          'We\'ll coordinate the visit and share a clear report after completion.',
           style: TextStyle(color: Colors.black54, height: 1.6),
         ),
         const SizedBox(height: 14),
@@ -782,17 +798,45 @@ class _WhyAutoScopeSection extends StatelessWidget {
 // =====================================================
 // TESTIMONIALS
 // =====================================================
-class _TestimonialsSection extends StatelessWidget {
+class _TestimonialsSection extends StatefulWidget {
   const _TestimonialsSection();
 
   @override
-  Widget build(BuildContext context) {
-    final items = const [
-      ('“The inspection report was clear and helped me negotiate confidently.”', 'Customer', 'Dubai, UAE'),
-      ('“Valuation was realistic and matched the market. Very professional.”', 'Seller', 'Sharjah, UAE'),
-      ('“Convenient onsite inspection and fast delivery of the report.”', 'Buyer', 'Abu Dhabi, UAE'),
-    ];
+  State<_TestimonialsSection> createState() => _TestimonialsSectionState();
+}
 
+class _TestimonialsSectionState extends State<_TestimonialsSection> {
+  late Future<List<Map<String, dynamic>>> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = reviewsService.getApprovedPublicReviews();
+  }
+
+  List<Map<String, dynamic>> _extract(Map<String, dynamic> root) {
+    final data = (root['data'] is Map) ? Map<String, dynamic>.from(root['data']) : <String, dynamic>{};
+    final list = (data['reviews'] is List) ? List.from(data['reviews']) : <dynamic>[];
+    final out = <Map<String, dynamic>>[];
+    for (final x in list) {
+      if (x is Map) out.add(Map<String, dynamic>.from(x));
+    }
+    return out;
+  }
+
+  Widget _stars(int rating) {
+    final r = rating.clamp(0, 5);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: List.generate(
+        5,
+        (i) => Icon(i < r ? Icons.star : Icons.star_border, size: 16, color: Colors.amber.shade700),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return _SectionShell(
       bg: Colors.white,
       child: Column(
@@ -801,50 +845,43 @@ class _TestimonialsSection extends StatelessWidget {
           Text('Testimonials', style: Theme.of(context).textTheme.headlineMedium),
           const SizedBox(height: 10),
           const Text(
-            'Real feedback from customers who wanted clarity before buying or selling.',
+            'Approved customer feedback after inspection.',
             style: TextStyle(color: Colors.black54),
           ),
           const SizedBox(height: 18),
-          Wrap(
-            spacing: 14,
-            runSpacing: 14,
-            children: items
-                .map((t) => SizedBox(
-                      width: 360,
-                      child: Card(
-                        child: Padding(
-                          padding: const EdgeInsets.all(18),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Icon(Icons.format_quote, size: 30, color: Color(0xFF1E5EFF)),
-                              const SizedBox(height: 10),
-                              Text(t.$1, style: const TextStyle(fontWeight: FontWeight.w700, height: 1.55)),
-                              const SizedBox(height: 14),
-                              Row(
-                                children: [
-                                  CircleAvatar(
-                                    radius: 16,
-                                    backgroundColor: const Color(0xFF1E5EFF).withOpacity(0.12),
-                                    child: const Icon(Icons.person_outline, color: Color(0xFF1E5EFF)),
-                                  ),
-                                  const SizedBox(width: 10),
-                                  Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(t.$2, style: const TextStyle(fontWeight: FontWeight.w900)),
-                                      Text(t.$3, style: const TextStyle(color: Colors.black54, fontSize: 12)),
-                                    ],
-                                  )
-                                ],
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ))
-                .toList(),
-          ),
+
+          FutureBuilder<List<Map<String, dynamic>>>(
+            future: _future,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+
+              if (snapshot.hasError) {
+                return const SizedBox.shrink(); // or show error UI
+              }
+
+              final reviews = snapshot.data ?? <Map<String, dynamic>>[];
+              if (reviews.isEmpty) return const SizedBox.shrink();
+
+              // ✅ Use `reviews` list now
+              return Column(
+                children: reviews.map((r) {
+                  final rating = (r['rating'] ?? 0) is int ? (r['rating'] ?? 0) as int : int.tryParse('${r['rating']}') ?? 0;
+                  final comment = (r['comment'] ?? '').toString();
+                  final name = (r['name'] ?? r['userName'] ?? r['customerName'] ?? 'Customer').toString();
+
+                  return Card(
+                    child: ListTile(
+                      title: Text(name),
+                      subtitle: Text(comment),
+                      trailing: Text('⭐ $rating'),
+                    ),
+                  );
+                }).toList(),
+              );
+            },
+          )
         ],
       ),
     );

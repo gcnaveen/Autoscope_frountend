@@ -104,7 +104,7 @@ class _InspectorRequestDetailsPageState extends State<InspectorRequestDetailsPag
               final state = (loc['state'] ?? '').toString();
               final zip = (loc['zipCode'] ?? '').toString();
 
-              final preferredDate = DateTime.tryParse((r['preferredDate'] ?? '').toString());
+              final preferredDate = DateTime.tryParse((r['preferredDate'] ?? '').toString())?.toLocal();
               final preferredTime = (r['preferredTime'] ?? '').toString();
 
               final notes = (r['notes'] ?? '').toString();
