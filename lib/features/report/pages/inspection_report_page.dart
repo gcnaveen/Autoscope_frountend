@@ -2195,9 +2195,8 @@ class _ChecklistRow extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              // Column 1: position + label
+              // Column 1: position + label (25%)
               Expanded(
-                flex: 5,
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -2212,22 +2211,19 @@ class _ChecklistRow extends StatelessWidget {
                   ],
                 ),
               ),
-              const SizedBox(width: 8),
-              // Column 2: status chip
-              SizedBox(
-                width: 100,
+              const SizedBox(width: 12),
+              // Column 2: status chip (25%)
+              Expanded(
                 child: _StatusChip(status: status),
               ),
-              const SizedBox(width: 8),
-              // Column 3: rating chip
-              SizedBox(
-                width: 52,
+              const SizedBox(width: 12),
+              // Column 3: rating chip (25%)
+              Expanded(
                 child: _RatingChip(rating: rating),
               ),
-              const SizedBox(width: 8),
-              // Column 4: remarks
+              const SizedBox(width: 12),
+              // Column 4: remarks (25%)
               Expanded(
-                flex: 4,
                 child: Text(
                   remarks.trim().isEmpty ? '-' : remarks,
                   style: const TextStyle(color: Colors.black87, height: 1.25),
