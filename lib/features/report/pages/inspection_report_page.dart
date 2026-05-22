@@ -768,11 +768,15 @@ class _ReportViewState extends State<_ReportView> {
       sectionMap.putIfAbsent(section, () => []).add(idx);
     }
 
-    // ✅ Add chassis photo into Photos viewer under "Vehicle Details"
+    // Add chassis photo into Photos viewer under "Vehicle Details"
     final vehicleDetails = _asMap(inspection['vehicleDetails']);
-    final chassis = _cleanStr(vehicleDetails['chassisNo']);
-    if (_isHttpUrl(chassis)) {
-      add(chassis, 'Vehicle Details');
+    final chassisPhoto = _cleanStr(vehicleDetails['chassisPhotoUrl']);
+    final chassisNo = _cleanStr(vehicleDetails['chassisNo']);
+    if (_isHttpUrl(chassisPhoto)) {
+      add(chassisPhoto, 'Vehicle Details');
+    } else if (_isHttpUrl(chassisNo)) {
+      // backward compat: old records stored URL in chassisNo
+      add(chassisNo, 'Vehicle Details');
     }
 
     for (final t in types) {
@@ -2462,7 +2466,7 @@ class _VehicleDetailsCard extends StatelessWidget {
 
     final keys = <String>[
       ...order.where((k) => data.containsKey(k)),
-      ...data.keys.where((k) => !order.contains(k)),
+      ...data.keys.where((k) => !order.contains(k) && k != 'chassisPhotoUrl'),
     ];
 
     final chassisValue = _cleanStr(data['chassisNo']);
@@ -2482,11 +2486,7 @@ class _VehicleDetailsCard extends StatelessWidget {
           const SizedBox(height: 10),
           for (final k in keys)
             if (k == 'chassisNo')
-              _kvChassis(
-                label: _prettyKey(k),
-                value: chassisValue,
-                onOpen: onOpenImage,
-              )
+              _kv(_prettyKey(k), chassisValue.isEmpty ? '-' : chassisValue)
             else
               _kv(
                 _prettyKey(k),
@@ -2497,53 +2497,6 @@ class _VehicleDetailsCard extends StatelessWidget {
     );
   }
 
-  Widget _kvChassis({
-    required String label,
-    required String value,
-    required void Function(String url) onOpen,
-  }) {
-    final v = value.trim();
-
-    if (v.isEmpty || !_isHttpUrl(v)) {
-      return _kv(label, v.isEmpty ? '-' : v);
-    }
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 140,
-            child: Text(
-              '$label:',
-              style: const TextStyle(fontWeight: FontWeight.w900),
-            ),
-          ),
-          Expanded(
-            child: Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                _NetImageBox(
-                  url: v,
-                  width: 140,
-                  height: 90,
-                  onTap: () => onOpen(v),
-                ),
-                OutlinedButton.icon(
-                  onPressed: () => onOpen(v),
-                  icon: const Icon(Icons.open_in_new, size: 18),
-                  label: const Text('Open'),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 class _SubSectionMapCard extends StatelessWidget {

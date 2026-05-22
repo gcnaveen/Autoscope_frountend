@@ -1,4 +1,8 @@
+import 'dart:async';
 import 'dart:typed_data';
+
+// ignore: avoid_web_libraries_in_flutter
+import 'dart:html' as html;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,6 +14,7 @@ import '../../shared/app_shell.dart';
 import '../../shared/top_snackbar.dart';
 import '../../shared/widgets/image_uploader.dart';
 import '../../shared/widgets/media_uploader.dart';
+import '../../shared/widgets/web_camera_capture_web.dart';
 
 // ✅ Damage marker editor + DamageCoordinate
 import 'widgets/damage_marker_editor.dart';
@@ -105,6 +110,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
   final emiratesRegAtCtrl = TextEditingController();
   final chassisNoCtrl = TextEditingController();
   String? _chassisNoPhotoUrl;
+  bool _chassisUploading = false;
 
   final ownershipTypeCtrl = TextEditingController();
 
@@ -330,6 +336,100 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
     showTopSnack(context, msg, variant: variant);
   }
 
+  // ── Chassis photo helpers ─────────────────────────────────────────────────
+
+  Future<void> _pickChassisPhoto() async {
+    if (_chassisUploading) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_camera_outlined),
+              title: const Text('Capture Photo'),
+              onTap: () { Navigator.pop(ctx); _uploadChassisFromCamera(); },
+            ),
+            ListTile(
+              leading: const Icon(Icons.upload_file_outlined),
+              title: const Text('Upload from Files'),
+              onTap: () { Navigator.pop(ctx); _uploadChassisFromFiles(); },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _uploadChassisFromCamera() async {
+    if (!mounted) return;
+    setState(() => _chassisUploading = true);
+    try {
+      final cap = await capturePhotoBytesViaPopup(context);
+      if (cap == null || !mounted) return;
+      final url = await inspectionRequestsService.uploadInspectionMedia(
+        inspectionRequestId: widget.requestId,
+        typeName: 'vehicle_details',
+        bytes: cap.bytes,
+        fileName: cap.fileName,
+        contentType: cap.contentType,
+        mediaType: 'photos',
+      );
+      if (!mounted) return;
+      setState(() => _chassisNoPhotoUrl = url);
+    } catch (e) {
+      if (mounted) _snack('Chassis photo upload failed: $e', 'error');
+    } finally {
+      if (mounted) setState(() => _chassisUploading = false);
+    }
+  }
+
+  Future<void> _uploadChassisFromFiles() async {
+    if (!mounted) return;
+    final input = html.FileUploadInputElement()..accept = 'image/*';
+    final completer = Completer<html.File?>();
+    input.onChange.listen((_) =>
+        completer.complete(input.files?.isNotEmpty == true ? input.files!.first : null));
+    input.click();
+    final file = await completer.future;
+    if (file == null || !mounted) return;
+
+    setState(() => _chassisUploading = true);
+    try {
+      final bytesCompleter = Completer<Uint8List>();
+      final reader = html.FileReader();
+      reader.onLoad.listen((_) {
+        final r = reader.result;
+        if (r is ByteBuffer) bytesCompleter.complete(Uint8List.view(r));
+        else if (r is Uint8List) bytesCompleter.complete(r);
+        else bytesCompleter.completeError(Exception('Unexpected result type'));
+      });
+      reader.onError.listen((_) =>
+          bytesCompleter.completeError(reader.error ?? Exception('Read failed')));
+      reader.readAsArrayBuffer(file);
+      final bytes = await bytesCompleter.future;
+
+      if (!mounted) return;
+      final url = await inspectionRequestsService.uploadInspectionMedia(
+        inspectionRequestId: widget.requestId,
+        typeName: 'vehicle_details',
+        bytes: bytes,
+        fileName: file.name,
+        contentType: normalizeContentType(file.type),
+        mediaType: 'photos',
+      );
+      if (!mounted) return;
+      setState(() => _chassisNoPhotoUrl = url);
+    } catch (e) {
+      if (mounted) _snack('Chassis photo upload failed: $e', 'error');
+    } finally {
+      if (mounted) setState(() => _chassisUploading = false);
+    }
+  }
+
   void _scrollToTop() {
     if (!_scrollCtrl.hasClients) return;
     _scrollCtrl.animateTo(
@@ -483,10 +583,20 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
         registrationNoCtrl.text = (d['registrationNo'] ?? registrationNoCtrl.text).toString().trim();
         emiratesRegAtCtrl.text = (d['emiratesRegAt'] ?? emiratesRegAtCtrl.text).toString().trim();
 
-        // ✅ chassisNo restored (URL expected)
         final rawChassis = (d['chassisNo'] ?? '').toString().trim();
-        chassisNoCtrl.text = rawChassis;
-        _chassisNoPhotoUrl = _isHttpUrl(rawChassis) ? rawChassis : null;
+        final rawChassisPhoto = (d['chassisPhotoUrl'] ?? '').toString().trim();
+        if (_isHttpUrl(rawChassisPhoto)) {
+          // new format: chassisNo = text, chassisPhotoUrl = URL
+          chassisNoCtrl.text = rawChassis;
+          _chassisNoPhotoUrl = rawChassisPhoto;
+        } else if (_isHttpUrl(rawChassis)) {
+          // backward compat: old records stored URL directly in chassisNo
+          chassisNoCtrl.text = '';
+          _chassisNoPhotoUrl = rawChassis;
+        } else {
+          chassisNoCtrl.text = rawChassis;
+          _chassisNoPhotoUrl = null;
+        }
 
         ownershipTypeCtrl.text = (d['ownershipType'] ?? ownershipTypeCtrl.text).toString().trim();
         break;
@@ -909,8 +1019,8 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
         'registrationNo': registrationNoCtrl.text.trim(),
         'emiratesRegAt': emiratesRegAtCtrl.text.trim(),
 
-        // ✅ chassisNo now holds the uploaded photo URL
         'chassisNo': chassisNoCtrl.text.trim(),
+        'chassisPhotoUrl': _chassisNoPhotoUrl ?? '',
 
         'ownershipType': ownershipTypeCtrl.text.trim(),
       };
@@ -1500,65 +1610,99 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
 
             const SizedBox(height: 12),
 
-            // ✅ CHASSIS PHOTO FIELD (single image -> URL stored into chassisNoCtrl)
+            // Chassis Number + mandatory photo in the same row
             FormField<String>(
               autovalidateMode: AutovalidateMode.onUserInteraction,
-              validator: (_) {
-                if ((_chassisNoPhotoUrl ?? '').trim().isEmpty) {
-                  return 'Chassis photo is required';
-                }
-                return null;
-              },
-              builder: (state) {
-                final has = (_chassisNoPhotoUrl ?? '').trim().isNotEmpty;
+              validator: (_) => (_chassisNoPhotoUrl ?? '').trim().isEmpty
+                  ? 'Chassis photo is required'
+                  : null,
+              builder: (photoState) {
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Icon(Icons.numbers_outlined, size: 18),
-                        const SizedBox(width: 8),
-                        const Text(
-                          'Chassis Number (Photo)',
-                          style: TextStyle(fontWeight: FontWeight.w900),
-                        ),
-                        const Spacer(),
-                        if (has)
-                          TextButton.icon(
-                            onPressed: () {
-                              setState(() {
-                                _chassisNoPhotoUrl = null;
-                                chassisNoCtrl.text = '';
-                              });
-                              state.didChange('');
-                            },
-                            icon: const Icon(Icons.delete_outline, size: 18),
-                            label: const Text('Remove'),
+                        Expanded(
+                          child: TextFormField(
+                            controller: chassisNoCtrl,
+                            autovalidateMode: AutovalidateMode.onUserInteraction,
+                            inputFormatters: [LengthLimitingTextInputFormatter(20), _upper],
+                            decoration: _dec(
+                              label: 'Chassis Number',
+                              hint: 'e.g. JTMBA3FV800123456',
+                              icon: Icons.numbers_outlined,
+                            ),
+                            validator: (v) => _alphaNumValidator(v, fieldName: 'Chassis Number', min: 5),
                           ),
+                        ),
+                        const SizedBox(width: 8),
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: _chassisUploading
+                              ? const SizedBox(
+                                  width: 40,
+                                  height: 40,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : OutlinedButton.icon(
+                                  onPressed: () async {
+                                    await _pickChassisPhoto();
+                                    photoState.didChange(_chassisNoPhotoUrl);
+                                  },
+                                  icon: const Icon(Icons.camera_alt_outlined, size: 18),
+                                  label: const Text('Photo'),
+                                ),
+                        ),
                       ],
                     ),
-                    const SizedBox(height: 10),
-                    ImageUploader(
-                      typeName: 'vehicle_details',
-                      inspectionRequestId: widget.requestId,
-                      title: 'Upload / Capture',
-                      initialImages: has ? [_chassisNoPhotoUrl!] : const [],
-                      onChanged: (urls) {
-                        final next = urls.isEmpty ? '' : urls.last; // keep last => single
-                        setState(() {
-                          _chassisNoPhotoUrl = next.isEmpty ? null : next;
-                          chassisNoCtrl.text = next; // ✅ keeps existing API key working
-                        });
-                        state.didChange(next);
-                      },
-                      enabled: true,
-                      mediaType: 'photos',
-                    ),
-                    if (state.hasError) ...[
-                      const SizedBox(height: 8),
+                    if (_chassisNoPhotoUrl != null) ...[
+                      const SizedBox(height: 10),
+                      Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: Image.network(
+                              _chassisNoPhotoUrl!,
+                              width: 96,
+                              height: 72,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) =>
+                                  const Icon(Icons.broken_image_outlined),
+                            ),
+                          ),
+                          Positioned(
+                            right: -8,
+                            top: -8,
+                            child: GestureDetector(
+                              onTap: () {
+                                setState(() => _chassisNoPhotoUrl = null);
+                                photoState.didChange(null);
+                              },
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: Colors.black12),
+                                ),
+                                padding: const EdgeInsets.all(2),
+                                child: const Icon(Icons.close, size: 16, color: Colors.red),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                    if (photoState.hasError) ...[
+                      const SizedBox(height: 6),
                       Text(
-                        state.errorText ?? '',
-                        style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w700),
+                        photoState.errorText ?? '',
+                        style: const TextStyle(
+                          color: Colors.redAccent,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ],
                   ],
@@ -2206,8 +2350,8 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
         'registrationNo': registrationNoCtrl.text.trim(),
         'emiratesRegAt': emiratesRegAtCtrl.text.trim(),
 
-        // ✅ still chassisNo key, but value is URL of chassis photo
         'chassisNo': chassisNoCtrl.text.trim(),
+        'chassisPhotoUrl': _chassisNoPhotoUrl ?? '',
 
         'ownershipType': ownershipTypeCtrl.text.trim(),
       },
@@ -2284,7 +2428,6 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
     if (!_applyMakeModelToControllersNoNetwork()) return;
     if (!_validateChecklistAll()) return;
 
-    // ✅ Ensure chassis photo exists before submit
     if ((_chassisNoPhotoUrl ?? '').trim().isEmpty) {
       _snack('Please upload chassis number photo', 'warning');
       return;
