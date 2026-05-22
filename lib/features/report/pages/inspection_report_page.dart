@@ -122,7 +122,8 @@ class _ReportViewState extends State<_ReportView> {
   // #22/25 – one GlobalKey per checklist section, keyed by typeName
   final Map<String, GlobalKey> _sectionKeys = {};
 
-  bool _showFloatingPhotos = false;
+  bool _showScrollToTop = false;
+
 
   bool _viewerOpen = false;
   int _viewerIndex = 0;
@@ -162,9 +163,9 @@ class _ReportViewState extends State<_ReportView> {
     _sectionToVideoIdx = builtV.$2;
 
     _scrollCtrl.addListener(() {
-      final show = _scrollCtrl.offset > 520 && _photos.isNotEmpty;
-      if (show != _showFloatingPhotos) {
-        setState(() => _showFloatingPhotos = show);
+      final show = _scrollCtrl.offset > 520;
+      if (show != _showScrollToTop) {
+        setState(() => _showScrollToTop = show);
       }
     });
 
@@ -727,13 +728,37 @@ class _ReportViewState extends State<_ReportView> {
           ],
         ),
 
-        if (_showFloatingPhotos)
+        if (_showScrollToTop)
           Positioned(
             right: 18,
             bottom: 18,
-            child: _FloatingPhotosButton(
-              count: _photos.length,
-              onPressed: () => _openViewer(_heroIndex),
+            child: MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: InkWell(
+                onTap: () => _scrollCtrl.animateTo(
+                  0,
+                  duration: const Duration(milliseconds: 400),
+                  curve: Curves.easeOut,
+                ),
+                borderRadius: BorderRadius.circular(999),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.75),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.arrow_upward, color: Colors.white, size: 18),
+                      SizedBox(width: 8),
+                      Text(
+                        'Back to Top',
+                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
           ),
 
@@ -2381,38 +2406,6 @@ class _HeaderRow extends StatelessWidget {
   }
 }
 
-class _FloatingPhotosButton extends StatelessWidget {
-  final int count;
-  final VoidCallback onPressed;
-  const _FloatingPhotosButton({required this.count, required this.onPressed});
-
-  @override
-  Widget build(BuildContext context) {
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: InkWell(
-        onTap: onPressed,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: 0.75),
-            borderRadius: BorderRadius.circular(999),
-          ),
-          child: Row(
-            children: [
-              const Icon(Icons.photo_library_outlined, color: Colors.white, size: 18),
-              const SizedBox(width: 8),
-              Text(
-                'View Photos ($count)',
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 /* =========================
    Vehicle Details Card (Chassis as Image)
