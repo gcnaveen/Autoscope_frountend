@@ -602,6 +602,8 @@ class _ReportViewState extends State<_ReportView> {
               damages: damages,
               carTopAssetPath: kCarTopDamageAsset,
               onOpenImage: (url) => _openUrlInViewer(url),
+              scrollCtrl: _scrollCtrl,
+              scrollAnchorKey: _scrollAnchorKey,
             ),
 
             if (notes.isNotEmpty) ...[
@@ -1277,11 +1279,15 @@ class _DamagesBlock extends StatefulWidget {
   final List<_DamagePoint> damages;
   final String carTopAssetPath;
   final void Function(String url) onOpenImage;
+  final ScrollController? scrollCtrl;
+  final GlobalKey? scrollAnchorKey;
 
   const _DamagesBlock({
     required this.damages,
     required this.carTopAssetPath,
     required this.onOpenImage,
+    this.scrollCtrl,
+    this.scrollAnchorKey,
   });
 
   @override
@@ -1290,6 +1296,22 @@ class _DamagesBlock extends StatefulWidget {
 
 class _DamagesBlockState extends State<_DamagesBlock> {
   int? _selectedIdx;
+  final _previewKey = GlobalKey();
+
+  void _scrollToPreview() {
+    final ctrl = widget.scrollCtrl;
+    final anchorKey = widget.scrollAnchorKey;
+    if (ctrl == null || !ctrl.hasClients || anchorKey == null) return;
+    final previewCtx = _previewKey.currentContext;
+    if (previewCtx == null) return;
+    final previewBox = previewCtx.findRenderObject() as RenderBox?;
+    if (previewBox == null || !previewBox.attached) return;
+    final anchorBox = anchorKey.currentContext?.findRenderObject() as RenderBox?;
+    if (anchorBox == null) return;
+    final target = (previewBox.localToGlobal(Offset.zero).dy - anchorBox.localToGlobal(Offset.zero).dy)
+        .clamp(ctrl.position.minScrollExtent, ctrl.position.maxScrollExtent);
+    ctrl.animateTo(target, duration: const Duration(milliseconds: 400), curve: Curves.easeInOut);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1317,18 +1339,27 @@ class _DamagesBlockState extends State<_DamagesBlock> {
               assetPath: widget.carTopAssetPath,
               damages: widget.damages,
               onTapMarker: (d, idx) {
+                final newIdx = idx - 1;
+                final toggling = _selectedIdx == newIdx;
                 setState(() {
-                  _selectedIdx = (_selectedIdx == idx - 1) ? null : idx - 1;
+                  _selectedIdx = toggling ? null : newIdx;
                 });
+                if (!toggling) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToPreview());
+                }
               },
             ),
             // Inline preview shown when a marker is tapped
             if (selected != null) ...[
               const SizedBox(height: 12),
-              _DamagePreview(
-                damage: selected,
-                index: _selectedIdx! + 1,
-                onOpenImage: widget.onOpenImage,
+              SizedBox(
+                key: _previewKey,
+                width: double.infinity,
+                child: _DamagePreview(
+                  damage: selected,
+                  index: _selectedIdx! + 1,
+                  onOpenImage: widget.onOpenImage,
+                ),
               ),
             ],
           ],
