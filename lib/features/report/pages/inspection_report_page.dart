@@ -2318,58 +2318,63 @@ class _HeaderRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
+    return Stack(
+      alignment: Alignment.center,
       children: [
-        Image.asset(
-          'assets/logo/autoscope_logo_old.png',
-          height: 36,
-          errorBuilder: (_, _, _) => const SizedBox.shrink(),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Text(
-            title,
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
-          ),
+        // Centered title
+        Text(
+          title,
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
         ),
 
-        if (showReview)
-          Tooltip(
-            message: reviewSubmitted ? 'Review submitted' : 'Give review',
-            child: InkWell(
-              onTap: onReview,
-              borderRadius: BorderRadius.circular(999),
-              child: Container(
-                padding: const EdgeInsets.all(10),
-                margin: const EdgeInsets.only(right: 10),
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.06),
+        // Logo left, buttons right — floats above title without affecting its centering
+        Row(
+          children: [
+            Image.asset(
+              'assets/logo/autoscope_logo_old.png',
+              height: 52,
+              errorBuilder: (_, _, _) => const SizedBox.shrink(),
+            ),
+            const Spacer(),
+            if (showReview)
+              Tooltip(
+                message: reviewSubmitted ? 'Review submitted' : 'Give review',
+                child: InkWell(
+                  onTap: onReview,
                   borderRadius: BorderRadius.circular(999),
-                  border: Border.all(color: Colors.black.withValues(alpha: 0.10)),
-                ),
-                child: Icon(
-                  reviewSubmitted ? Icons.star : Icons.star_border,
-                  size: 20,
+                  child: Container(
+                    padding: const EdgeInsets.all(10),
+                    margin: const EdgeInsets.only(right: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.06),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: Colors.black.withValues(alpha: 0.10)),
+                    ),
+                    child: Icon(
+                      reviewSubmitted ? Icons.star : Icons.star_border,
+                      size: 20,
+                    ),
+                  ),
                 ),
               ),
-            ),
-          ),
-
-        Tooltip(
-          message: 'Download (Save as PDF)',
-          child: InkWell(
-            onTap: onDownload,
-            borderRadius: BorderRadius.circular(999),
-            child: Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.06),
+            Tooltip(
+              message: 'Download (Save as PDF)',
+              child: InkWell(
+                onTap: onDownload,
                 borderRadius: BorderRadius.circular(999),
-                border: Border.all(color: Colors.black.withValues(alpha: 0.10)),
+                child: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.06),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: Colors.black.withValues(alpha: 0.10)),
+                  ),
+                  child: const Icon(Icons.download_outlined, size: 20),
+                ),
               ),
-              child: const Icon(Icons.download_outlined, size: 20),
             ),
-          ),
+          ],
         ),
       ],
     );
