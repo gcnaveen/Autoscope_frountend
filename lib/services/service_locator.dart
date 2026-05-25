@@ -10,9 +10,11 @@ import 'inspection_requests_service.dart';
 import 'contact_service.dart';
 import 'user_requests_service.dart';
 import 'reviews_service.dart';
+import 'dropdown_config_service.dart';
 
 
 final apiClient = ApiClient(baseUrl: ApiConfig.apiBaseUrl);
+final dropdownConfigService = DropdownConfigService(apiClient: apiClient);
 
 final authService = AuthService(apiClient: apiClient);
 final usersService = UsersService(apiClient: apiClient);

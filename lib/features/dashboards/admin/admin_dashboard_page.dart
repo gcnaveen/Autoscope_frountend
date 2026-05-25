@@ -647,6 +647,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         icon: Icons.rate_review_outlined,
                         onTap: () => context.go('/dashboard/admin/reviews'),
                       ),
+                      _KpiActionCard(
+                        kpiTitle: 'Configure Inputs',
+                        kpiValue: 'Manage',
+                        kpiSubtitle: 'Dropdown options for inspection form',
+                        icon: Icons.tune_outlined,
+                        onTap: () => context.go('/dashboard/admin/configure-inputs'),
+                      ),
                     ],
                   ),
 

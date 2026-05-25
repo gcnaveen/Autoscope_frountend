@@ -226,6 +226,7 @@ import '../features/dashboards/admin/checklists/checklist_templates_page.dart';
 import '../features/dashboards/admin/manage_reviews/manage_reviews_page.dart';
 
 import '../features/dashboards/admin/vehicle_catalog_page.dart';
+import '../features/dashboards/admin/configure_inputs/configure_inputs_page.dart';
 
 import '../features/profile/profile_page.dart';
 
@@ -371,6 +372,11 @@ GoRouter buildRouter() {
       GoRoute(
         path: '/dashboard/admin/reviews',
         builder: (context, state) => const ManageReviewsPage(),
+      ),
+
+      GoRoute(
+        path: '/dashboard/admin/configure-inputs',
+        builder: (context, state) => const ConfigureInputsPage(),
       ),
 
       GoRoute(

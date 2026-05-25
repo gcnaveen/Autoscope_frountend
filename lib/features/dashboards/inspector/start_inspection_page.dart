@@ -10,6 +10,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../models/checklist_template.dart';
 import '../../../services/service_locator.dart';
+import '../../../services/dropdown_config_service.dart';
 import '../../shared/app_shell.dart';
 import '../../shared/top_snackbar.dart';
 import '../../shared/widgets/image_uploader.dart';
@@ -193,63 +194,33 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
     'Not Applicable',
   ];
 
-  static const List<String> _transmissionOptions = [
-    'Automatic',
-    'Manual',
-  ];
-
-  static const List<String> _fuelTypeOptions = [
-    'Petrol',
-    'Diesel',
-    'Hybrid',
-    'Electric',
-  ];
-
-  static const List<String> _gradeVariantOptions = ['XLE', 'LIMITED'];
-  static const List<String> _cylinderSizeOptions = ['3', '4', '6', '8'];
-  static const List<String> _driveTrainOptions = ['FWD', 'RWD', '4X4'];
-  static const List<String> _specsOptions = [
-    'GCC',
-    'AMERICAN',
-    'EUROPEAN',
-    'JAPANESE',
-    'KOREAN',
-    'CANADIAN',
-    'AUSTRALIAN',
-    'CHINESE',
-    'OTHER',
-  ];
-  static const List<String> _wheelSizeOptions = [
-    '14"', '15"', '16"', '17"', '18"', '19"', '20"', '21"', '22"', '23"', 'Other',
-  ];
-  static const List<String> _wheelTypeOptions = [
-    'Alloy Wheel',
-    'Steel Wheel',
-    'Other',
-  ];
+  // Not configurable
   static const List<String> _ownershipTypeOptions = ['INDIVIDUAL', 'COMPANY'];
-  static const List<String> _servicedWithOptions = ['AGENCY', 'THIRD PARTY'];
-  static const List<String> _seatsOptions = ['2', '4', '5', '6', '7', '8', '9'];
-  static const List<String> _colorOptions = [
-    'WHITE',
-    'BLACK',
-    'GRAY / GREY',
-    'SILVER',
-    'BLUE',
-    'RED',
-    'BEIGE / TAN',
-    'BROWN / CHOCOLATE',
-    'GOLD',
-    'GREEN',
-    'ORANGE',
-    'PURPLE / VIOLET',
-    'MAROON / BURGUNDY',
-    'YELLOW',
-    'PINK',
-  ];
-  static const List<String> _upholsteryOptions = ['LEATHER', 'FABRIC'];
-  static const List<String> _numberOfKeysOptions = ['1', '2', '3', '4', '5'];
-  static const List<String> _doorsOptions = ['2', '3', '4', '5'];
+
+  // Configurable — loaded from DropdownConfigService; initialised to defaults
+  List<String> _transmissionOptions    = DropdownConfigService.defaults['transmission']!;
+  List<String> _fuelTypeOptions        = DropdownConfigService.defaults['fuelType']!;
+  List<String> _gradeVariantOptions    = DropdownConfigService.defaults['gradeVariant']!;
+  List<String> _cylinderSizeOptions    = DropdownConfigService.defaults['cylinderSize']!;
+  List<String> _driveTrainOptions      = DropdownConfigService.defaults['driveTrain']!;
+  List<String> _specsOptions           = DropdownConfigService.defaults['specs']!;       // no 'OTHER' — appended in UI
+  List<String> _wheelSizeOptions       = DropdownConfigService.defaults['wheelSize']!;   // no 'Other' — appended in UI
+  List<String> _wheelTypeOptions       = DropdownConfigService.defaults['wheelType']!;   // no 'Other' — appended in UI
+  List<String> _servicedWithOptions    = DropdownConfigService.defaults['servicedWith']!;
+  List<String> _seatsOptions           = DropdownConfigService.defaults['seats']!;
+  List<String> _interiorColorOptions   = DropdownConfigService.defaults['interiorColor']!;
+  List<String> _exteriorColorOptions   = DropdownConfigService.defaults['exteriorColor']!;
+  List<String> _upholsteryOptions      = DropdownConfigService.defaults['upholstery']!;
+  List<String> _numberOfKeysOptions    = DropdownConfigService.defaults['numberOfKeys']!;
+  List<String> _doorsOptions           = DropdownConfigService.defaults['doors']!;
+
+  // "Other" text controllers for every configurable dropdown
+  final Map<String, TextEditingController> _otherCtrls = {};
+
+  // Custom fields defined by admin
+  List<CustomField> _customFields = [];
+  final Map<String, String> _customFieldValues = {};           // keyed by field.id
+  final Map<String, TextEditingController> _customTextCtrls = {}; // keyed by field.id (text) or field.id+'_other' (dropdown other)
 
   double? _gradeToRating(String? v) {
     if (v == null) return null;
@@ -276,6 +247,15 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
     super.initState();
     _future = _loadTemplates();
     _loadMakes();
+    _loadDropdownConfig();
+
+    for (final key in const [
+      'gradeVariant', 'cylinderSize', 'transmission', 'fuelType', 'driveTrain',
+      'seats', 'interiorColor', 'exteriorColor', 'upholstery', 'numberOfKeys',
+      'doors', 'servicedWith',
+    ]) {
+      _otherCtrls[key] = TextEditingController();
+    }
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       // ✅ On "Start Inspection" open, fetch draft first and fill all data
@@ -329,11 +309,184 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
     otherMakeCtrl.dispose();
     otherModelCtrl.dispose();
 
+    for (final c in _otherCtrls.values) {
+      c.dispose();
+    }
+    for (final c in _customTextCtrls.values) {
+      c.dispose();
+    }
+
     super.dispose();
   }
 
   void _snack(String msg, String variant) {
     showTopSnack(context, msg, variant: variant);
+  }
+
+  // ── Dropdown config ───────────────────────────────────────────────────────
+
+  Future<void> _loadDropdownConfig() async {
+    final results = await Future.wait([
+      dropdownConfigService.load(),
+      dropdownConfigService.loadCustomFields(),
+    ]);
+    if (!mounted) return;
+    final cfg = results[0] as Map<String, List<String>>;
+    final fields = results[1] as List<CustomField>;
+    setState(() {
+      _gradeVariantOptions    = cfg['gradeVariant']!;
+      _cylinderSizeOptions    = cfg['cylinderSize']!;
+      _transmissionOptions    = cfg['transmission']!;
+      _fuelTypeOptions        = cfg['fuelType']!;
+      _driveTrainOptions      = cfg['driveTrain']!;
+      _specsOptions           = cfg['specs']!;
+      _seatsOptions           = cfg['seats']!;
+      _interiorColorOptions   = cfg['interiorColor']!;
+      _exteriorColorOptions   = cfg['exteriorColor']!;
+      _upholsteryOptions      = cfg['upholstery']!;
+      _numberOfKeysOptions    = cfg['numberOfKeys']!;
+      _doorsOptions           = cfg['doors']!;
+      _wheelSizeOptions       = cfg['wheelSize']!;
+      _wheelTypeOptions       = cfg['wheelType']!;
+      _servicedWithOptions    = cfg['servicedWith']!;
+      _customFields = fields;
+      for (final f in fields) {
+        if (f.type == 'text') {
+          _customTextCtrls.putIfAbsent(f.id, () => TextEditingController());
+        } else {
+          _customFieldValues.putIfAbsent(f.id, () => '');
+          _customTextCtrls.putIfAbsent('${f.id}_other', () => TextEditingController());
+        }
+      }
+    });
+  }
+
+  /// Returns the true value for a controller: if the user picked 'Other' it
+  /// returns the text from the matching `_otherCtrls` entry instead.
+  String _resolveCtrl(TextEditingController ctrl, String key) {
+    if (ctrl.text.trim() == 'Other') {
+      return _otherCtrls[key]?.text.trim() ?? '';
+    }
+    return ctrl.text.trim();
+  }
+
+  /// A `_dropField` that automatically appends 'Other' and, when selected,
+  /// reveals an inline text field backed by [otherCtrl].
+  Widget _dropWithOther({
+    required String label,
+    required String? value,
+    required List<String> options,
+    required void Function(String?) onChanged,
+    required TextEditingController otherCtrl,
+    String? hint,
+    IconData? icon,
+    String? Function(String?)? validator,
+  }) {
+    final opts = options.contains('Other') ? options : [...options, 'Other'];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _dropField(
+          label: label,
+          value: value,
+          options: opts,
+          onChanged: onChanged,
+          hint: hint,
+          icon: icon,
+          validator: validator,
+        ),
+        if (value == 'Other') ...[
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: otherCtrl,
+            autovalidateMode: AutovalidateMode.onUserInteraction,
+            decoration: _dec(
+              label: 'Other $label',
+              hint: 'Enter $label',
+              icon: Icons.edit_outlined,
+            ),
+            validator: (v) =>
+                (v == null || v.trim().isEmpty) ? 'Please specify $label' : null,
+          ),
+        ],
+      ],
+    );
+  }
+
+  // ── Custom field helpers ──────────────────────────────────────────────────
+
+  String _resolveCustomField(CustomField field) {
+    if (field.type == 'text') return _customTextCtrls[field.id]?.text.trim() ?? '';
+    final val = _customFieldValues[field.id] ?? '';
+    if (val == 'Other') return _customTextCtrls['${field.id}_other']?.text.trim() ?? '';
+    return val;
+  }
+
+  Widget _buildCustomFieldWidget(CustomField field) {
+    if (field.type == 'text') {
+      final ctrl = _customTextCtrls.putIfAbsent(field.id, () => TextEditingController());
+      return TextFormField(
+        controller: ctrl,
+        autovalidateMode: AutovalidateMode.onUserInteraction,
+        decoration: _dec(label: field.label, hint: 'Enter ${field.label}', icon: Icons.edit_outlined),
+        validator: field.required
+            ? (v) => (v == null || v.trim().isEmpty) ? '${field.label} is required' : null
+            : null,
+      );
+    }
+    // dropdown type
+    final opts = [...field.options, 'Other'];
+    final rawVal = _customFieldValues[field.id] ?? '';
+    final safeVal = opts.contains(rawVal) ? rawVal : null;
+    final otherCtrl = _customTextCtrls.putIfAbsent('${field.id}_other', () => TextEditingController());
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        DropdownButtonFormField<String>(
+          value: safeVal,
+          autovalidateMode: AutovalidateMode.onUserInteraction,
+          items: opts.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(),
+          onChanged: (v) => setState(() => _customFieldValues[field.id] = v ?? ''),
+          decoration: _dec(label: field.label, hint: 'Select ${field.label}', icon: Icons.list_outlined),
+          validator: field.required ? (v) => v == null ? '${field.label} is required' : null : null,
+        ),
+        if (safeVal == 'Other') ...[
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: otherCtrl,
+            autovalidateMode: AutovalidateMode.onUserInteraction,
+            decoration: _dec(label: 'Other ${field.label}', hint: 'Enter ${field.label}', icon: Icons.edit_outlined),
+            validator: (v) => (v == null || v.trim().isEmpty) ? 'Please specify ${field.label}' : null,
+          ),
+        ],
+      ],
+    );
+  }
+
+  List<Widget> _customFieldsForSection(String section) {
+    final widgets = <Widget>[];
+    for (final f in _customFields.where((f) => f.section == section)) {
+      widgets.add(const SizedBox(height: 12));
+      widgets.add(_buildCustomFieldWidget(f));
+    }
+    return widgets;
+  }
+
+  void _restoreCustomField(CustomField f, Map<String, dynamic> d) {
+    final val = (d[f.payloadKey] ?? '').toString().trim();
+    if (val.isEmpty) return;
+    if (f.type == 'text') {
+      _customTextCtrls[f.id]?.text = val;
+    } else {
+      if (f.options.contains(val)) {
+        _customFieldValues[f.id] = val;
+      } else {
+        _customFieldValues[f.id] = 'Other';
+        _customTextCtrls['${f.id}_other']?.text = val;
+      }
+    }
   }
 
   // ── Chassis photo helpers ─────────────────────────────────────────────────
@@ -568,12 +721,17 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
         makeCtrl.text = (d['make'] ?? makeCtrl.text).toString().trim();
         modelCtrl.text = (d['model'] ?? modelCtrl.text).toString().trim();
         gradeVariantCtrl.text = (d['gradeVariant'] ?? gradeVariantCtrl.text).toString().trim();
+        _otherCtrls['gradeVariant']?.text = (d['gradeVariantOther'] ?? '').toString().trim();
         engineCapacityCtrl.text = (d['engineCapacity'] ?? engineCapacityCtrl.text).toString().trim();
         modelYearCtrl.text = (d['modelYear'] ?? modelYearCtrl.text).toString().trim();
         cylinderSizeCtrl.text = (d['cylinderSize'] ?? cylinderSizeCtrl.text).toString().trim();
+        _otherCtrls['cylinderSize']?.text = (d['cylinderSizeOther'] ?? '').toString().trim();
         transmissionCtrl.text = (d['transmission'] ?? transmissionCtrl.text).toString().trim();
+        _otherCtrls['transmission']?.text = (d['transmissionOther'] ?? '').toString().trim();
         fuelTypeCtrl.text = (d['fuelType'] ?? fuelTypeCtrl.text).toString().trim();
+        _otherCtrls['fuelType']?.text = (d['fuelTypeOther'] ?? '').toString().trim();
         driveTrainCtrl.text = (d['driveTrain'] ?? driveTrainCtrl.text).toString().trim();
+        _otherCtrls['driveTrain']?.text = (d['driveTrainOther'] ?? '').toString().trim();
         specsCtrl.text = (d['specs'] ?? specsCtrl.text).toString().trim();
         // Migrate old 'US SPECS' to renamed 'AMERICAN'
         if (specsCtrl.text == 'US SPECS') specsCtrl.text = 'AMERICAN';
@@ -599,28 +757,44 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
         }
 
         ownershipTypeCtrl.text = (d['ownershipType'] ?? ownershipTypeCtrl.text).toString().trim();
+        for (final f in _customFields.where((f) => f.section == 'vehicle_details')) {
+          _restoreCustomField(f, d);
+        }
         break;
 
       case 'service_warranty_overview':
         serviceHistory = (d['serviceHistory'] ?? serviceHistory)?.toString();
         servicedWithCtrl.text = (d['servicedWith'] ?? servicedWithCtrl.text).toString().trim();
+        _otherCtrls['servicedWith']?.text = (d['servicedWithOther'] ?? '').toString().trim();
         lastServiceDateCtrl.text = (d['lastServiceDate'] ?? lastServiceDateCtrl.text).toString().trim();
         warrantyAvailable = (d['warrantyAvailable'] ?? warrantyAvailable)?.toString();
         warrantyEndsInCtrl.text = (d['warrantyEndsIn'] ?? warrantyEndsInCtrl.text).toString().trim();
         hadAccidents = (d['hadAccidents'] ?? hadAccidents)?.toString();
+        for (final f in _customFields.where((f) => f.section == 'service_warranty')) {
+          _restoreCustomField(f, d);
+        }
         break;
 
       case 'interior_details':
         seatsCtrl.text = (d['seats'] ?? seatsCtrl.text).toString().trim();
+        _otherCtrls['seats']?.text = (d['seatsOther'] ?? '').toString().trim();
         interiorColorCtrl.text = (d['interiorColor'] ?? interiorColorCtrl.text).toString().trim();
+        _otherCtrls['interiorColor']?.text = (d['interiorColorOther'] ?? '').toString().trim();
         upholsteryCtrl.text = (d['upholstery'] ?? upholsteryCtrl.text).toString().trim();
+        _otherCtrls['upholstery']?.text = (d['upholsteryOther'] ?? '').toString().trim();
         numberOfKeysCtrl.text = (d['numberOfKeys'] ?? numberOfKeysCtrl.text).toString().trim();
+        _otherCtrls['numberOfKeys']?.text = (d['numberOfKeysOther'] ?? '').toString().trim();
         interiorModificationDone = (d['modificationDone'] ?? interiorModificationDone)?.toString();
+        for (final f in _customFields.where((f) => f.section == 'interior_details')) {
+          _restoreCustomField(f, d);
+        }
         break;
 
       case 'exterior_details':
         exteriorColorCtrl.text = (d['exteriorColor'] ?? exteriorColorCtrl.text).toString().trim();
+        _otherCtrls['exteriorColor']?.text = (d['exteriorColorOther'] ?? '').toString().trim();
         doorsCtrl.text = (d['doors'] ?? doorsCtrl.text).toString().trim();
+        _otherCtrls['doors']?.text = (d['doorsOther'] ?? '').toString().trim();
         wheelSizeCtrl.text = (d['wheelSize'] ?? wheelSizeCtrl.text).toString().trim();
         // Migrate wheel size stored without inch symbol (backend may strip '"')
         if (wheelSizeCtrl.text.isNotEmpty && !wheelSizeCtrl.text.endsWith('"') && wheelSizeCtrl.text != 'Other') {
@@ -632,6 +806,9 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
         _wheelType = (d['wheelType'] ?? _wheelType)?.toString();
         wheelTypeOtherCtrl.text = (d['wheelTypeOther'] ?? wheelTypeOtherCtrl.text).toString().trim();
         exteriorModificationDone = (d['modificationDone'] ?? exteriorModificationDone)?.toString();
+        for (final f in _customFields.where((f) => f.section == 'exterior_details')) {
+          _restoreCustomField(f, d);
+        }
         break;
 
       default:
@@ -1003,59 +1180,85 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
   Map<String, dynamic> _buildSectionDataForIndex(ChecklistTemplate selected, int index) {
     if (index == 0) {
       _applyMakeModelToControllersNoNetwork();
-      return {
+      final data = <String, dynamic>{
         'make': makeCtrl.text.trim(),
         'model': modelCtrl.text.trim(),
         'gradeVariant': gradeVariantCtrl.text.trim(),
+        'gradeVariantOther': _otherCtrls['gradeVariant']?.text.trim() ?? '',
         'engineCapacity': engineCapacityCtrl.text.trim(),
         'modelYear': modelYearCtrl.text.trim(),
         'cylinderSize': cylinderSizeCtrl.text.trim(),
+        'cylinderSizeOther': _otherCtrls['cylinderSize']?.text.trim() ?? '',
         'transmission': transmissionCtrl.text.trim(),
+        'transmissionOther': _otherCtrls['transmission']?.text.trim() ?? '',
         'fuelType': fuelTypeCtrl.text.trim(),
+        'fuelTypeOther': _otherCtrls['fuelType']?.text.trim() ?? '',
         'driveTrain': driveTrainCtrl.text.trim(),
+        'driveTrainOther': _otherCtrls['driveTrain']?.text.trim() ?? '',
         'specs': specsCtrl.text.trim(),
         'specsOther': _specsIsOther ? specsOtherCtrl.text.trim() : '',
         'odometerReading': odometerCtrl.text.trim(),
         'registrationNo': registrationNoCtrl.text.trim(),
         'emiratesRegAt': emiratesRegAtCtrl.text.trim(),
-
         'chassisNo': chassisNoCtrl.text.trim(),
         'chassisPhotoUrl': _chassisNoPhotoUrl ?? '',
-
         'ownershipType': ownershipTypeCtrl.text.trim(),
       };
+      for (final f in _customFields.where((f) => f.section == 'vehicle_details')) {
+        data[f.payloadKey] = _resolveCustomField(f);
+      }
+      return data;
     }
 
     if (index == 1) {
-      return {
+      final data = <String, dynamic>{
         'serviceHistory': serviceHistory,
         'servicedWith': servicedWithCtrl.text.trim(),
+        'servicedWithOther': _otherCtrls['servicedWith']?.text.trim() ?? '',
         'lastServiceDate': lastServiceDateCtrl.text.trim(),
         'warrantyAvailable': warrantyAvailable,
         'warrantyEndsIn': warrantyEndsInCtrl.text.trim(),
         'hadAccidents': hadAccidents,
       };
+      for (final f in _customFields.where((f) => f.section == 'service_warranty')) {
+        data[f.payloadKey] = _resolveCustomField(f);
+      }
+      return data;
     }
 
     if (index == 2) {
-      return {
+      final data = <String, dynamic>{
         'seats': seatsCtrl.text.trim(),
+        'seatsOther': _otherCtrls['seats']?.text.trim() ?? '',
         'interiorColor': interiorColorCtrl.text.trim(),
+        'interiorColorOther': _otherCtrls['interiorColor']?.text.trim() ?? '',
         'upholstery': upholsteryCtrl.text.trim(),
+        'upholsteryOther': _otherCtrls['upholstery']?.text.trim() ?? '',
         'numberOfKeys': numberOfKeysCtrl.text.trim(),
+        'numberOfKeysOther': _otherCtrls['numberOfKeys']?.text.trim() ?? '',
         'modificationDone': interiorModificationDone,
       };
+      for (final f in _customFields.where((f) => f.section == 'interior_details')) {
+        data[f.payloadKey] = _resolveCustomField(f);
+      }
+      return data;
     }
 
     if (index == 3) {
-      return {
+      final data = <String, dynamic>{
         'exteriorColor': exteriorColorCtrl.text.trim(),
+        'exteriorColorOther': _otherCtrls['exteriorColor']?.text.trim() ?? '',
         'doors': doorsCtrl.text.trim(),
+        'doorsOther': _otherCtrls['doors']?.text.trim() ?? '',
         'wheelSize': wheelSizeCtrl.text.trim(),
         'wheelSizeOther': _wheelSizeIsOther ? wheelSizeOtherCtrl.text.trim() : '',
         'wheelType': _wheelType == 'Other' ? wheelTypeOtherCtrl.text.trim() : (_wheelType ?? ''),
         'modificationDone': exteriorModificationDone,
       };
+      for (final f in _customFields.where((f) => f.section == 'exterior_details')) {
+        data[f.payloadKey] = _resolveCustomField(f);
+      }
+      return data;
     }
 
     final damageIndex = 4 + selected.types.length;
@@ -1465,12 +1668,13 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
 
             const SizedBox(height: 12),
 
-            _dropField(
+            _dropWithOther(
               label: 'Grade / Variant',
               value: gradeVariantCtrl.text.isEmpty ? null : gradeVariantCtrl.text,
               options: _gradeVariantOptions,
               icon: Icons.badge_outlined,
               hint: 'Select grade / variant',
+              otherCtrl: _otherCtrls['gradeVariant']!,
               validator: (v) => v == null ? 'Grade / Variant is required' : null,
               onChanged: (v) => setState(() => gradeVariantCtrl.text = v ?? ''),
             ),
@@ -1498,48 +1702,52 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
 
             const SizedBox(height: 12),
 
-            _dropField(
+            _dropWithOther(
               label: 'Cylinder Size',
               value: cylinderSizeCtrl.text.isEmpty ? null : cylinderSizeCtrl.text,
               options: _cylinderSizeOptions,
               icon: Icons.settings_outlined,
               hint: 'Select cylinder size',
+              otherCtrl: _otherCtrls['cylinderSize']!,
               validator: (v) => v == null ? 'Cylinder Size is required' : null,
               onChanged: (v) => setState(() => cylinderSizeCtrl.text = v ?? ''),
             ),
 
             const SizedBox(height: 12),
 
-            _dropField(
+            _dropWithOther(
               label: 'Transmission',
               value: transmissionCtrl.text.isEmpty ? null : transmissionCtrl.text,
               options: _transmissionOptions,
               icon: Icons.swap_horiz_outlined,
               hint: 'Select transmission',
+              otherCtrl: _otherCtrls['transmission']!,
               validator: (v) => v == null ? 'Transmission is required' : null,
               onChanged: (v) => setState(() => transmissionCtrl.text = v ?? ''),
             ),
 
             const SizedBox(height: 12),
 
-            _dropField(
+            _dropWithOther(
               label: 'Fuel Type',
               value: fuelTypeCtrl.text.isEmpty ? null : fuelTypeCtrl.text,
               options: _fuelTypeOptions,
               icon: Icons.local_gas_station_outlined,
               hint: 'Select fuel type',
+              otherCtrl: _otherCtrls['fuelType']!,
               validator: (v) => v == null ? 'Fuel Type is required' : null,
               onChanged: (v) => setState(() => fuelTypeCtrl.text = v ?? ''),
             ),
 
             const SizedBox(height: 12),
 
-            _dropField(
+            _dropWithOther(
               label: 'Drive Train',
               value: driveTrainCtrl.text.isEmpty ? null : driveTrainCtrl.text,
               options: _driveTrainOptions,
               icon: Icons.grid_on_outlined,
               hint: 'Select drive train',
+              otherCtrl: _otherCtrls['driveTrain']!,
               validator: (v) => v == null ? 'Drive Train is required' : null,
               onChanged: (v) => setState(() => driveTrainCtrl.text = v ?? ''),
             ),
@@ -1549,7 +1757,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
             _dropField(
               label: 'Specs',
               value: specsCtrl.text.isEmpty ? null : specsCtrl.text,
-              options: _specsOptions,
+              options: [..._specsOptions, 'OTHER'],
               icon: Icons.public_outlined,
               hint: 'Select specs',
               validator: (v) => v == null ? 'Specs is required' : null,
@@ -1721,6 +1929,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
               validator: (v) => v == null ? 'Ownership Type is required' : null,
               onChanged: (v) => setState(() => ownershipTypeCtrl.text = v ?? ''),
             ),
+            ..._customFieldsForSection('vehicle_details'),
           ],
         ),
       ),
@@ -1745,12 +1954,13 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
               onChanged: (v) => setState(() => serviceHistory = v),
             ),
             const SizedBox(height: 12),
-            _dropField(
+            _dropWithOther(
               label: 'Serviced With',
               value: servicedWithCtrl.text.isEmpty ? null : servicedWithCtrl.text,
               options: _servicedWithOptions,
               icon: Icons.build_outlined,
               hint: 'Select',
+              otherCtrl: _otherCtrls['servicedWith']!,
               validator: (v) => v == null ? 'Serviced With is required' : null,
               onChanged: (v) => setState(() => servicedWithCtrl.text = v ?? ''),
             ),
@@ -1792,6 +2002,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
               validator: (v) => v == null ? 'Had Accidents is required' : null,
               onChanged: (v) => setState(() => hadAccidents = v),
             ),
+            ..._customFieldsForSection('service_warranty'),
           ],
         ),
       ),
@@ -1806,42 +2017,46 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
         key: _interiorFormKey,
         child: Column(
           children: [
-            _dropField(
+            _dropWithOther(
               label: 'Seats',
               value: seatsCtrl.text.isEmpty ? null : seatsCtrl.text,
               options: _seatsOptions,
               icon: Icons.event_seat_outlined,
               hint: 'Select seats',
+              otherCtrl: _otherCtrls['seats']!,
               validator: (v) => v == null ? 'Seats is required' : null,
               onChanged: (v) => setState(() => seatsCtrl.text = v ?? ''),
             ),
             const SizedBox(height: 12),
-            _dropField(
+            _dropWithOther(
               label: 'Interior Color',
               value: interiorColorCtrl.text.isEmpty ? null : interiorColorCtrl.text,
-              options: _colorOptions,
+              options: _interiorColorOptions,
               icon: Icons.palette_outlined,
               hint: 'Select color',
+              otherCtrl: _otherCtrls['interiorColor']!,
               validator: (v) => v == null ? 'Interior Color is required' : null,
               onChanged: (v) => setState(() => interiorColorCtrl.text = v ?? ''),
             ),
             const SizedBox(height: 12),
-            _dropField(
+            _dropWithOther(
               label: 'Upholstery',
               value: upholsteryCtrl.text.isEmpty ? null : upholsteryCtrl.text,
               options: _upholsteryOptions,
               icon: Icons.texture_outlined,
               hint: 'Select upholstery',
+              otherCtrl: _otherCtrls['upholstery']!,
               validator: (v) => v == null ? 'Upholstery is required' : null,
               onChanged: (v) => setState(() => upholsteryCtrl.text = v ?? ''),
             ),
             const SizedBox(height: 12),
-            _dropField(
+            _dropWithOther(
               label: 'Number of Keys',
               value: numberOfKeysCtrl.text.isEmpty ? null : numberOfKeysCtrl.text,
               options: _numberOfKeysOptions,
               icon: Icons.key_outlined,
               hint: 'Select keys count',
+              otherCtrl: _otherCtrls['numberOfKeys']!,
               validator: (v) => v == null ? 'Number of Keys is required' : null,
               onChanged: (v) => setState(() => numberOfKeysCtrl.text = v ?? ''),
             ),
@@ -1855,6 +2070,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
               validator: (v) => v == null ? 'Modification Done is required' : null,
               onChanged: (v) => setState(() => interiorModificationDone = v),
             ),
+            ..._customFieldsForSection('interior_details'),
           ],
         ),
       ),
@@ -1869,22 +2085,24 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
         key: _exteriorFormKey,
         child: Column(
           children: [
-            _dropField(
+            _dropWithOther(
               label: 'Exterior Color',
               value: exteriorColorCtrl.text.isEmpty ? null : exteriorColorCtrl.text,
-              options: _colorOptions,
+              options: _exteriorColorOptions,
               icon: Icons.palette_outlined,
               hint: 'Select color',
+              otherCtrl: _otherCtrls['exteriorColor']!,
               validator: (v) => v == null ? 'Exterior Color is required' : null,
               onChanged: (v) => setState(() => exteriorColorCtrl.text = v ?? ''),
             ),
             const SizedBox(height: 12),
-            _dropField(
+            _dropWithOther(
               label: 'Doors',
               value: doorsCtrl.text.isEmpty ? null : doorsCtrl.text,
               options: _doorsOptions,
               icon: Icons.door_front_door_outlined,
               hint: 'Select doors',
+              otherCtrl: _otherCtrls['doors']!,
               validator: (v) => v == null ? 'Doors is required' : null,
               onChanged: (v) => setState(() => doorsCtrl.text = v ?? ''),
             ),
@@ -1892,7 +2110,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
             _dropField(
               label: 'Wheel Size',
               value: wheelSizeCtrl.text.isEmpty ? null : wheelSizeCtrl.text,
-              options: _wheelSizeOptions,
+              options: [..._wheelSizeOptions, 'Other'],
               icon: Icons.circle_outlined,
               hint: 'Select wheel size',
               validator: (v) => v == null ? 'Wheel Size is required' : null,
@@ -1918,7 +2136,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
             _dropField(
               label: 'Wheel Type',
               value: _wheelType,
-              options: _wheelTypeOptions,
+              options: [..._wheelTypeOptions, 'Other'],
               icon: Icons.tire_repair_outlined,
               hint: 'Select wheel type',
               validator: (v) => v == null ? 'Wheel Type is required' : null,
@@ -1944,6 +2162,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
               validator: (v) => v == null ? 'Modification Done is required' : null,
               onChanged: (v) => setState(() => exteriorModificationDone = v),
             ),
+            ..._customFieldsForSection('exterior_details'),
           ],
         ),
       ),
@@ -2334,49 +2553,67 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
   }
 
   Map<String, dynamic> _buildReportPayload() {
+    final vehicleDetails = <String, dynamic>{
+      'make': makeCtrl.text.trim(),
+      'model': modelCtrl.text.trim(),
+      'gradeVariant': _resolveCtrl(gradeVariantCtrl, 'gradeVariant'),
+      'engineCapacity': engineCapacityCtrl.text.trim(),
+      'modelYear': modelYearCtrl.text.trim(),
+      'cylinderSize': _resolveCtrl(cylinderSizeCtrl, 'cylinderSize'),
+      'transmission': _resolveCtrl(transmissionCtrl, 'transmission'),
+      'fuelType': _resolveCtrl(fuelTypeCtrl, 'fuelType'),
+      'driveTrain': _resolveCtrl(driveTrainCtrl, 'driveTrain'),
+      'specs': _specsIsOther ? specsOtherCtrl.text.trim() : specsCtrl.text.trim(),
+      'odometerReading': odometerCtrl.text.trim(),
+      'registrationNo': registrationNoCtrl.text.trim(),
+      'emiratesRegAt': emiratesRegAtCtrl.text.trim(),
+      'chassisNo': chassisNoCtrl.text.trim(),
+      'chassisPhotoUrl': _chassisNoPhotoUrl ?? '',
+      'ownershipType': ownershipTypeCtrl.text.trim(),
+    };
+    for (final f in _customFields.where((f) => f.section == 'vehicle_details')) {
+      vehicleDetails[f.payloadKey] = _resolveCustomField(f);
+    }
+
+    final serviceWarranty = <String, dynamic>{
+      'serviceHistory': serviceHistory,
+      'servicedWith': _resolveCtrl(servicedWithCtrl, 'servicedWith'),
+      'lastServiceDate': lastServiceDateCtrl.text.trim(),
+      'warrantyAvailable': warrantyAvailable,
+      'warrantyEndsIn': warrantyEndsInCtrl.text.trim(),
+      'hadAccidents': hadAccidents,
+    };
+    for (final f in _customFields.where((f) => f.section == 'service_warranty')) {
+      serviceWarranty[f.payloadKey] = _resolveCustomField(f);
+    }
+
+    final interiorDetails = <String, dynamic>{
+      'seats': _resolveCtrl(seatsCtrl, 'seats'),
+      'interiorColor': _resolveCtrl(interiorColorCtrl, 'interiorColor'),
+      'upholstery': _resolveCtrl(upholsteryCtrl, 'upholstery'),
+      'numberOfKeys': _resolveCtrl(numberOfKeysCtrl, 'numberOfKeys'),
+      'modificationDone': interiorModificationDone,
+    };
+    for (final f in _customFields.where((f) => f.section == 'interior_details')) {
+      interiorDetails[f.payloadKey] = _resolveCustomField(f);
+    }
+
+    final exteriorDetails = <String, dynamic>{
+      'exteriorColor': _resolveCtrl(exteriorColorCtrl, 'exteriorColor'),
+      'doors': _resolveCtrl(doorsCtrl, 'doors'),
+      'wheelSize': _wheelSizeIsOther ? wheelSizeOtherCtrl.text.trim() : wheelSizeCtrl.text.trim(),
+      'wheelType': _wheelType == 'Other' ? wheelTypeOtherCtrl.text.trim() : (_wheelType ?? ''),
+      'modificationDone': exteriorModificationDone,
+    };
+    for (final f in _customFields.where((f) => f.section == 'exterior_details')) {
+      exteriorDetails[f.payloadKey] = _resolveCustomField(f);
+    }
+
     return {
-      'vehicleDetails': {
-        'make': makeCtrl.text.trim(),
-        'model': modelCtrl.text.trim(),
-        'gradeVariant': gradeVariantCtrl.text.trim(),
-        'engineCapacity': engineCapacityCtrl.text.trim(),
-        'modelYear': modelYearCtrl.text.trim(),
-        'cylinderSize': cylinderSizeCtrl.text.trim(),
-        'transmission': transmissionCtrl.text.trim(),
-        'fuelType': fuelTypeCtrl.text.trim(),
-        'driveTrain': driveTrainCtrl.text.trim(),
-        'specs': _specsIsOther ? specsOtherCtrl.text.trim() : specsCtrl.text.trim(),
-        'odometerReading': odometerCtrl.text.trim(),
-        'registrationNo': registrationNoCtrl.text.trim(),
-        'emiratesRegAt': emiratesRegAtCtrl.text.trim(),
-
-        'chassisNo': chassisNoCtrl.text.trim(),
-        'chassisPhotoUrl': _chassisNoPhotoUrl ?? '',
-
-        'ownershipType': ownershipTypeCtrl.text.trim(),
-      },
-      'serviceWarrantyOverview': {
-        'serviceHistory': serviceHistory,
-        'servicedWith': servicedWithCtrl.text.trim(),
-        'lastServiceDate': lastServiceDateCtrl.text.trim(),
-        'warrantyAvailable': warrantyAvailable,
-        'warrantyEndsIn': warrantyEndsInCtrl.text.trim(),
-        'hadAccidents': hadAccidents,
-      },
-      'interiorDetails': {
-        'seats': seatsCtrl.text.trim(),
-        'interiorColor': interiorColorCtrl.text.trim(),
-        'upholstery': upholsteryCtrl.text.trim(),
-        'numberOfKeys': numberOfKeysCtrl.text.trim(),
-        'modificationDone': interiorModificationDone,
-      },
-      'exteriorDetails': {
-        'exteriorColor': exteriorColorCtrl.text.trim(),
-        'doors': doorsCtrl.text.trim(),
-        'wheelSize': _wheelSizeIsOther ? wheelSizeOtherCtrl.text.trim() : wheelSizeCtrl.text.trim(),
-        'wheelType': _wheelType == 'Other' ? wheelTypeOtherCtrl.text.trim() : (_wheelType ?? ''),
-        'modificationDone': exteriorModificationDone,
-      },
+      'vehicleDetails': vehicleDetails,
+      'serviceWarrantyOverview': serviceWarranty,
+      'interiorDetails': interiorDetails,
+      'exteriorDetails': exteriorDetails,
     };
   }
 

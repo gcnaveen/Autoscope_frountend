@@ -260,6 +260,18 @@ class ApiClient {
     return decoded;
   }
 
+  Future<dynamic> patchJson(String path, Map<String, dynamic> body) async {
+    final auth = _shouldAttachAuth(path);
+    final res = await http.patch(
+      _uri(path),
+      headers: _headers(auth: auth),
+      body: jsonEncode(body),
+    );
+    final decoded = _decode(res);
+    _throwIfNotOk(res, decoded);
+    return decoded;
+  }
+
   Future<dynamic> deleteJson(String path) async {
     final auth = _shouldAttachAuth(path);
     final res = await http.delete(_uri(path), headers: _headers(auth: auth));
