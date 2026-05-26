@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import '../../../shared/app_shell.dart';
 import '../../../shared/top_snackbar.dart';
 import '../../../../services/service_locator.dart';
+import '../../../../services/dropdown_config_service.dart';
 
 class ChecklistTemplatesPage extends StatefulWidget {
   const ChecklistTemplatesPage({super.key});
@@ -234,6 +235,37 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
     }
   }
 
+  Future<void> _showTemplatePreview(String id, String name) async {
+    setState(() => _busy = true);
+    try {
+      final results = await Future.wait([
+        checklistTemplatesService.getTemplateById(id),
+        dropdownConfigService.load(),
+        dropdownConfigService.loadCustomFields(),
+      ]);
+      if (!mounted) return;
+
+      final template = results[0] as Map<String, dynamic>;
+      final dropdowns = results[1] as Map<String, List<String>>;
+      final customFields = results[2] as List<CustomField>;
+
+      await showDialog<void>(
+        context: context,
+        builder: (_) => _TemplateListPreviewDialog(
+          templateName: name,
+          template: template,
+          configuredDropdowns: dropdowns,
+          customFields: customFields,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      _toastErr('Failed to load preview: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final w = MediaQuery.sizeOf(context).width;
@@ -290,11 +322,8 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
 
           final allowDelete = templates.length > 1;
 
-          return Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 1200),
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
                 children: [
                   if (!isMobile)
                     Row(
@@ -393,6 +422,7 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
                               switchValue: switchValue,
                               switchOnChanged: switchOnChanged,
                               onEdit: id.isEmpty ? null : () => _goEdit(id),
+                              onPreview: (id.isEmpty || _busy) ? null : () => _showTemplatePreview(id, name),
                               onClone: (id.isEmpty || _busy) ? null : () => _cloneTemplate(id: id, name: name),
                               onDelete: (id.isEmpty || _busy)
                                   ? null
@@ -422,8 +452,6 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
                     ),
                   ),
                 ],
-              ),
-            ),
           );
         },
       ),
@@ -446,6 +474,7 @@ class _TemplateCard extends StatelessWidget {
   final ValueChanged<bool>? switchOnChanged;
 
   final VoidCallback? onEdit;
+  final VoidCallback? onPreview;
   final VoidCallback? onClone;
   final VoidCallback? onDelete;
 
@@ -463,6 +492,7 @@ class _TemplateCard extends StatelessWidget {
     required this.switchValue,
     required this.switchOnChanged,
     required this.onEdit,
+    required this.onPreview,
     required this.onClone,
     required this.onDelete,
     required this.allowDelete,
@@ -501,6 +531,11 @@ class _TemplateCard extends StatelessWidget {
                 if (showActiveLabel) Text(isActive ? 'Active' : 'Inactive'),
                 Switch(value: switchValue, onChanged: switchOnChanged),
                 FilledButton.tonal(onPressed: onEdit, child: const Text('Edit')),
+                IconButton(
+                  tooltip: 'Preview',
+                  onPressed: onPreview,
+                  icon: const Icon(Icons.visibility_outlined),
+                ),
                 IconButton(
                   tooltip: 'Clone',
                   onPressed: onClone,
@@ -575,6 +610,11 @@ class _TemplateCard extends StatelessWidget {
                   SizedBox(
                     height: 36,
                     child: FilledButton.tonal(onPressed: onEdit, child: const Text('Edit')),
+                  ),
+                  IconButton(
+                    tooltip: 'Preview',
+                    onPressed: onPreview,
+                    icon: const Icon(Icons.visibility_outlined),
                   ),
                   IconButton(
                     tooltip: 'Clone',
@@ -670,6 +710,275 @@ class _PaginationBar extends StatelessWidget {
           ],
         ),
       ],
+    );
+  }
+}
+
+// ─── Template preview dialog (works from raw map data) ───────────────────────
+
+class _TemplateListPreviewDialog extends StatefulWidget {
+  final String templateName;
+  final Map<String, dynamic> template;
+  final Map<String, List<String>> configuredDropdowns;
+  final List<CustomField> customFields;
+
+  const _TemplateListPreviewDialog({
+    required this.templateName,
+    required this.template,
+    required this.configuredDropdowns,
+    required this.customFields,
+  });
+
+  @override
+  State<_TemplateListPreviewDialog> createState() => _TemplateListPreviewDialogState();
+}
+
+class _TemplateListPreviewDialogState extends State<_TemplateListPreviewDialog> {
+  int _tab = 0;
+
+  List<Map<String, dynamic>> get _sections {
+    final types = (widget.template['types'] as List?) ?? const [];
+    return types.whereType<Map>().map((x) => Map<String, dynamic>.from(x)).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final sections = _sections;
+    final safeTab = _tab.clamp(0, sections.isEmpty ? 0 : sections.length - 1);
+
+    return Dialog(
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 700, maxHeight: 700),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Header
+            Container(
+              padding: const EdgeInsets.fromLTRB(20, 14, 12, 14),
+              color: const Color(0xFF1E5EFF).withValues(alpha: 0.06),
+              child: Row(
+                children: [
+                  const Icon(Icons.visibility_outlined, color: Color(0xFF1E5EFF)),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Preview', style: TextStyle(fontSize: 12, color: Colors.black54)),
+                        Text(
+                          widget.templateName,
+                          style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+            ),
+            if (sections.isEmpty)
+              const Expanded(
+                child: Center(
+                  child: Text('No sections in this template.', style: TextStyle(color: Colors.black45)),
+                ),
+              )
+            else ...[
+              // Section tabs
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (int i = 0; i < sections.length; i++)
+                      ChoiceChip(
+                        label: Text((sections[i]['typeName'] ?? 'Section ${i + 1}').toString()),
+                        selected: safeTab == i,
+                        onSelected: (_) => setState(() => _tab = i),
+                      ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              Expanded(child: _buildSectionContent(sections[safeTab], safeTab)),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSectionContent(Map<String, dynamic> section, int tabIndex) {
+    final inputFields =
+        (section['inputFields'] as List?)?.map((x) => x.toString()).toList() ?? [];
+
+    final rawItems = (section['checklistItems'] as List?)?.whereType<Map>().toList() ?? [];
+    final items = rawItems.map((x) => Map<String, dynamic>.from(x)).toList();
+    items.sort((a, b) {
+      final pa = (a['position'] is num) ? (a['position'] as num).toInt() : 0;
+      final pb = (b['position'] is num) ? (b['position'] as num).toInt() : 0;
+      return pa.compareTo(pb);
+    });
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (inputFields.isNotEmpty) ...[
+            const Text(
+              'INPUT FIELDS',
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: Colors.black38, letterSpacing: 0.5),
+            ),
+            const SizedBox(height: 10),
+            for (final key in inputFields) _buildFieldWidget(key),
+            if (items.isNotEmpty) const Divider(height: 28),
+          ],
+          if (items.isNotEmpty) ...[
+            const Text(
+              'CHECKLIST ITEMS',
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: Colors.black38, letterSpacing: 0.5),
+            ),
+            const SizedBox(height: 10),
+            for (int i = 0; i < items.length; i++) _buildItemRow(items[i], i),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFieldWidget(String key) {
+    // Built-in field
+    if (DropdownConfigService.fieldLabels.containsKey(key)) {
+      final label = DropdownConfigService.fieldLabels[key]!;
+      final options = widget.configuredDropdowns[key] ?? [];
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: options.isNotEmpty
+            ? DropdownButtonFormField<String>(
+                decoration: InputDecoration(
+                  labelText: label,
+                  border: const OutlineInputBorder(),
+                  isDense: true,
+                ),
+                items: options.map((o) => DropdownMenuItem(value: o, child: Text(o))).toList(),
+                onChanged: (_) {},
+              )
+            : TextFormField(
+                readOnly: true,
+                decoration: InputDecoration(
+                  labelText: label,
+                  border: const OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+      );
+    }
+
+    // Custom field
+    final matches = widget.customFields.where((f) => f.payloadKey == key);
+    if (matches.isNotEmpty) {
+      final cf = matches.first;
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: cf.type == 'dropdown' && cf.options.isNotEmpty
+            ? DropdownButtonFormField<String>(
+                decoration: InputDecoration(
+                  labelText: cf.label,
+                  border: const OutlineInputBorder(),
+                  isDense: true,
+                ),
+                items: cf.options.map((o) => DropdownMenuItem(value: o, child: Text(o))).toList(),
+                onChanged: (_) {},
+              )
+            : TextFormField(
+                readOnly: true,
+                decoration: InputDecoration(
+                  labelText: cf.label,
+                  border: const OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+      );
+    }
+
+    // Fallback: unknown key
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: TextFormField(
+        readOnly: true,
+        decoration: InputDecoration(
+          labelText: key,
+          border: const OutlineInputBorder(),
+          isDense: true,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildItemRow(Map<String, dynamic> item, int itemIndex) {
+    final label = (item['label'] ?? 'Item').toString();
+    final description = item['description']?.toString() ?? '';
+    final isRequired = item['isRequired'] == true;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 24,
+            height: 24,
+            margin: const EdgeInsets.only(right: 10, top: 2),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.black.withValues(alpha: 0.06),
+            ),
+            child: Center(
+              child: Text(
+                '${itemIndex + 1}',
+                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Colors.black54),
+              ),
+            ),
+          ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                    ),
+                    if (isRequired)
+                      Container(
+                        margin: const EdgeInsets.only(left: 6),
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.red.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: const Text(
+                          'Required',
+                          style: TextStyle(fontSize: 10, color: Colors.red, fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                  ],
+                ),
+                if (description.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(description, style: const TextStyle(fontSize: 12, color: Colors.black45)),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

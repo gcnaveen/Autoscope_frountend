@@ -459,6 +459,7 @@ import 'package:flutter/material.dart';
 
 import 'web_camera_capture_web.dart';
 import 'web_video_capture_web.dart';
+import '../top_snackbar.dart';
 
 typedef UploadFn = Future<String> Function({
   required Uint8List bytes,
@@ -531,7 +532,7 @@ class _MediaUploaderState extends State<MediaUploader> {
 
   void _toast(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    showTopSnack(context, msg);
   }
 
   String _normalizeCt(String raw) => normalizeContentType(raw);

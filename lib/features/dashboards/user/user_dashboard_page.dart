@@ -1374,6 +1374,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../shared/app_shell.dart';
 import '../../../services/service_locator.dart';
+import '../../shared/top_snackbar.dart';
 
 class UserDashboardPage extends StatefulWidget {
   const UserDashboardPage({super.key});
@@ -1464,9 +1465,7 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
 
     if (inspId.isEmpty) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Inspection report not available yet.')),
-      );
+      showTopSnack(context, 'Inspection report not available yet.', variant: 'warning');
       return;
     }
 

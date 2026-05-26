@@ -80,11 +80,8 @@ class _UsersPageState extends State<UsersPage> {
 
     return AppShell(
       title: 'Users',
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1200),
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
             children: [
               if (!isMobile)
                 Row(
@@ -223,8 +220,6 @@ class _UsersPageState extends State<UsersPage> {
               ),
             ],
           ),
-        ),
-      ),
     );
   }
 }
@@ -266,24 +261,44 @@ class _UserCard extends StatelessWidget {
 
     if (!isMobile) {
       return Padding(
-        padding: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.only(bottom: 8),
         child: Card(
           elevation: 0,
-          color: Colors.black.withOpacity(0.02),
-          child: ListTile(
-            leading: CircleAvatar(
-              backgroundColor: const Color(0xFF1E5EFF).withOpacity(0.10),
-              foregroundColor: const Color(0xFF1E5EFF),
-              child: const Icon(Icons.person),
-            ),
-            title: Text(name, style: const TextStyle(fontWeight: FontWeight.w900)),
-            subtitle: Text('${email.isEmpty ? '—' : email}\n${phone.isEmpty ? '—' : phone}'),
-            isThreeLine: true,
-            trailing: Wrap(
-              spacing: 10,
-              crossAxisAlignment: WrapCrossAlignment.center,
+          color: Colors.black.withValues(alpha: 0.02),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
               children: [
+                CircleAvatar(
+                  backgroundColor: const Color(0xFF1E5EFF).withValues(alpha: 0.10),
+                  foregroundColor: const Color(0xFF1E5EFF),
+                  child: const Icon(Icons.person),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 3,
+                  child: Text(name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w900)),
+                ),
+                Expanded(
+                  flex: 4,
+                  child: Text(email.isEmpty ? '—' : email,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.black54)),
+                ),
+                Expanded(
+                  flex: 2,
+                  child: Text(phone.isEmpty ? '—' : phone,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.black54)),
+                ),
+                const SizedBox(width: 12),
                 statusChip(),
+                const SizedBox(width: 8),
                 IconButton(
                   tooltip: 'View',
                   onPressed: onView,

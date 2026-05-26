@@ -152,6 +152,7 @@ class DropdownConfigService {
   // ── In-memory cache (cleared on logout) ────────────────────────────────────
 
   Map<String, List<String>>? _dropdownCache;
+  Map<String, String>? _statusCache;   // camelKey → 'active' | 'inactive'
   List<CustomField>? _customFieldsCache;
 
   // ── Fetch from API ─────────────────────────────────────────────────────────
@@ -168,11 +169,17 @@ class DropdownConfigService {
     return _customFieldsCache!;
   }
 
+  /// Whether a field (by camelCase key) is active. Defaults to true if unknown.
+  bool isActive(String camelKey) =>
+      (_statusCache?[camelKey] ?? 'active') == 'active';
+
+  /// Full status map — used by the configure page to render toggles.
+  Map<String, String> get statusMap => Map.unmodifiable(_statusCache ?? {});
+
   Future<void> _fetchFromApi() async {
     try {
       final res = await apiClient.getJson(_getPath);
 
-      // Support both { data: { configuredInputs: {...} } } and { configuredInputs: {...} }
       Map? rawInputs;
       if (res is Map) {
         final data = res['data'];
@@ -181,23 +188,40 @@ class DropdownConfigService {
       }
 
       if (rawInputs != null) {
-        final result = <String, List<String>>{};
+        final optionsResult = <String, List<String>>{};
+        final statusResult  = <String, String>{};
+
         for (final e in rawInputs.entries) {
-          // API key is the display label e.g. "Grade / Variant" → camelCase "gradeVariant"
           final camelKey = _labelToKey[e.key.toString()] ?? e.key.toString();
-          if (e.value is List) {
-            result[camelKey] = (e.value as List).map((x) => x.toString()).toList();
+          final fieldData = e.value;
+
+          if (fieldData is Map) {
+            // New format: { options: [...], status: 'active' }
+            final opts = fieldData['options'];
+            if (opts is List) {
+              optionsResult[camelKey] = opts.map((x) => x.toString()).toList();
+            }
+            statusResult[camelKey] = (fieldData['status'] ?? 'active').toString();
+          } else if (fieldData is List) {
+            // Legacy flat format
+            optionsResult[camelKey] = fieldData.map((x) => x.toString()).toList();
+            statusResult[camelKey] = 'active';
           }
         }
+
         for (final k in defaults.keys) {
-          result.putIfAbsent(k, () => List<String>.from(defaults[k]!));
+          optionsResult.putIfAbsent(k, () => List<String>.from(defaults[k]!));
+          statusResult.putIfAbsent(k, () => 'active');
         }
-        _dropdownCache = result;
+
+        _dropdownCache = optionsResult;
+        _statusCache   = statusResult;
       } else {
         _dropdownCache = _copyDefaults();
+        _statusCache   = {for (final k in defaults.keys) k: 'active'};
       }
 
-      // Custom fields — under a separate key if the backend supports them
+      // Custom fields
       final rawFields = (res is Map)
           ? ((res['data'] is Map ? res['data']['customFields'] : null) ?? res['customFields'])
           : null;
@@ -212,6 +236,7 @@ class DropdownConfigService {
       }
     } catch (_) {
       _dropdownCache ??= _copyDefaults();
+      _statusCache   ??= {for (final k in defaults.keys) k: 'active'};
       _customFieldsCache ??= [];
     }
   }
@@ -228,12 +253,20 @@ class DropdownConfigService {
     await _patchApi();
   }
 
+  Future<void> setStatus(String camelKey, String status) async {
+    _statusCache ??= {for (final k in defaults.keys) k: 'active'};
+    _statusCache![camelKey] = status;
+    await _patchApi();
+  }
+
   Future<void> _patchApi() async {
-    // Convert camelCase keys back to display labels for the API
     final configuredInputs = <String, dynamic>{};
     for (final e in (_dropdownCache ?? {}).entries) {
       final label = fieldLabels[e.key] ?? e.key;
-      configuredInputs[label] = e.value;
+      configuredInputs[label] = {
+        'options': e.value,
+        'status': _statusCache?[e.key] ?? 'active',
+      };
     }
     await apiClient.patchJson(_patchPath, {
       'configuredInputs': configuredInputs,
@@ -267,6 +300,7 @@ class DropdownConfigService {
 
   void clearCache() {
     _dropdownCache = null;
+    _statusCache = null;
     _customFieldsCache = null;
   }
 

@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 
 import '../../shared/app_shell.dart';
 import '../../../services/service_locator.dart';
+import '../../shared/top_snackbar.dart';
 
 const String kCarTopDamageAsset = 'assets/images/car_views/top.jpg';
 
@@ -871,9 +872,7 @@ class _ReportViewState extends State<_ReportView> {
     if (_viewerOpen) _closeViewer();
 
     if (!kIsWeb) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('PDF download is available on Web.')),
-      );
+      showTopSnack(context, 'PDF download is available on Web.', variant: 'warning');
       return;
     }
 
@@ -896,9 +895,7 @@ class _ReportViewState extends State<_ReportView> {
 
       html.Url.revokeObjectUrl(url);
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('PDF download failed: $e')),
-      );
+      if (mounted) showTopSnack(context, 'PDF download failed: $e', variant: 'error');
     }
   }
 }
@@ -952,17 +949,13 @@ class _ReviewDialogState extends State<_ReviewDialog> {
       if (ok) {
         widget.onSubmitted();
         Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Thanks! Your review is submitted for approval.')),
-        );
+        showTopSnack(context, 'Thanks! Your review is submitted for approval.', variant: 'success');
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Submit failed: ${res['message'] ?? 'Unknown error'}')),
-        );
+        showTopSnack(context, 'Submit failed: ${res['message'] ?? 'Unknown error'}', variant: 'error');
       }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Submit failed: $e')));
+      showTopSnack(context, 'Submit failed: $e', variant: 'error');
     } finally {
       if (mounted) setState(() => _busy = false);
     }

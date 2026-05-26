@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'dart:html' as html;
 
 import 'package:flutter/material.dart';
+import '../top_snackbar.dart';
 
 import '../../../services/service_locator.dart';
 import 'web_camera_capture_web.dart';
@@ -59,7 +60,7 @@ class _ImageUploaderState extends State<ImageUploader> {
 
   void _toast(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    showTopSnack(context, msg);
   }
 
   Future<List<html.File>> _openPicker() async {

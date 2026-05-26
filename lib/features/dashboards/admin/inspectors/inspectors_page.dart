@@ -75,11 +75,8 @@ class _InspectorsPageState extends State<InspectorsPage> {
 
     return AppShell(
       title: 'Inspectors',
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1200),
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
             children: [
               if (!isMobile)
                 Row(
@@ -224,8 +221,6 @@ class _InspectorsPageState extends State<InspectorsPage> {
               ),
             ],
           ),
-        ),
-      ),
     );
   }
 }
@@ -251,39 +246,59 @@ class _InspectorCard extends StatelessWidget {
     final phone = (u.phone ?? '').trim();
 
     if (!isMobile) {
-      // Desktop: keep old ListTile look
       return Padding(
-        padding: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.only(bottom: 8),
         child: Card(
           elevation: 0,
-          color: Colors.black.withOpacity(0.02),
-          child: ListTile(
-            leading: CircleAvatar(
-              backgroundColor: const Color(0xFF1E5EFF).withOpacity(0.10),
-              foregroundColor: const Color(0xFF1E5EFF),
-              child: const Icon(Icons.badge_outlined),
-            ),
-            title: Text(u.fullName, style: const TextStyle(fontWeight: FontWeight.w900)),
-            subtitle: Text('$email\n${phone.isEmpty ? '-' : phone}'),
-            isThreeLine: true,
-            trailing: Wrap(
-              spacing: 10,
-              crossAxisAlignment: WrapCrossAlignment.center,
+          color: Colors.black.withValues(alpha: 0.02),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
               children: [
+                CircleAvatar(
+                  backgroundColor: const Color(0xFF1E5EFF).withValues(alpha: 0.10),
+                  foregroundColor: const Color(0xFF1E5EFF),
+                  child: const Icon(Icons.badge_outlined),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 3,
+                  child: Text(u.fullName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w900)),
+                ),
+                Expanded(
+                  flex: 4,
+                  child: Text(email.isEmpty ? '—' : email,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.black54)),
+                ),
+                Expanded(
+                  flex: 2,
+                  child: Text(phone.isEmpty ? '—' : phone,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.black54)),
+                ),
+                const SizedBox(width: 12),
                 Chip(
                   label: Text(assigned ? 'assigned' : 'not assigned'),
-                  backgroundColor: assigned ? Colors.purple.withOpacity(0.12) : Colors.grey.withOpacity(0.12),
+                  backgroundColor: assigned ? Colors.purple.withValues(alpha: 0.12) : Colors.grey.withValues(alpha: 0.12),
                   side: BorderSide(
-                    color: assigned ? Colors.purple.withOpacity(0.20) : Colors.grey.withOpacity(0.20),
+                    color: assigned ? Colors.purple.withValues(alpha: 0.20) : Colors.grey.withValues(alpha: 0.20),
                   ),
                 ),
+                const SizedBox(width: 8),
                 Chip(
                   label: Text(status),
-                  backgroundColor: isAvailable ? Colors.green.withOpacity(0.12) : Colors.orange.withOpacity(0.12),
+                  backgroundColor: isAvailable ? Colors.green.withValues(alpha: 0.12) : Colors.orange.withValues(alpha: 0.12),
                   side: BorderSide(
-                    color: isAvailable ? Colors.green.withOpacity(0.20) : Colors.orange.withOpacity(0.20),
+                    color: isAvailable ? Colors.green.withValues(alpha: 0.20) : Colors.orange.withValues(alpha: 0.20),
                   ),
                 ),
+                const SizedBox(width: 8),
                 FilledButton.tonal(onPressed: onManage, child: const Text('Manage')),
               ],
             ),

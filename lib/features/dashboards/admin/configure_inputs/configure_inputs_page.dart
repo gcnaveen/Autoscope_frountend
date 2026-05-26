@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import '../../../../services/dropdown_config_service.dart';
 import '../../../../services/service_locator.dart';
 import '../../../shared/app_shell.dart';
+import '../../../shared/top_snackbar.dart';
 
 class _UpperCaseFormatter extends TextInputFormatter {
   @override
@@ -27,10 +28,32 @@ class ConfigureInputsPage extends StatefulWidget {
 
 class _ConfigureInputsPageState extends State<ConfigureInputsPage> {
   Map<String, List<String>>? _config;
+  Map<String, String> _statusMap = {};
   List<CustomField> _customFields = [];
   bool _loading = true;
   bool _saving = false;
   final Map<String, TextEditingController> _addCtrls = {};
+
+  // ── Search + filter state ───────────────────────────────────────────────────
+  final _searchCtrl = TextEditingController();
+  String _searchQuery = '';
+  String _statusFilter = 'all'; // 'all' | 'active' | 'inactive'
+
+  List<(String, String)> get _filteredBuiltIn => _fields.where((field) {
+    final key   = field.$1;
+    final label = field.$2;
+    final matchesSearch  = _searchQuery.isEmpty ||
+        label.toLowerCase().contains(_searchQuery.toLowerCase());
+    final matchesStatus  = _statusFilter == 'all' ||
+        (_statusMap[key] ?? 'active') == _statusFilter;
+    return matchesSearch && matchesStatus;
+  }).toList();
+
+  List<CustomField> get _filteredCustom => _searchQuery.isEmpty
+      ? _customFields
+      : _customFields
+          .where((f) => f.label.toLowerCase().contains(_searchQuery.toLowerCase()))
+          .toList();
 
   static const _fields = [
     ('gradeVariant', 'Grade / Variant'),
@@ -61,6 +84,7 @@ class _ConfigureInputsPageState extends State<ConfigureInputsPage> {
 
   @override
   void dispose() {
+    _searchCtrl.dispose();
     for (final c in _addCtrls.values) c.dispose();
     super.dispose();
   }
@@ -71,6 +95,7 @@ class _ConfigureInputsPageState extends State<ConfigureInputsPage> {
     if (!mounted) return;
     setState(() {
       _config = {for (final e in config.entries) e.key: List<String>.from(e.value)};
+      _statusMap = Map<String, String>.from(dropdownConfigService.statusMap);
       _customFields = custom;
       _loading = false;
     });
@@ -84,11 +109,17 @@ class _ConfigureInputsPageState extends State<ConfigureInputsPage> {
     try {
       await dropdownConfigService.save(_config!);
       dropdownConfigService.clearCache();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Saved'), duration: Duration(seconds: 1)),
-        );
-      }
+      if (mounted) showTopSnack(context, 'Saved', variant: 'success');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _setStatus(String key, String status) async {
+    setState(() => _statusMap[key] = status);
+    setState(() => _saving = true);
+    try {
+      await dropdownConfigService.setStatus(key, status);
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -98,15 +129,11 @@ class _ConfigureInputsPageState extends State<ConfigureInputsPage> {
     final ctrl = _addCtrls[key]!;
     final text = ctrl.text.trim().toUpperCase();
     if (text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Option cannot be empty')),
-      );
+      showTopSnack(context, 'Option cannot be empty', variant: 'warning');
       return;
     }
     if (_config![key]!.contains(text)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('"$text" already exists')),
-      );
+      showTopSnack(context, '"$text" already exists', variant: 'warning');
       return;
     }
     setState(() {
@@ -154,11 +181,7 @@ class _ConfigureInputsPageState extends State<ConfigureInputsPage> {
     try {
       await dropdownConfigService.saveCustomFields(_customFields);
       dropdownConfigService.clearCustomFieldsCache();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Saved'), duration: Duration(seconds: 1)),
-        );
-      }
+      if (mounted) showTopSnack(context, 'Saved', variant: 'success');
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -171,7 +194,7 @@ class _ConfigureInputsPageState extends State<ConfigureInputsPage> {
       builder: (ctx) => _FieldFormDialog(existing: null),
     ).then((field) {
       if (field == null || !mounted) return;
-      setState(() => _customFields = [..._customFields, field]);
+      setState(() => _customFields = [field, ..._customFields]);
       _saveCustomFields();
     });
   }
@@ -214,76 +237,120 @@ class _ConfigureInputsPageState extends State<ConfigureInputsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final w = MediaQuery.sizeOf(context).width;
+    final isMobile = w < 720;
+
     return AppShell(
       title: 'Configure Inputs',
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 820),
-          child: _loading
-              ? const Center(child: CircularProgressIndicator())
-              : ListView(
-                  padding: const EdgeInsets.fromLTRB(18, 18, 18, 40),
-                  children: [
-                    _InfoCard(saving: _saving),
-                    const SizedBox(height: 16),
+      child: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : ListView(
+              padding: const EdgeInsets.fromLTRB(18, 18, 18, 40),
+              children: [
+                _InfoCard(saving: _saving),
+                const SizedBox(height: 12),
 
-                    // ── Built-in dropdown fields ───────────────────────────
-                    for (final (key, label) in _fields) ...[
-                      _DropdownFieldCard(
-                        label: label,
-                        options: _config![key] ?? [],
-                        addCtrl: _addCtrls[key]!,
-                        onAdd: () => _addOption(key),
-                        onRemove: (i) => _removeOption(key, i),
-                        onReset: () => _resetToDefault(key),
-                      ),
-                      const SizedBox(height: 12),
-                    ],
+                _SearchBar(
+                  controller: _searchCtrl,
+                  query: _searchQuery,
+                  statusFilter: _statusFilter,
+                  totalCount: _fields.length + _customFields.length,
+                  filteredCount: _filteredBuiltIn.length + _filteredCustom.length,
+                  onChanged: (v) => setState(() => _searchQuery = v),
+                  onClear: () => setState(() {
+                    _searchCtrl.clear();
+                    _searchQuery = '';
+                  }),
+                  onStatusFilter: (s) => setState(() => _statusFilter = s),
+                ),
+                const SizedBox(height: 20),
 
-                    // ── Custom fields ──────────────────────────────────────
-                    const SizedBox(height: 8),
-                    _SectionHeader(
-                      title: 'Custom Fields',
-                      subtitle: 'Add new fields that appear in the inspection form.',
-                      trailing: FilledButton.icon(
-                        onPressed: _addCustomField,
-                        icon: const Icon(Icons.add, size: 18),
-                        label: const Text('Add New Field'),
+                // ── Custom fields ──────────────────────────────────────────
+                _SectionHeader(
+                  title: 'Custom Fields',
+                  subtitle: 'Add new fields that appear in the inspection form.',
+                  trailing: FilledButton.icon(
+                    onPressed: _addCustomField,
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('Add New Field'),
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                if (_customFields.isEmpty)
+                  Card(
+                    elevation: 0,
+                    color: Colors.black.withValues(alpha: 0.02),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      side: BorderSide(color: Colors.black.withValues(alpha: 0.06)),
+                    ),
+                    child: const Padding(
+                      padding: EdgeInsets.all(20),
+                      child: Center(
+                        child: Text(
+                          'No custom fields yet. Tap "Add New Field" to create one.',
+                          style: TextStyle(color: Colors.black45),
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 12),
-
-                    if (_customFields.isEmpty)
-                      Card(
-                        elevation: 0,
-                        color: Colors.black.withValues(alpha: 0.02),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          side: BorderSide(color: Colors.black.withValues(alpha: 0.06)),
-                        ),
-                        child: const Padding(
-                          padding: EdgeInsets.all(20),
-                          child: Center(
-                            child: Text(
-                              'No custom fields yet. Tap "Add New Field" to create one.',
-                              style: TextStyle(color: Colors.black45),
-                            ),
-                          ),
-                        ),
-                      )
-                    else
-                      for (final f in _customFields) ...[
-                        _CustomFieldCard(
-                          field: f,
-                          onEdit: () => _editCustomField(f),
-                          onDelete: () => _deleteCustomField(f.id),
-                        ),
-                        const SizedBox(height: 10),
-                      ],
+                  )
+                else if (_filteredCustom.isEmpty)
+                  _EmptySearch(message: 'No custom fields match "$_searchQuery".')
+                else
+                  for (final f in _filteredCustom) ...[
+                    _CustomFieldCard(
+                      field: f,
+                      onEdit: () => _editCustomField(f),
+                      onDelete: () => _deleteCustomField(f.id),
+                    ),
+                    const SizedBox(height: 10),
                   ],
+
+                // ── Built-in dropdown fields ───────────────────────────────
+                const SizedBox(height: 20),
+                _SectionHeader(
+                  title: 'Dropdown Fields',
+                  subtitle: 'Configure options for each dropdown shown in the inspection form.',
+                  trailing: const SizedBox.shrink(),
                 ),
-        ),
-      ),
+                const SizedBox(height: 12),
+
+                if (_filteredBuiltIn.isEmpty && (_searchQuery.isNotEmpty || _statusFilter != 'all'))
+                  _EmptySearch(message: 'No dropdown fields match your search or filter.')
+                else
+                  LayoutBuilder(
+                    builder: (ctx, constraints) {
+                      final cols = isMobile ? 1 : constraints.maxWidth > 1100 ? 3 : 2;
+                      const gap = 12.0;
+                      final itemWidth =
+                          (constraints.maxWidth - (cols - 1) * gap) / cols;
+                      return Wrap(
+                        spacing: gap,
+                        runSpacing: gap,
+                        children: [
+                          for (final (key, label) in _filteredBuiltIn)
+                            SizedBox(
+                              width: itemWidth,
+                              height: 230,
+                              child: _DropdownFieldCard(
+                                label: label,
+                                options: _config![key] ?? [],
+                                status: _statusMap[key] ?? 'active',
+                                addCtrl: _addCtrls[key]!,
+                                onAdd: () => _addOption(key),
+                                onRemove: (i) => _removeOption(key, i),
+                                onReset: () => _resetToDefault(key),
+                                onStatusChanged: (active) =>
+                                    _setStatus(key, active ? 'active' : 'inactive'),
+                              ),
+                            ),
+                        ],
+                      );
+                    },
+                  ),
+              ],
+            ),
     );
   }
 }
@@ -369,101 +436,205 @@ class _InfoCard extends StatelessWidget {
 class _DropdownFieldCard extends StatelessWidget {
   final String label;
   final List<String> options;
+  final String status;
   final TextEditingController addCtrl;
   final VoidCallback onAdd;
   final void Function(int index) onRemove;
   final VoidCallback onReset;
+  final void Function(bool active) onStatusChanged;
 
   const _DropdownFieldCard({
     required this.label,
     required this.options,
+    required this.status,
     required this.addCtrl,
     required this.onAdd,
     required this.onRemove,
     required this.onReset,
+    required this.onStatusChanged,
   });
 
   @override
   Widget build(BuildContext context) {
+    final isActive = status == 'active';
+
     return Card(
       elevation: 0,
-      color: Colors.black.withValues(alpha: 0.02),
+      clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: Colors.black.withValues(alpha: 0.06)),
+        side: BorderSide(color: Colors.black.withValues(alpha: 0.08)),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── Header ────────────────────────────────────────────────────
+          Container(
+            padding: const EdgeInsets.fromLTRB(14, 10, 6, 10),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.025),
+              border: Border(
+                bottom: BorderSide(color: Colors.black.withValues(alpha: 0.06)),
+              ),
+            ),
+            child: Row(
               children: [
-                Expanded(
-                  child: Text(label, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15)),
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: isActive ? Colors.green.shade500 : Colors.black26,
+                  ),
                 ),
-                TextButton.icon(
-                  onPressed: onReset,
-                  icon: const Icon(Icons.restore, size: 16),
-                  label: const Text('Reset', style: TextStyle(fontSize: 12)),
-                  style: TextButton.styleFrom(
-                    foregroundColor: Colors.orange.shade700,
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+                  ),
+                ),
+                Tooltip(
+                  message: isActive ? 'Visible in form' : 'Hidden from form',
+                  child: Transform.scale(
+                    scale: 0.78,
+                    alignment: Alignment.centerRight,
+                    child: Switch(
+                      value: isActive,
+                      onChanged: onStatusChanged,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  ),
+                ),
+                Tooltip(
+                  message: 'Reset to defaults',
+                  child: IconButton(
+                    onPressed: onReset,
+                    icon: Icon(Icons.restore, size: 16, color: Colors.orange.shade600),
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.all(6),
+                    constraints: const BoxConstraints(),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 10),
-            if (options.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 4),
-                child: Text('No options. Add one below.', style: TextStyle(color: Colors.black38)),
-              )
-            else
-              Wrap(
-                spacing: 8, runSpacing: 8,
-                children: [
-                  for (int i = 0; i < options.length; i++)
-                    Chip(
-                      label: Text(options[i],
-                          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-                      deleteIcon: const Icon(Icons.close, size: 15),
-                      onDeleted: () => onRemove(i),
-                      backgroundColor: const Color(0xFF1E5EFF).withValues(alpha: 0.07),
-                      side: BorderSide(color: const Color(0xFF1E5EFF).withValues(alpha: 0.18)),
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
+          ),
+
+          // ── Options (scrollable, fills available space) ────────────────
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+              child: options.isEmpty
+                  ? const Text(
+                      'No options yet.',
+                      style: TextStyle(color: Colors.black38, fontSize: 12),
+                    )
+                  : Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        for (int i = 0; i < options.length; i++)
+                          _OptionChip(
+                            label: options[i],
+                            onDelete: () => onRemove(i),
+                          ),
+                      ],
                     ),
-                ],
+            ),
+          ),
+
+          // ── Add input ──────────────────────────────────────────────────
+          Container(
+            padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+            decoration: BoxDecoration(
+              border: Border(
+                top: BorderSide(color: Colors.black.withValues(alpha: 0.06)),
               ),
-            const SizedBox(height: 14),
-            Row(
+            ),
+            child: Row(
               children: [
                 Expanded(
                   child: TextField(
                     controller: addCtrl,
+                    style: const TextStyle(fontSize: 13),
                     inputFormatters: [
                       _UpperCaseFormatter(),
                       LengthLimitingTextInputFormatter(60),
                     ],
-                    decoration: const InputDecoration(
-                      hintText: 'New option…',
-                      border: OutlineInputBorder(),
+                    decoration: InputDecoration(
+                      hintText: 'Add option…',
+                      hintStyle: const TextStyle(fontSize: 13, color: Colors.black38),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
                       isDense: true,
-                      contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      contentPadding:
+                          const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
                     ),
                     onSubmitted: (_) => onAdd(),
                   ),
                 ),
                 const SizedBox(width: 8),
-                FilledButton.icon(
-                  onPressed: onAdd,
-                  icon: const Icon(Icons.add, size: 18),
-                  label: const Text('Add'),
+                SizedBox(
+                  height: 38,
+                  child: FilledButton(
+                    onPressed: onAdd,
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    child: const Icon(Icons.add, size: 18),
+                  ),
                 ),
               ],
             ),
-          ],
-        ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Option chip ───────────────────────────────────────────────────────────
+
+class _OptionChip extends StatelessWidget {
+  final String label;
+  final VoidCallback onDelete;
+
+  const _OptionChip({required this.label, required this.onDelete});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(9, 4, 6, 4),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E5EFF).withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: const Color(0xFF1E5EFF).withValues(alpha: 0.20)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF1A1A1A),
+            ),
+          ),
+          const SizedBox(width: 5),
+          GestureDetector(
+            onTap: onDelete,
+            child: const Icon(
+              Icons.close,
+              size: 13,
+              color: Colors.black38,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -481,93 +652,115 @@ class _CustomFieldCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final sectionLabel = sectionLabels[field.section] ?? field.section;
+    final isDropdown = field.type == 'dropdown';
+
     return Card(
       elevation: 0,
-      color: Colors.black.withValues(alpha: 0.02),
+      clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: Colors.black.withValues(alpha: 0.06)),
+        side: BorderSide(color: Colors.black.withValues(alpha: 0.08)),
       ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: 36, height: 36,
-              decoration: BoxDecoration(
-                color: const Color(0xFF1E5EFF).withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Icon(
-                field.type == 'dropdown' ? Icons.arrow_drop_down_circle_outlined : Icons.text_fields_outlined,
-                color: const Color(0xFF1E5EFF), size: 20,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.fromLTRB(14, 10, 6, 10),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.025),
+              border: Border(
+                bottom: BorderSide(color: Colors.black.withValues(alpha: 0.06)),
               ),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Text(field.label,
-                          style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15)),
-                      const SizedBox(width: 8),
-                      if (field.required)
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: Colors.red.withValues(alpha: 0.10),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: const Text('Required',
-                              style: TextStyle(fontSize: 11, color: Colors.red, fontWeight: FontWeight.w700)),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${field.type == 'dropdown' ? 'Dropdown' : 'Text'} · $sectionLabel',
-                    style: const TextStyle(color: Colors.black54, fontSize: 13),
-                  ),
-                  if (field.type == 'dropdown' && field.options.isNotEmpty) ...[
-                    const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 6, runSpacing: 4,
-                      children: field.options
-                          .map((o) => Chip(
-                                label: Text(o,
-                                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                                padding: EdgeInsets.zero,
-                                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                backgroundColor:
-                                    const Color(0xFF1E5EFF).withValues(alpha: 0.06),
-                                side: BorderSide(
-                                    color: const Color(0xFF1E5EFF).withValues(alpha: 0.15)),
-                              ))
-                          .toList(),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            Column(
+            child: Row(
               children: [
+                Container(
+                  width: 28, height: 28,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E5EFF).withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(7),
+                  ),
+                  child: Icon(
+                    isDropdown ? Icons.arrow_drop_down_circle_outlined : Icons.text_fields_outlined,
+                    color: const Color(0xFF1E5EFF), size: 16,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    field.label,
+                    style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+                  ),
+                ),
+                if (field.required)
+                  Container(
+                    margin: const EdgeInsets.only(right: 6),
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.red.withValues(alpha: 0.10),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Text('Required',
+                        style: TextStyle(fontSize: 11, color: Colors.red, fontWeight: FontWeight.w700)),
+                  ),
                 IconButton(
-                  icon: const Icon(Icons.edit_outlined, size: 20),
+                  icon: const Icon(Icons.edit_outlined, size: 16),
                   onPressed: onEdit,
                   tooltip: 'Edit',
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.all(6),
+                  constraints: const BoxConstraints(),
                 ),
                 IconButton(
-                  icon: const Icon(Icons.delete_outline, size: 20, color: Colors.red),
+                  icon: const Icon(Icons.delete_outline, size: 16, color: Colors.red),
                   onPressed: onDelete,
                   tooltip: 'Delete',
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.all(6),
+                  constraints: const BoxConstraints(),
                 ),
               ],
             ),
-          ],
-        ),
+          ),
+
+          // Body
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${isDropdown ? 'Dropdown' : 'Text input'} · $sectionLabel',
+                  style: const TextStyle(color: Colors.black45, fontSize: 12),
+                ),
+                if (isDropdown && field.options.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: field.options
+                        .map((o) => Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF1E5EFF).withValues(alpha: 0.07),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                    color: const Color(0xFF1E5EFF).withValues(alpha: 0.20)),
+                              ),
+                              child: Text(o,
+                                  style: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                      color: Color(0xFF1A1A1A))),
+                            ))
+                        .toList(),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -613,15 +806,11 @@ class _FieldFormDialogState extends State<_FieldFormDialog> {
   void _addOption() {
     final t = _optionCtrl.text.trim().toUpperCase();
     if (t.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Option cannot be empty')),
-      );
+      showTopSnack(context, 'Option cannot be empty', variant: 'warning');
       return;
     }
     if (_options.contains(t)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('"$t" already exists')),
-      );
+      showTopSnack(context, '"$t" already exists', variant: 'warning');
       return;
     }
     setState(() => _options.add(t));
@@ -631,9 +820,7 @@ class _FieldFormDialogState extends State<_FieldFormDialog> {
   void _submit() {
     if (!_formKey.currentState!.validate()) return;
     if (_type == 'dropdown' && _options.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Add at least one option for a dropdown field')),
-      );
+      showTopSnack(context, 'Add at least one option for a dropdown field', variant: 'warning');
       return;
     }
     final id = widget.existing?.id ?? DateTime.now().millisecondsSinceEpoch.toString();
@@ -802,6 +989,133 @@ class _FieldFormDialogState extends State<_FieldFormDialog> {
                 ],
               ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Search + filter bar ───────────────────────────────────────────────────
+
+class _SearchBar extends StatelessWidget {
+  final TextEditingController controller;
+  final String query;
+  final String statusFilter;
+  final int totalCount;
+  final int filteredCount;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onClear;
+  final ValueChanged<String> onStatusFilter;
+
+  const _SearchBar({
+    required this.controller,
+    required this.query,
+    required this.statusFilter,
+    required this.totalCount,
+    required this.filteredCount,
+    required this.onChanged,
+    required this.onClear,
+    required this.onStatusFilter,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isFiltered = query.isNotEmpty || statusFilter != 'all';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          controller: controller,
+          onChanged: onChanged,
+          decoration: InputDecoration(
+            hintText: 'Search fields…',
+            prefixIcon: const Icon(Icons.search, size: 20),
+            suffixIcon: query.isNotEmpty
+                ? IconButton(
+                    icon: const Icon(Icons.close, size: 18),
+                    onPressed: onClear,
+                    tooltip: 'Clear search',
+                  )
+                : null,
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+            isDense: true,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            for (final (value, label) in [
+              ('all', 'All'),
+              ('active', 'Active'),
+              ('inactive', 'Inactive'),
+            ])
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: FilterChip(
+                  label: Text(label),
+                  selected: statusFilter == value,
+                  onSelected: (_) => onStatusFilter(value),
+                  showCheckmark: false,
+                  selectedColor: const Color(0xFF1E5EFF).withValues(alpha: 0.12),
+                  side: BorderSide(
+                    color: statusFilter == value
+                        ? const Color(0xFF1E5EFF)
+                        : Colors.black.withValues(alpha: 0.15),
+                  ),
+                  labelStyle: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                    color: statusFilter == value
+                        ? const Color(0xFF1E5EFF)
+                        : Colors.black54,
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                ),
+              ),
+            const Spacer(),
+            if (isFiltered)
+              Text(
+                '$filteredCount of $totalCount fields',
+                style: const TextStyle(fontSize: 12, color: Colors.black45),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+// ─── Empty search state ────────────────────────────────────────────────────
+
+class _EmptySearch extends StatelessWidget {
+  final String message;
+  const _EmptySearch({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      elevation: 0,
+      color: Colors.black.withValues(alpha: 0.02),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: Colors.black.withValues(alpha: 0.06)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 20),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.search_off_rounded, size: 36, color: Colors.black.withValues(alpha: 0.2)),
+              const SizedBox(height: 10),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.black45, fontSize: 14),
+              ),
+            ],
           ),
         ),
       ),

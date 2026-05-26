@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../../../services/service_locator.dart';
 import 'web_video_pick_web.dart';
+import '../top_snackbar.dart';
 
 // ignore: avoid_web_libraries_in_flutter
 import 'dart:html' as html;
@@ -54,7 +55,7 @@ class _VideoUploaderState extends State<VideoUploader> {
 
   void _toast(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    showTopSnack(context, msg);
   }
 
   Future<void> _addVideo() async {

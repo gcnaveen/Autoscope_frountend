@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../../shared/app_shell.dart';
 import '../../../../services/service_locator.dart';
+import '../../../shared/top_snackbar.dart';
 
 class carDataPage extends StatefulWidget {
   const carDataPage({super.key});
@@ -54,9 +55,7 @@ class _carDataPage extends State<carDataPage> {
   }) async {
     if (!allowDelete) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cannot delete the last remaining template.')),
-      );
+      showTopSnack(context, 'Cannot delete the last remaining template.', variant: 'warning');
       return;
     }
 
@@ -84,7 +83,7 @@ class _carDataPage extends State<carDataPage> {
       _reload();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Delete failed: $e')));
+      showTopSnack(context, 'Delete failed: $e', variant: 'error');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -126,9 +125,7 @@ class _carDataPage extends State<carDataPage> {
     // --- Rule: if only 1 template, it can never become inactive ---
     if (total == 1 && newValue == false) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('At least one template must remain active.')),
-      );
+      showTopSnack(context, 'At least one template must remain active.', variant: 'warning');
       return;
     }
 
@@ -137,9 +134,7 @@ class _carDataPage extends State<carDataPage> {
       final activeCount = templates.where((x) => (x['isActive'] ?? false) == true).length;
       if (activeCount <= 1 && targetIsActive) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('At least one template must remain active.')),
-        );
+        showTopSnack(context, 'At least one template must remain active.', variant: 'warning');
         return;
       }
 
@@ -149,7 +144,7 @@ class _carDataPage extends State<carDataPage> {
         _reload();
       } catch (e) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Update failed: $e')));
+        showTopSnack(context, 'Update failed: $e', variant: 'error');
       } finally {
         if (mounted) setState(() => _busy = false);
       }
@@ -181,7 +176,7 @@ class _carDataPage extends State<carDataPage> {
         _reload();
       } catch (e) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Update failed: $e')));
+        showTopSnack(context, 'Update failed: $e', variant: 'error');
       } finally {
         if (mounted) setState(() => _busy = false);
       }
@@ -196,7 +191,7 @@ class _carDataPage extends State<carDataPage> {
         _reload();
       } catch (e) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Update failed: $e')));
+        showTopSnack(context, 'Update failed: $e', variant: 'error');
       } finally {
         if (mounted) setState(() => _busy = false);
       }
@@ -260,10 +255,7 @@ class _carDataPage extends State<carDataPage> {
           // delete rules
           final allowDelete = templates.length > 1;
 
-          return Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 1200),
-              child: ListView(
+          return ListView(
                 padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
                 children: [
                   Row(
@@ -322,9 +314,7 @@ class _carDataPage extends State<carDataPage> {
                                 : (bool v) async {
                                     // Hard block OFF if last active
                                     if (v == false && cannotTurnOff) {
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(content: Text('At least one template must remain active.')),
-                                      );
+                                      showTopSnack(context, 'At least one template must remain active.', variant: 'warning');
                                       return;
                                     }
 
@@ -413,8 +403,6 @@ class _carDataPage extends State<carDataPage> {
                     ),
                   ),
                 ],
-              ),
-            ),
           );
         },
       ),

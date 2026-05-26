@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../shared/app_shell.dart';
 import '../../../../services/service_locator.dart';
+import '../../../shared/top_snackbar.dart';
 import 'widgets/inspection_request_manage_dialog.dart';
 
 class InspectionRequestsPage extends StatefulWidget {
@@ -60,9 +61,7 @@ class _InspectionRequestsPageState extends State<InspectionRequestsPage> {
   void _openReport(_RequestRow r) {
     final id = (r.inspectionId ?? '').trim();
     if (id.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Inspection report not available yet.')),
-      );
+      showTopSnack(context, 'Inspection report not available yet.', variant: 'warning');
       return;
     }
     context.go('/dashboard/admin/inspections/$id/report');
@@ -75,10 +74,7 @@ class _InspectionRequestsPageState extends State<InspectionRequestsPage> {
 
     return AppShell(
       title: 'Inspection Requests',
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1200),
-          child: FutureBuilder<List<_RequestRow>>(
+      child: FutureBuilder<List<_RequestRow>>(
             key: ValueKey(_tick),
             future: _future,
             builder: (context, snap) {
@@ -175,8 +171,6 @@ class _InspectionRequestsPageState extends State<InspectionRequestsPage> {
               );
             },
           ),
-        ),
-      ),
     );
   }
 }

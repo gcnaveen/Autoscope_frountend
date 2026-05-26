@@ -9,10 +9,15 @@ class AppShell extends StatelessWidget {
   final String title;
   final Widget child;
 
+  /// If set, called before any breadcrumb navigation.
+  /// Return true to allow navigation, false to cancel.
+  final Future<bool> Function()? onBeforeNavigate;
+
   const AppShell({
     super.key,
     required this.title,
     required this.child,
+    this.onBeforeNavigate,
   });
 
   @override
@@ -28,6 +33,7 @@ class AppShell extends StatelessWidget {
           _BreadcrumbBar(
             location: loc,
             title: title,
+            onBeforeNavigate: onBeforeNavigate,
           ),
           // ✅ IMPORTANT: ListView/GridView pages must have bounded height
           Expanded(child: child),
@@ -40,10 +46,12 @@ class AppShell extends StatelessWidget {
 class _BreadcrumbBar extends StatelessWidget {
   final String location;
   final String title;
+  final Future<bool> Function()? onBeforeNavigate;
 
   const _BreadcrumbBar({
     required this.location,
     required this.title,
+    this.onBeforeNavigate,
   });
 
   String _roleHome(Role role) {
@@ -97,6 +105,27 @@ class _BreadcrumbBar extends StatelessWidget {
         crumbs.add(_Crumb('Checklist Templates', null, clickable: false));
         return crumbs;
       }
+      if (location == '/dashboard/admin/vehicle-inputs') {
+        crumbs.add(_Crumb('Admin', '/dashboard/admin', clickable: true));
+        crumbs.add(_Crumb('Vehicle Details Inputs', null, clickable: false));
+        return crumbs;
+      }
+      if (location == '/dashboard/admin/vehicle-catalog') {
+        crumbs.add(_Crumb('Admin', '/dashboard/admin', clickable: true));
+        crumbs.add(_Crumb('Vehicle Details Inputs',
+            '/dashboard/admin/vehicle-inputs',
+            clickable: true));
+        crumbs.add(_Crumb('Makes & Models', null, clickable: false));
+        return crumbs;
+      }
+      if (location == '/dashboard/admin/configure-inputs') {
+        crumbs.add(_Crumb('Admin', '/dashboard/admin', clickable: true));
+        crumbs.add(_Crumb('Vehicle Details Inputs',
+            '/dashboard/admin/vehicle-inputs',
+            clickable: true));
+        crumbs.add(_Crumb('Configured Inputs', null, clickable: false));
+        return crumbs;
+      }
 
       // user dashboard
       if (location == '/dashboard/user') {
@@ -141,13 +170,13 @@ class _BreadcrumbBar extends StatelessWidget {
       decoration: BoxDecoration(
         color: const Color(0xFFF7F9FC),
         border: Border(
-          bottom: BorderSide(color: Colors.black.withOpacity(0.06)),
+          bottom: BorderSide(color: Colors.black.withValues(alpha: 0.06)),
         ),
       ),
       child: Row(
         children: [
           for (int i = 0; i < crumbs.length; i++) ...[
-            _CrumbWidget(crumb: crumbs[i]),
+            _CrumbWidget(crumb: crumbs[i], onBeforeNavigate: onBeforeNavigate),
             if (i != crumbs.length - 1)
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 10),
@@ -170,8 +199,9 @@ class _Crumb {
 
 class _CrumbWidget extends StatelessWidget {
   final _Crumb crumb;
+  final Future<bool> Function()? onBeforeNavigate;
 
-  const _CrumbWidget({required this.crumb});
+  const _CrumbWidget({required this.crumb, this.onBeforeNavigate});
 
   @override
   Widget build(BuildContext context) {
@@ -184,7 +214,13 @@ class _CrumbWidget extends StatelessWidget {
 
     return InkWell(
       borderRadius: BorderRadius.circular(8),
-      onTap: () => context.go(crumb.path!),
+      onTap: () async {
+        if (onBeforeNavigate != null) {
+          final allow = await onBeforeNavigate!();
+          if (!allow) return;
+        }
+        if (context.mounted) context.go(crumb.path!);
+      },
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
         child: Text(

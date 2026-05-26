@@ -217,6 +217,13 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
   // "Other" text controllers for every configurable dropdown
   final Map<String, TextEditingController> _otherCtrls = {};
 
+  // Active status for each configurable dropdown field
+  Map<String, bool> _fieldActive = {
+    for (final k in DropdownConfigService.defaults.keys) k: true,
+  };
+
+  bool _isActive(String key) => _fieldActive[key] != false;
+
   // Custom fields defined by admin
   List<CustomField> _customFields = [];
   final Map<String, String> _customFieldValues = {};           // keyed by field.id
@@ -358,6 +365,10 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
           _customTextCtrls.putIfAbsent('${f.id}_other', () => TextEditingController());
         }
       }
+      _fieldActive = {
+        for (final k in DropdownConfigService.defaults.keys)
+          k: dropdownConfigService.isActive(k),
+      };
     });
   }
 
@@ -1666,18 +1677,19 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
               ),
             ],
 
-            const SizedBox(height: 12),
-
-            _dropWithOther(
-              label: 'Grade / Variant',
-              value: gradeVariantCtrl.text.isEmpty ? null : gradeVariantCtrl.text,
-              options: _gradeVariantOptions,
-              icon: Icons.badge_outlined,
-              hint: 'Select grade / variant',
-              otherCtrl: _otherCtrls['gradeVariant']!,
-              validator: (v) => v == null ? 'Grade / Variant is required' : null,
-              onChanged: (v) => setState(() => gradeVariantCtrl.text = v ?? ''),
-            ),
+            if (_isActive('gradeVariant')) ...[
+              const SizedBox(height: 12),
+              _dropWithOther(
+                label: 'Grade / Variant',
+                value: gradeVariantCtrl.text.isEmpty ? null : gradeVariantCtrl.text,
+                options: _gradeVariantOptions,
+                icon: Icons.badge_outlined,
+                hint: 'Select grade / variant',
+                otherCtrl: _otherCtrls['gradeVariant']!,
+                validator: (v) => v == null ? 'Grade / Variant is required' : null,
+                onChanged: (v) => setState(() => gradeVariantCtrl.text = v ?? ''),
+              ),
+            ],
 
             const SizedBox(height: 12),
 
@@ -1700,89 +1712,93 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
               validator: _yearValidator,
             ),
 
-            const SizedBox(height: 12),
-
-            _dropWithOther(
-              label: 'Cylinder Size',
-              value: cylinderSizeCtrl.text.isEmpty ? null : cylinderSizeCtrl.text,
-              options: _cylinderSizeOptions,
-              icon: Icons.settings_outlined,
-              hint: 'Select cylinder size',
-              otherCtrl: _otherCtrls['cylinderSize']!,
-              validator: (v) => v == null ? 'Cylinder Size is required' : null,
-              onChanged: (v) => setState(() => cylinderSizeCtrl.text = v ?? ''),
-            ),
-
-            const SizedBox(height: 12),
-
-            _dropWithOther(
-              label: 'Transmission',
-              value: transmissionCtrl.text.isEmpty ? null : transmissionCtrl.text,
-              options: _transmissionOptions,
-              icon: Icons.swap_horiz_outlined,
-              hint: 'Select transmission',
-              otherCtrl: _otherCtrls['transmission']!,
-              validator: (v) => v == null ? 'Transmission is required' : null,
-              onChanged: (v) => setState(() => transmissionCtrl.text = v ?? ''),
-            ),
-
-            const SizedBox(height: 12),
-
-            _dropWithOther(
-              label: 'Fuel Type',
-              value: fuelTypeCtrl.text.isEmpty ? null : fuelTypeCtrl.text,
-              options: _fuelTypeOptions,
-              icon: Icons.local_gas_station_outlined,
-              hint: 'Select fuel type',
-              otherCtrl: _otherCtrls['fuelType']!,
-              validator: (v) => v == null ? 'Fuel Type is required' : null,
-              onChanged: (v) => setState(() => fuelTypeCtrl.text = v ?? ''),
-            ),
-
-            const SizedBox(height: 12),
-
-            _dropWithOther(
-              label: 'Drive Train',
-              value: driveTrainCtrl.text.isEmpty ? null : driveTrainCtrl.text,
-              options: _driveTrainOptions,
-              icon: Icons.grid_on_outlined,
-              hint: 'Select drive train',
-              otherCtrl: _otherCtrls['driveTrain']!,
-              validator: (v) => v == null ? 'Drive Train is required' : null,
-              onChanged: (v) => setState(() => driveTrainCtrl.text = v ?? ''),
-            ),
-
-            const SizedBox(height: 12),
-
-            _dropField(
-              label: 'Specs',
-              value: specsCtrl.text.isEmpty ? null : specsCtrl.text,
-              options: [..._specsOptions, 'OTHER'],
-              icon: Icons.public_outlined,
-              hint: 'Select specs',
-              validator: (v) => v == null ? 'Specs is required' : null,
-              onChanged: (v) {
-                setState(() {
-                  specsCtrl.text = v ?? '';
-                  _specsIsOther = v == 'OTHER';
-                  if (!_specsIsOther) specsOtherCtrl.clear();
-                });
-              },
-            ),
-
-            if (_specsIsOther) ...[
+            if (_isActive('cylinderSize')) ...[
               const SizedBox(height: 12),
-              TextFormField(
-                controller: specsOtherCtrl,
-                autovalidateMode: AutovalidateMode.onUserInteraction,
-                inputFormatters: [LengthLimitingTextInputFormatter(40), _upper],
-                decoration: _dec(label: 'Other Specs', hint: 'ENTER SPECS', icon: Icons.edit_outlined),
-                validator: (v) {
-                  if (!_specsIsOther) return null;
-                  if (v == null || v.trim().isEmpty) return 'Other specs is required';
-                  return null;
+              _dropWithOther(
+                label: 'Cylinder Size',
+                value: cylinderSizeCtrl.text.isEmpty ? null : cylinderSizeCtrl.text,
+                options: _cylinderSizeOptions,
+                icon: Icons.settings_outlined,
+                hint: 'Select cylinder size',
+                otherCtrl: _otherCtrls['cylinderSize']!,
+                validator: (v) => v == null ? 'Cylinder Size is required' : null,
+                onChanged: (v) => setState(() => cylinderSizeCtrl.text = v ?? ''),
+              ),
+            ],
+
+            if (_isActive('transmission')) ...[
+              const SizedBox(height: 12),
+              _dropWithOther(
+                label: 'Transmission',
+                value: transmissionCtrl.text.isEmpty ? null : transmissionCtrl.text,
+                options: _transmissionOptions,
+                icon: Icons.swap_horiz_outlined,
+                hint: 'Select transmission',
+                otherCtrl: _otherCtrls['transmission']!,
+                validator: (v) => v == null ? 'Transmission is required' : null,
+                onChanged: (v) => setState(() => transmissionCtrl.text = v ?? ''),
+              ),
+            ],
+
+            if (_isActive('fuelType')) ...[
+              const SizedBox(height: 12),
+              _dropWithOther(
+                label: 'Fuel Type',
+                value: fuelTypeCtrl.text.isEmpty ? null : fuelTypeCtrl.text,
+                options: _fuelTypeOptions,
+                icon: Icons.local_gas_station_outlined,
+                hint: 'Select fuel type',
+                otherCtrl: _otherCtrls['fuelType']!,
+                validator: (v) => v == null ? 'Fuel Type is required' : null,
+                onChanged: (v) => setState(() => fuelTypeCtrl.text = v ?? ''),
+              ),
+            ],
+
+            if (_isActive('driveTrain')) ...[
+              const SizedBox(height: 12),
+              _dropWithOther(
+                label: 'Drive Train',
+                value: driveTrainCtrl.text.isEmpty ? null : driveTrainCtrl.text,
+                options: _driveTrainOptions,
+                icon: Icons.grid_on_outlined,
+                hint: 'Select drive train',
+                otherCtrl: _otherCtrls['driveTrain']!,
+                validator: (v) => v == null ? 'Drive Train is required' : null,
+                onChanged: (v) => setState(() => driveTrainCtrl.text = v ?? ''),
+              ),
+            ],
+
+            if (_isActive('specs')) ...[
+              const SizedBox(height: 12),
+              _dropField(
+                label: 'Specs',
+                value: specsCtrl.text.isEmpty ? null : specsCtrl.text,
+                options: [..._specsOptions, 'OTHER'],
+                icon: Icons.public_outlined,
+                hint: 'Select specs',
+                validator: (v) => v == null ? 'Specs is required' : null,
+                onChanged: (v) {
+                  setState(() {
+                    specsCtrl.text = v ?? '';
+                    _specsIsOther = v == 'OTHER';
+                    if (!_specsIsOther) specsOtherCtrl.clear();
+                  });
                 },
               ),
+              if (_specsIsOther) ...[
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: specsOtherCtrl,
+                  autovalidateMode: AutovalidateMode.onUserInteraction,
+                  inputFormatters: [LengthLimitingTextInputFormatter(40), _upper],
+                  decoration: _dec(label: 'Other Specs', hint: 'ENTER SPECS', icon: Icons.edit_outlined),
+                  validator: (v) {
+                    if (!_specsIsOther) return null;
+                    if (v == null || v.trim().isEmpty) return 'Other specs is required';
+                    return null;
+                  },
+                ),
+              ],
             ],
 
             const SizedBox(height: 12),
@@ -1953,17 +1969,19 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
               validator: (v) => v == null ? 'Service History is required' : null,
               onChanged: (v) => setState(() => serviceHistory = v),
             ),
-            const SizedBox(height: 12),
-            _dropWithOther(
-              label: 'Serviced With',
-              value: servicedWithCtrl.text.isEmpty ? null : servicedWithCtrl.text,
-              options: _servicedWithOptions,
-              icon: Icons.build_outlined,
-              hint: 'Select',
-              otherCtrl: _otherCtrls['servicedWith']!,
-              validator: (v) => v == null ? 'Serviced With is required' : null,
-              onChanged: (v) => setState(() => servicedWithCtrl.text = v ?? ''),
-            ),
+            if (_isActive('servicedWith')) ...[
+              const SizedBox(height: 12),
+              _dropWithOther(
+                label: 'Serviced With',
+                value: servicedWithCtrl.text.isEmpty ? null : servicedWithCtrl.text,
+                options: _servicedWithOptions,
+                icon: Icons.build_outlined,
+                hint: 'Select',
+                otherCtrl: _otherCtrls['servicedWith']!,
+                validator: (v) => v == null ? 'Serviced With is required' : null,
+                onChanged: (v) => setState(() => servicedWithCtrl.text = v ?? ''),
+              ),
+            ],
             const SizedBox(height: 12),
             TextFormField(
               controller: lastServiceDateCtrl,
@@ -2017,49 +2035,58 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
         key: _interiorFormKey,
         child: Column(
           children: [
-            _dropWithOther(
-              label: 'Seats',
-              value: seatsCtrl.text.isEmpty ? null : seatsCtrl.text,
-              options: _seatsOptions,
-              icon: Icons.event_seat_outlined,
-              hint: 'Select seats',
-              otherCtrl: _otherCtrls['seats']!,
-              validator: (v) => v == null ? 'Seats is required' : null,
-              onChanged: (v) => setState(() => seatsCtrl.text = v ?? ''),
-            ),
-            const SizedBox(height: 12),
-            _dropWithOther(
-              label: 'Interior Color',
-              value: interiorColorCtrl.text.isEmpty ? null : interiorColorCtrl.text,
-              options: _interiorColorOptions,
-              icon: Icons.palette_outlined,
-              hint: 'Select color',
-              otherCtrl: _otherCtrls['interiorColor']!,
-              validator: (v) => v == null ? 'Interior Color is required' : null,
-              onChanged: (v) => setState(() => interiorColorCtrl.text = v ?? ''),
-            ),
-            const SizedBox(height: 12),
-            _dropWithOther(
-              label: 'Upholstery',
-              value: upholsteryCtrl.text.isEmpty ? null : upholsteryCtrl.text,
-              options: _upholsteryOptions,
-              icon: Icons.texture_outlined,
-              hint: 'Select upholstery',
-              otherCtrl: _otherCtrls['upholstery']!,
-              validator: (v) => v == null ? 'Upholstery is required' : null,
-              onChanged: (v) => setState(() => upholsteryCtrl.text = v ?? ''),
-            ),
-            const SizedBox(height: 12),
-            _dropWithOther(
-              label: 'Number of Keys',
-              value: numberOfKeysCtrl.text.isEmpty ? null : numberOfKeysCtrl.text,
-              options: _numberOfKeysOptions,
-              icon: Icons.key_outlined,
-              hint: 'Select keys count',
-              otherCtrl: _otherCtrls['numberOfKeys']!,
-              validator: (v) => v == null ? 'Number of Keys is required' : null,
-              onChanged: (v) => setState(() => numberOfKeysCtrl.text = v ?? ''),
-            ),
+            if (_isActive('seats')) ...[
+              _dropWithOther(
+                label: 'Seats',
+                value: seatsCtrl.text.isEmpty ? null : seatsCtrl.text,
+                options: _seatsOptions,
+                icon: Icons.event_seat_outlined,
+                hint: 'Select seats',
+                otherCtrl: _otherCtrls['seats']!,
+                validator: (v) => v == null ? 'Seats is required' : null,
+                onChanged: (v) => setState(() => seatsCtrl.text = v ?? ''),
+              ),
+              const SizedBox(height: 12),
+            ],
+            if (_isActive('interiorColor')) ...[
+              _dropWithOther(
+                label: 'Interior Color',
+                value: interiorColorCtrl.text.isEmpty ? null : interiorColorCtrl.text,
+                options: _interiorColorOptions,
+                icon: Icons.palette_outlined,
+                hint: 'Select color',
+                otherCtrl: _otherCtrls['interiorColor']!,
+                validator: (v) => v == null ? 'Interior Color is required' : null,
+                onChanged: (v) => setState(() => interiorColorCtrl.text = v ?? ''),
+              ),
+              const SizedBox(height: 12),
+            ],
+            if (_isActive('upholstery')) ...[
+              _dropWithOther(
+                label: 'Upholstery',
+                value: upholsteryCtrl.text.isEmpty ? null : upholsteryCtrl.text,
+                options: _upholsteryOptions,
+                icon: Icons.texture_outlined,
+                hint: 'Select upholstery',
+                otherCtrl: _otherCtrls['upholstery']!,
+                validator: (v) => v == null ? 'Upholstery is required' : null,
+                onChanged: (v) => setState(() => upholsteryCtrl.text = v ?? ''),
+              ),
+              const SizedBox(height: 12),
+            ],
+            if (_isActive('numberOfKeys')) ...[
+              _dropWithOther(
+                label: 'Number of Keys',
+                value: numberOfKeysCtrl.text.isEmpty ? null : numberOfKeysCtrl.text,
+                options: _numberOfKeysOptions,
+                icon: Icons.key_outlined,
+                hint: 'Select keys count',
+                otherCtrl: _otherCtrls['numberOfKeys']!,
+                validator: (v) => v == null ? 'Number of Keys is required' : null,
+                onChanged: (v) => setState(() => numberOfKeysCtrl.text = v ?? ''),
+              ),
+              const SizedBox(height: 12),
+            ],
             const SizedBox(height: 12),
             _dropField(
               label: 'Modification Done',
@@ -2085,72 +2112,81 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
         key: _exteriorFormKey,
         child: Column(
           children: [
-            _dropWithOther(
-              label: 'Exterior Color',
-              value: exteriorColorCtrl.text.isEmpty ? null : exteriorColorCtrl.text,
-              options: _exteriorColorOptions,
-              icon: Icons.palette_outlined,
-              hint: 'Select color',
-              otherCtrl: _otherCtrls['exteriorColor']!,
-              validator: (v) => v == null ? 'Exterior Color is required' : null,
-              onChanged: (v) => setState(() => exteriorColorCtrl.text = v ?? ''),
-            ),
-            const SizedBox(height: 12),
-            _dropWithOther(
-              label: 'Doors',
-              value: doorsCtrl.text.isEmpty ? null : doorsCtrl.text,
-              options: _doorsOptions,
-              icon: Icons.door_front_door_outlined,
-              hint: 'Select doors',
-              otherCtrl: _otherCtrls['doors']!,
-              validator: (v) => v == null ? 'Doors is required' : null,
-              onChanged: (v) => setState(() => doorsCtrl.text = v ?? ''),
-            ),
-            const SizedBox(height: 12),
-            _dropField(
-              label: 'Wheel Size',
-              value: wheelSizeCtrl.text.isEmpty ? null : wheelSizeCtrl.text,
-              options: [..._wheelSizeOptions, 'Other'],
-              icon: Icons.circle_outlined,
-              hint: 'Select wheel size',
-              validator: (v) => v == null ? 'Wheel Size is required' : null,
-              onChanged: (v) {
-                setState(() {
-                  wheelSizeCtrl.text = v ?? '';
-                  _wheelSizeIsOther = v == 'Other';
-                  if (!_wheelSizeIsOther) wheelSizeOtherCtrl.clear();
-                });
-              },
-            ),
-            if (_wheelSizeIsOther) ...[
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: wheelSizeOtherCtrl,
-                autovalidateMode: AutovalidateMode.onUserInteraction,
-                inputFormatters: [LengthLimitingTextInputFormatter(20)],
-                decoration: _dec(label: 'Wheel Size (specify)', hint: 'e.g. 24"', icon: Icons.edit_outlined),
-                validator: (v) => (v == null || v.trim().isEmpty) ? 'Please specify wheel size' : null,
+            if (_isActive('exteriorColor')) ...[
+              _dropWithOther(
+                label: 'Exterior Color',
+                value: exteriorColorCtrl.text.isEmpty ? null : exteriorColorCtrl.text,
+                options: _exteriorColorOptions,
+                icon: Icons.palette_outlined,
+                hint: 'Select color',
+                otherCtrl: _otherCtrls['exteriorColor']!,
+                validator: (v) => v == null ? 'Exterior Color is required' : null,
+                onChanged: (v) => setState(() => exteriorColorCtrl.text = v ?? ''),
               ),
+              const SizedBox(height: 12),
             ],
-            const SizedBox(height: 12),
-            _dropField(
-              label: 'Wheel Type',
-              value: _wheelType,
-              options: [..._wheelTypeOptions, 'Other'],
-              icon: Icons.tire_repair_outlined,
-              hint: 'Select wheel type',
-              validator: (v) => v == null ? 'Wheel Type is required' : null,
-              onChanged: (v) => setState(() => _wheelType = v),
-            ),
-            if (_wheelType == 'Other') ...[
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: wheelTypeOtherCtrl,
-                autovalidateMode: AutovalidateMode.onUserInteraction,
-                inputFormatters: [LengthLimitingTextInputFormatter(40)],
-                decoration: _dec(label: 'Wheel Type (specify)', hint: 'Enter wheel type', icon: Icons.edit_outlined),
-                validator: (v) => (v == null || v.trim().isEmpty) ? 'Please specify wheel type' : null,
+            if (_isActive('doors')) ...[
+              _dropWithOther(
+                label: 'Doors',
+                value: doorsCtrl.text.isEmpty ? null : doorsCtrl.text,
+                options: _doorsOptions,
+                icon: Icons.door_front_door_outlined,
+                hint: 'Select doors',
+                otherCtrl: _otherCtrls['doors']!,
+                validator: (v) => v == null ? 'Doors is required' : null,
+                onChanged: (v) => setState(() => doorsCtrl.text = v ?? ''),
               ),
+              const SizedBox(height: 12),
+            ],
+            if (_isActive('wheelSize')) ...[
+              _dropField(
+                label: 'Wheel Size',
+                value: wheelSizeCtrl.text.isEmpty ? null : wheelSizeCtrl.text,
+                options: [..._wheelSizeOptions, 'Other'],
+                icon: Icons.circle_outlined,
+                hint: 'Select wheel size',
+                validator: (v) => v == null ? 'Wheel Size is required' : null,
+                onChanged: (v) {
+                  setState(() {
+                    wheelSizeCtrl.text = v ?? '';
+                    _wheelSizeIsOther = v == 'Other';
+                    if (!_wheelSizeIsOther) wheelSizeOtherCtrl.clear();
+                  });
+                },
+              ),
+              if (_wheelSizeIsOther) ...[
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: wheelSizeOtherCtrl,
+                  autovalidateMode: AutovalidateMode.onUserInteraction,
+                  inputFormatters: [LengthLimitingTextInputFormatter(20)],
+                  decoration: _dec(label: 'Wheel Size (specify)', hint: 'e.g. 24"', icon: Icons.edit_outlined),
+                  validator: (v) => (v == null || v.trim().isEmpty) ? 'Please specify wheel size' : null,
+                ),
+              ],
+              const SizedBox(height: 12),
+            ],
+            if (_isActive('wheelType')) ...[
+              _dropField(
+                label: 'Wheel Type',
+                value: _wheelType,
+                options: [..._wheelTypeOptions, 'Other'],
+                icon: Icons.tire_repair_outlined,
+                hint: 'Select wheel type',
+                validator: (v) => v == null ? 'Wheel Type is required' : null,
+                onChanged: (v) => setState(() => _wheelType = v),
+              ),
+              if (_wheelType == 'Other') ...[
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: wheelTypeOtherCtrl,
+                  autovalidateMode: AutovalidateMode.onUserInteraction,
+                  inputFormatters: [LengthLimitingTextInputFormatter(40)],
+                  decoration: _dec(label: 'Wheel Type (specify)', hint: 'Enter wheel type', icon: Icons.edit_outlined),
+                  validator: (v) => (v == null || v.trim().isEmpty) ? 'Please specify wheel type' : null,
+                ),
+              ],
+              const SizedBox(height: 12),
             ],
             const SizedBox(height: 12),
             _dropField(

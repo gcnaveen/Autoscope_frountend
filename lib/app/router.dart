@@ -227,6 +227,7 @@ import '../features/dashboards/admin/manage_reviews/manage_reviews_page.dart';
 
 import '../features/dashboards/admin/vehicle_catalog_page.dart';
 import '../features/dashboards/admin/configure_inputs/configure_inputs_page.dart';
+import '../features/dashboards/admin/vehicle_inputs/vehicle_inputs_hub_page.dart';
 
 import '../features/profile/profile_page.dart';
 
@@ -297,6 +298,10 @@ GoRouter buildRouter() {
       GoRoute(path: '/dashboard/admin/inspections', builder: (c, s) => const InspectionRequestsPage()),
       GoRoute(path: '/dashboard/admin/checklists', builder: (c, s) => const ChecklistTemplatesPage()),
 
+      GoRoute(
+        path: '/dashboard/admin/vehicle-inputs',
+        builder: (context, state) => const VehicleInputsHubPage(),
+      ),
       GoRoute(
         path: '/dashboard/admin/vehicle-catalog',
         builder: (context, state) => const VehicleCatalogPage(),

@@ -530,7 +530,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   @override
   Widget build(BuildContext context) {
     final w = MediaQuery.sizeOf(context).width;
-    final isMobile = w < 900;
+    final isMobile = w < 720;
+    final isTablet = w >= 720 && w < 1080;
 
     return AppShell(
       title: 'Admin Dashboard',
@@ -579,10 +580,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
           final d = snap.data!;
 
-          return Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 1200),
-              child: ListView(
+          return ListView(
                 padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
                 children: [
                   _HeaderCard(
@@ -594,12 +592,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   const SizedBox(height: 18),
 
                   GridView.count(
-                    crossAxisCount: isMobile ? 1 : 2,
-                    mainAxisSpacing: 12,
-                    crossAxisSpacing: 12,
+                    crossAxisCount: isMobile ? 1 : isTablet ? 2 : 3,
+                    mainAxisSpacing: 10,
+                    crossAxisSpacing: 10,
                     shrinkWrap: true,
                     physics: const NeverScrollableScrollPhysics(),
-                    childAspectRatio: isMobile ? 2.6 : 2.3,
+                    childAspectRatio: isMobile ? 2.6 : isTablet ? 2.2 : 2.6,
                     children: [
                       _KpiActionCard(
                         kpiTitle: 'Users',
@@ -634,11 +632,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       ),
 
                       _KpiActionCard(
-                        kpiTitle: 'Vehicle Catalog',
+                        kpiTitle: 'Vehicle Details Inputs',
                         kpiValue: 'Manage',
-                        kpiSubtitle: 'Makes & Models',
-                        icon: Icons.directions_car_filled_outlined,
-                        onTap: () => context.go('/dashboard/admin/vehicle-catalog'),
+                        kpiSubtitle: 'Makes, models & inspection form dropdowns',
+                        icon: Icons.tune_outlined,
+                        onTap: () => context.go('/dashboard/admin/vehicle-inputs'),
                       ),
                       _KpiActionCard(
                         kpiTitle: 'Manage Reviews',
@@ -646,13 +644,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         kpiSubtitle: 'Approve / Reject customer reviews',
                         icon: Icons.rate_review_outlined,
                         onTap: () => context.go('/dashboard/admin/reviews'),
-                      ),
-                      _KpiActionCard(
-                        kpiTitle: 'Configure Inputs',
-                        kpiValue: 'Manage',
-                        kpiSubtitle: 'Dropdown options for inspection form',
-                        icon: Icons.tune_outlined,
-                        onTap: () => context.go('/dashboard/admin/configure-inputs'),
                       ),
                     ],
                   ),
@@ -672,8 +663,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     onViewAll: () => context.go('/dashboard/admin/inspections'),
                   ),
                 ],
-              ),
-            ),
           );
         },
       ),
@@ -698,30 +687,51 @@ class _HeaderCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final hour = DateTime.now().hour;
+    final greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+
+    final now = DateTime.now();
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    final dateStr = '${weekdays[now.weekday - 1]}, ${now.day} ${months[now.month - 1]} ${now.year}';
+
+    final session = authService.session.value;
+    final rawName = session?.email.split('@').first ?? 'admin';
+    final displayName = rawName.isEmpty ? 'Admin' : rawName[0].toUpperCase() + rawName.substring(1);
+
     return Card(
-      child: Container(
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          gradient: LinearGradient(
-            colors: [
-              const Color(0xFF0B1220),
-              const Color(0xFF0B1220).withOpacity(0.88),
-            ],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
-        child: const Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        child: Row(
           children: [
-            Text(
-              'Welcome, Admin',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 22,
-                fontWeight: FontWeight.w900,
+            Container(
+              height: 44,
+              width: 44,
+              decoration: BoxDecoration(
+                color: const Color(0xFF1E5EFF).withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(12),
               ),
+              child: const Icon(Icons.admin_panel_settings_outlined, color: Color(0xFF1E5EFF), size: 24),
+            ),
+            const SizedBox(width: 14),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '$greeting, $displayName',
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF0B1220),
+                    letterSpacing: -0.2,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  dateStr,
+                  style: const TextStyle(fontSize: 13, color: Colors.black45),
+                ),
+              ],
             ),
           ],
         ),
@@ -747,43 +757,39 @@ class _KpiActionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: 280,
-      child: Card(
-        child: InkWell(
-          borderRadius: BorderRadius.circular(16),
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                Container(
-                  height: 44,
-                  width: 44,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1E5EFF).withOpacity(0.10),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(icon, color: const Color(0xFF1E5EFF)),
+    return Card(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              Container(
+                height: 38,
+                width: 38,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1E5EFF).withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(10),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(kpiTitle, style: const TextStyle(fontWeight: FontWeight.w800)),
-                      const SizedBox(height: 4),
-                      Text(kpiValue, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
-                      const SizedBox(height: 2),
-                      Text(kpiSubtitle, style: const TextStyle(color: Colors.black54)),
-                    ],
-                  ),
+                child: Icon(icon, color: const Color(0xFF1E5EFF), size: 20),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(kpiTitle, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
+                    const SizedBox(height: 2),
+                    Text(kpiValue, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+                    const SizedBox(height: 1),
+                    Text(kpiSubtitle, style: const TextStyle(color: Colors.black54, fontSize: 11)),
+                  ],
                 ),
-                const SizedBox(width: 8),
-                const Icon(Icons.chevron_right, color: Colors.black38),
-              ],
-            ),
+              ),
+              const Icon(Icons.chevron_right, color: Colors.black38, size: 18),
+            ],
           ),
         ),
       ),
@@ -848,7 +854,7 @@ class _LatestRequestsCard extends StatelessWidget {
               ...rows.map(
                 (r) => ListTile(
                   leading: CircleAvatar(
-                    backgroundColor: const Color(0xFF1E5EFF).withOpacity(0.10),
+                    backgroundColor: const Color(0xFF1E5EFF).withValues(alpha: 0.10),
                     foregroundColor: const Color(0xFF1E5EFF),
                     child: const Icon(Icons.directions_car),
                   ),
@@ -857,12 +863,12 @@ class _LatestRequestsCard extends StatelessWidget {
                   trailing: Chip(
                     label: Text(r.status),
                     backgroundColor: (r.status.toLowerCase().contains('pending'))
-                        ? Colors.orange.withOpacity(0.12)
-                        : Colors.green.withOpacity(0.12),
+                        ? Colors.orange.withValues(alpha: 0.12)
+                        : Colors.green.withValues(alpha: 0.12),
                     side: BorderSide(
                       color: (r.status.toLowerCase().contains('pending'))
-                          ? Colors.orange.withOpacity(0.20)
-                          : Colors.green.withOpacity(0.20),
+                          ? Colors.orange.withValues(alpha: 0.20)
+                          : Colors.green.withValues(alpha: 0.20),
                     ),
                   ),
                 ),
