@@ -126,6 +126,14 @@ class _BreadcrumbBar extends StatelessWidget {
         crumbs.add(_Crumb('Configured Inputs', null, clickable: false));
         return crumbs;
       }
+      if (location == '/dashboard/admin/emirates') {
+        crumbs.add(_Crumb('Admin', '/dashboard/admin', clickable: true));
+        crumbs.add(_Crumb('Vehicle Details Inputs',
+            '/dashboard/admin/vehicle-inputs',
+            clickable: true));
+        crumbs.add(_Crumb('Emirates & Areas', null, clickable: false));
+        return crumbs;
+      }
 
       // user dashboard
       if (location == '/dashboard/user') {

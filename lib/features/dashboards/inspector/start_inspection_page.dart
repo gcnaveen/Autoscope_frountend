@@ -197,32 +197,33 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
   // Not configurable
   static const List<String> _ownershipTypeOptions = ['INDIVIDUAL', 'COMPANY'];
 
-  // Configurable — loaded from DropdownConfigService; initialised to defaults
-  List<String> _transmissionOptions    = DropdownConfigService.defaults['transmission']!;
-  List<String> _fuelTypeOptions        = DropdownConfigService.defaults['fuelType']!;
-  List<String> _gradeVariantOptions    = DropdownConfigService.defaults['gradeVariant']!;
-  List<String> _cylinderSizeOptions    = DropdownConfigService.defaults['cylinderSize']!;
-  List<String> _driveTrainOptions      = DropdownConfigService.defaults['driveTrain']!;
-  List<String> _specsOptions           = DropdownConfigService.defaults['specs']!;       // no 'OTHER' — appended in UI
-  List<String> _wheelSizeOptions       = DropdownConfigService.defaults['wheelSize']!;   // no 'Other' — appended in UI
-  List<String> _wheelTypeOptions       = DropdownConfigService.defaults['wheelType']!;   // no 'Other' — appended in UI
-  List<String> _servicedWithOptions    = DropdownConfigService.defaults['servicedWith']!;
-  List<String> _seatsOptions           = DropdownConfigService.defaults['seats']!;
-  List<String> _interiorColorOptions   = DropdownConfigService.defaults['interiorColor']!;
-  List<String> _exteriorColorOptions   = DropdownConfigService.defaults['exteriorColor']!;
-  List<String> _upholsteryOptions      = DropdownConfigService.defaults['upholstery']!;
-  List<String> _numberOfKeysOptions    = DropdownConfigService.defaults['numberOfKeys']!;
-  List<String> _doorsOptions           = DropdownConfigService.defaults['doors']!;
+  // Configurable — loaded from the backend via DropdownConfigService.load()
+  List<String> _transmissionOptions    = const [];
+  List<String> _fuelTypeOptions        = const [];
+  List<String> _gradeVariantOptions    = const [];
+  List<String> _cylinderSizeOptions    = const [];
+  List<String> _driveTrainOptions      = const [];
+  List<String> _specsOptions           = const [];  // no 'OTHER' — appended in UI
+  List<String> _wheelSizeOptions       = const [];  // no 'Other' — appended in UI
+  List<String> _wheelTypeOptions       = const [];  // no 'Other' — appended in UI
+  List<String> _servicedWithOptions    = const [];
+  List<String> _seatsOptions           = const [];
+  List<String> _interiorColorOptions   = const [];
+  List<String> _exteriorColorOptions   = const [];
+  List<String> _upholsteryOptions      = const [];
+  List<String> _numberOfKeysOptions    = const [];
+  List<String> _doorsOptions           = const [];
 
   // "Other" text controllers for every configurable dropdown
   final Map<String, TextEditingController> _otherCtrls = {};
 
-  // Active status for each configurable dropdown field
-  Map<String, bool> _fieldActive = {
-    for (final k in DropdownConfigService.defaults.keys) k: true,
-  };
+  // Active status — populated from the API; all fields visible until loaded.
+  Map<String, bool> _fieldActive = {};
+  bool _fieldActiveLoaded = false;
 
-  bool _isActive(String key) => _fieldActive[key] != false;
+  // A field is shown only if the backend returned it AND its status is active.
+  // Before the API responds (_fieldActiveLoaded == false) everything is visible.
+  bool _isActive(String key) => !_fieldActiveLoaded || _fieldActive[key] == true;
 
   // Custom fields defined by admin
   List<CustomField> _customFields = [];
@@ -341,21 +342,21 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
     final cfg = results[0] as Map<String, List<String>>;
     final fields = results[1] as List<CustomField>;
     setState(() {
-      _gradeVariantOptions    = cfg['gradeVariant']!;
-      _cylinderSizeOptions    = cfg['cylinderSize']!;
-      _transmissionOptions    = cfg['transmission']!;
-      _fuelTypeOptions        = cfg['fuelType']!;
-      _driveTrainOptions      = cfg['driveTrain']!;
-      _specsOptions           = cfg['specs']!;
-      _seatsOptions           = cfg['seats']!;
-      _interiorColorOptions   = cfg['interiorColor']!;
-      _exteriorColorOptions   = cfg['exteriorColor']!;
-      _upholsteryOptions      = cfg['upholstery']!;
-      _numberOfKeysOptions    = cfg['numberOfKeys']!;
-      _doorsOptions           = cfg['doors']!;
-      _wheelSizeOptions       = cfg['wheelSize']!;
-      _wheelTypeOptions       = cfg['wheelType']!;
-      _servicedWithOptions    = cfg['servicedWith']!;
+      _gradeVariantOptions    = cfg['gradeVariant']   ?? const [];
+      _cylinderSizeOptions    = cfg['cylinderSize']   ?? const [];
+      _transmissionOptions    = cfg['transmission']   ?? const [];
+      _fuelTypeOptions        = cfg['fuelType']       ?? const [];
+      _driveTrainOptions      = cfg['driveTrain']     ?? const [];
+      _specsOptions           = cfg['specs']          ?? const [];
+      _seatsOptions           = cfg['seats']          ?? const [];
+      _interiorColorOptions   = cfg['interiorColor']  ?? const [];
+      _exteriorColorOptions   = cfg['exteriorColor']  ?? const [];
+      _upholsteryOptions      = cfg['upholstery']     ?? const [];
+      _numberOfKeysOptions    = cfg['numberOfKeys']   ?? const [];
+      _doorsOptions           = cfg['doors']          ?? const [];
+      _wheelSizeOptions       = cfg['wheelSize']      ?? const [];
+      _wheelTypeOptions       = cfg['wheelType']      ?? const [];
+      _servicedWithOptions    = cfg['servicedWith']   ?? const [];
       _customFields = fields;
       for (final f in fields) {
         if (f.type == 'text') {
@@ -365,10 +366,12 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
           _customTextCtrls.putIfAbsent('${f.id}_other', () => TextEditingController());
         }
       }
+      // Build active map from whatever the API returned — no hardcoded key list.
+      // A field absent from cfg is treated as removed and won't appear in the form.
       _fieldActive = {
-        for (final k in DropdownConfigService.defaults.keys)
-          k: dropdownConfigService.isActive(k),
+        for (final k in cfg.keys) k: dropdownConfigService.isActive(k),
       };
+      _fieldActiveLoaded = true;
     });
   }
 
@@ -2394,7 +2397,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
           child: FutureBuilder<List<ChecklistTemplate>>(
             future: _future,
             builder: (context, snap) {
-              if (snap.connectionState == ConnectionState.waiting) {
+              if (snap.connectionState == ConnectionState.waiting || !_fieldActiveLoaded) {
                 return const Padding(
                   padding: EdgeInsets.all(40),
                   child: Center(child: CircularProgressIndicator()),

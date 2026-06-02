@@ -39,6 +39,9 @@ class _ConfigureInputsPageState extends State<ConfigureInputsPage> {
   String _searchQuery = '';
   String _statusFilter = 'all'; // 'all' | 'active' | 'inactive'
 
+  // Populated from the service after load(); empty until then.
+  List<(String, String)> _fields = const [];
+
   List<(String, String)> get _filteredBuiltIn => _fields.where((field) {
     final key   = field.$1;
     final label = field.$2;
@@ -55,45 +58,42 @@ class _ConfigureInputsPageState extends State<ConfigureInputsPage> {
           .where((f) => f.label.toLowerCase().contains(_searchQuery.toLowerCase()))
           .toList();
 
-  static const _fields = [
-    ('gradeVariant', 'Grade / Variant'),
-    ('cylinderSize', 'Cylinder Size'),
-    ('transmission', 'Transmission'),
-    ('fuelType', 'Fuel Type'),
-    ('driveTrain', 'Drive Train'),
-    ('specs', 'Specs'),
-    ('seats', 'Seats'),
-    ('interiorColor', 'Interior Color'),
-    ('exteriorColor', 'Exterior Color'),
-    ('upholstery', 'Upholstery'),
-    ('numberOfKeys', 'Number of Keys'),
-    ('doors', 'Doors'),
-    ('wheelSize', 'Wheel Size'),
-    ('wheelType', 'Wheel Type'),
-    ('servicedWith', 'Serviced With'),
-  ];
-
   @override
   void initState() {
     super.initState();
-    for (final (key, _) in _fields) {
-      _addCtrls[key] = TextEditingController();
-    }
     _load();
   }
 
   @override
   void dispose() {
     _searchCtrl.dispose();
-    for (final c in _addCtrls.values) c.dispose();
+    for (final c in _addCtrls.values) {
+      c.dispose();
+    }
     super.dispose();
   }
 
   Future<void> _load() async {
+    dropdownConfigService.clearCache();
     final config = await dropdownConfigService.load();
     final custom = await dropdownConfigService.loadCustomFields();
     if (!mounted) return;
+
+    final fieldDefs = dropdownConfigService.fieldDefinitions;
+    final newFields = fieldDefs.map((d) => (d.key, d.label)).toList();
+
+    // Sync text controllers: create for new keys, dispose removed keys
+    final newKeys = newFields.map((f) => f.$1).toSet();
+    final oldKeys = Set<String>.from(_addCtrls.keys);
+    for (final k in oldKeys.difference(newKeys)) {
+      _addCtrls.remove(k)?.dispose();
+    }
+    for (final k in newKeys.difference(oldKeys)) {
+      _addCtrls[k] = TextEditingController();
+    }
+
     setState(() {
+      _fields = newFields;
       _config = {for (final e in config.entries) e.key: List<String>.from(e.value)};
       _statusMap = Map<String, String>.from(dropdownConfigService.statusMap);
       _customFields = custom;
@@ -153,12 +153,20 @@ class _ConfigureInputsPageState extends State<ConfigureInputsPage> {
   }
 
   void _resetToDefault(String key) {
+    final fieldDef = dropdownConfigService.fieldDefinitions.firstWhere(
+      (d) => d.key == key,
+      orElse: () => FieldDefinition(
+        key: key,
+        label: DropdownConfigService.fieldLabels[key] ?? key,
+        defaultOptions: List<String>.from(DropdownConfigService.defaults[key] ?? []),
+      ),
+    );
     showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Reset to Default'),
         content: Text(
-          'Replace all options for "${DropdownConfigService.fieldLabels[key]}" with built-in defaults?',
+          'Replace all options for "${fieldDef.label}" with built-in defaults?',
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
@@ -167,8 +175,11 @@ class _ConfigureInputsPageState extends State<ConfigureInputsPage> {
       ),
     ).then((confirmed) {
       if (confirmed != true || !mounted) return;
+      final resetTo = fieldDef.defaultOptions.isNotEmpty
+          ? fieldDef.defaultOptions
+          : (DropdownConfigService.defaults[key] ?? []);
       setState(() {
-        _config![key] = List<String>.from(DropdownConfigService.defaults[key]!);
+        _config![key] = List<String>.from(resetTo);
       });
       _saveDropdowns();
     });
@@ -191,7 +202,10 @@ class _ConfigureInputsPageState extends State<ConfigureInputsPage> {
     showDialog<CustomField>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => _FieldFormDialog(existing: null),
+      builder: (ctx) => _FieldFormDialog(
+        existing: null,
+        sectionLabels: dropdownConfigService.currentSectionLabels,
+      ),
     ).then((field) {
       if (field == null || !mounted) return;
       setState(() => _customFields = [field, ..._customFields]);
@@ -203,7 +217,10 @@ class _ConfigureInputsPageState extends State<ConfigureInputsPage> {
     showDialog<CustomField>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => _FieldFormDialog(existing: field),
+      builder: (ctx) => _FieldFormDialog(
+        existing: field,
+        sectionLabels: dropdownConfigService.currentSectionLabels,
+      ),
     ).then((updated) {
       if (updated == null || !mounted) return;
       setState(() {
@@ -770,7 +787,8 @@ class _CustomFieldCard extends StatelessWidget {
 
 class _FieldFormDialog extends StatefulWidget {
   final CustomField? existing;
-  const _FieldFormDialog({required this.existing});
+  final Map<String, String> sectionLabels;
+  const _FieldFormDialog({required this.existing, required this.sectionLabels});
 
   @override
   State<_FieldFormDialog> createState() => _FieldFormDialogState();
@@ -791,7 +809,7 @@ class _FieldFormDialogState extends State<_FieldFormDialog> {
     final f = widget.existing;
     _labelCtrl = TextEditingController(text: f?.label ?? '');
     _type = f?.type ?? 'text';
-    _section = f?.section ?? 'vehicle_details';
+    _section = f?.section ?? widget.sectionLabels.keys.firstOrNull ?? 'vehicle_details';
     _required = f?.required ?? false;
     _options = List<String>.from(f?.options ?? []);
   }
@@ -879,7 +897,7 @@ class _FieldFormDialogState extends State<_FieldFormDialog> {
 
                   // Type
                   DropdownButtonFormField<String>(
-                    value: _type,
+                    initialValue: _type,
                     decoration: const InputDecoration(
                       labelText: 'Field Type',
                       border: OutlineInputBorder(),
@@ -894,15 +912,16 @@ class _FieldFormDialogState extends State<_FieldFormDialog> {
 
                   // Section
                   DropdownButtonFormField<String>(
-                    value: _section,
+                    initialValue: _section,
                     decoration: const InputDecoration(
                       labelText: 'Form Section',
                       border: OutlineInputBorder(),
                     ),
-                    items: sectionLabels.entries
+                    items: widget.sectionLabels.entries
                         .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value)))
                         .toList(),
-                    onChanged: (v) => setState(() => _section = v ?? 'vehicle_details'),
+                    onChanged: (v) => setState(() =>
+                        _section = v ?? widget.sectionLabels.keys.firstOrNull ?? 'vehicle_details'),
                   ),
                   const SizedBox(height: 16),
 

@@ -43,6 +43,14 @@ class VehicleInputsHubPage extends StatelessWidget {
                 icon: Icons.tune_outlined,
                 onTap: () => context.go('/dashboard/admin/configure-inputs'),
               ),
+              const SizedBox(height: 14),
+              _HubCard(
+                title: 'Emirates & Areas',
+                subtitle:
+                    'Add or remove emirates and their areas. Used as interdependent City / Area dropdowns in the inspection request form.',
+                icon: Icons.map_outlined,
+                onTap: () => context.go('/dashboard/admin/emirates'),
+              ),
             ],
           ),
         ),

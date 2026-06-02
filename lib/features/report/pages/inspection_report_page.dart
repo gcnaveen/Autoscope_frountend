@@ -678,16 +678,7 @@ class _ReportViewState extends State<_ReportView> {
             // Disclaimer
             _Card(
               title: 'Disclaimer',
-              child: const Text(
-                'Auto Scope inspects vehicles to the best of its ability based on visible and accessible '
-                'components at the time of inspection. This report does not constitute a guarantee or '
-                'warranty of the vehicle\'s condition. Auto Scope shall not be liable for any latent '
-                'defects or issues that were not visible or accessible during inspection. The findings '
-                'in this report are valid at the time of inspection only and may change over time. '
-                'This report is prepared solely for the use of the commissioning party and must not '
-                'be relied upon by any third party without written consent from Auto Scope.',
-                style: TextStyle(color: Colors.black87, height: 1.6),
-              ),
+              child: const _DisclaimerContent(),
             ),
 
             const SizedBox(height: 12),
@@ -695,36 +686,7 @@ class _ReportViewState extends State<_ReportView> {
             // Company signature & stamp
             _Card(
               title: 'Authorized By',
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Auto Scope Vehicle Inspection Services',
-                    style: TextStyle(fontWeight: FontWeight.w900, fontSize: 15),
-                  ),
-                  const SizedBox(height: 20),
-                  LayoutBuilder(
-                    builder: (context, c) {
-                      final wide = c.maxWidth >= 500;
-                      final stampBox = _SignatureBox(label: 'Company Stamp');
-                      final sigBox = _SignatureBox(label: 'Authorized Signature');
-                      if (!wide) {
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [stampBox, const SizedBox(height: 16), sigBox],
-                        );
-                      }
-                      return Row(
-                        children: [
-                          stampBox,
-                          const SizedBox(width: 40),
-                          sigBox,
-                        ],
-                      );
-                    },
-                  ),
-                ],
-              ),
+              child: const _AuthorizedBySection(),
             ),
 
             const SizedBox(height: 18),
@@ -2591,19 +2553,156 @@ class _Card extends StatelessWidget {
   }
 }
 
-class _SignatureBox extends StatelessWidget {
-  final String label;
-  const _SignatureBox({required this.label});
+// ─── Disclaimer ───────────────────────────────────────────────────────────────
+
+class _DisclaimerContent extends StatelessWidget {
+  const _DisclaimerContent();
+
+  static const _points = [
+    'This report reflects the visible condition of the vehicle only at the time and date of inspection.',
+    'The inspection is provided solely as an aid for evaluating the vehicle\'s general condition and does not constitute a warranty, guarantee, or recommendation to buy or sell the vehicle.',
+    'The inspection conducted by Auto Scope is limited strictly to the items listed in this report and is visual, non-invasive, and non-mechanical in nature.',
+    'No dismantling, disassembly, or internal examination of components has been carried out.',
+    'The inspection does not include verification of service history, accident history, ownership records, recalls, mileage accuracy, or seller-provided specifications/features.',
+    'Certain hidden, internal, or intermittent defects may not be detectable at the time of inspection despite standard inspection procedures being followed.',
+    'Mechanical, electrical, and electronic components may fail at any time after inspection, and Auto Scope accepts no responsibility for issues arising thereafter.',
+    'Auto Scope shall not be liable for repair costs, damages, losses, undiscovered defects, or differences between this report and future third-party assessments.',
+    'This report is prepared exclusively for the client who ordered the inspection. Any third-party reliance on this report shall be entirely at their own risk.',
+    'This report is issued strictly for informational purposes and should not be considered a warranty or guarantee of the vehicle\'s condition.',
+  ];
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(color: Colors.black54, fontWeight: FontWeight.w700)),
-        const SizedBox(height: 8),
+        for (int i = 0; i < _points.length; i++) ...[
+          if (i > 0) const SizedBox(height: 10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 24,
+                child: Text(
+                  '${i + 1}',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: Colors.black54,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Text(
+                  _points[i],
+                  style: const TextStyle(
+                    color: Colors.black87,
+                    fontSize: 13,
+                    height: 1.55,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+// ─── Authorized By ────────────────────────────────────────────────────────────
+
+class _AuthorizedBySection extends StatelessWidget {
+  const _AuthorizedBySection();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'AUTO SCOPE INSPECTION AND PRICING SERVICES - L.L.C - S.P.C',
+          style: TextStyle(fontWeight: FontWeight.w900, fontSize: 14),
+        ),
+        const SizedBox(height: 2),
+        const Text(
+          'Abu Dhabi, U.A.E',
+          style: TextStyle(color: Colors.black54, fontSize: 13),
+        ),
+        const SizedBox(height: 20),
+        LayoutBuilder(
+          builder: (context, c) {
+            final wide = c.maxWidth >= 500;
+            final stamp = _StampBox();
+            final sig = _SigBox();
+            if (!wide) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [stamp, const SizedBox(height: 24), sig],
+              );
+            }
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [stamp, const SizedBox(width: 48), sig],
+            );
+          },
+        ),
+      ],
+    );
+  }
+}
+
+class _StampBox extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Company Stamp',
+          style: TextStyle(color: Colors.black54, fontWeight: FontWeight.w700, fontSize: 12),
+        ),
+        const SizedBox(height: 10),
+        SizedBox(
+          width: 140,
+          height: 140,
+          child: Image.asset(
+            'assets/images/company_stamp.png',
+            fit: BoxFit.contain,
+            errorBuilder: (_, __, ___) => Container(
+              width: 140,
+              height: 140,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.black26, width: 1.5),
+              ),
+              child: const Center(
+                child: Text(
+                  'STAMP',
+                  style: TextStyle(color: Colors.black26, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SigBox extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Authorized Signature',
+          style: TextStyle(color: Colors.black54, fontWeight: FontWeight.w700, fontSize: 12),
+        ),
+        const SizedBox(height: 10),
         Container(
-          width: 160,
+          width: 200,
           height: 80,
           decoration: BoxDecoration(
             border: Border.all(color: Colors.black26),

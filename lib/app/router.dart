@@ -215,8 +215,6 @@ import '../features/dashboards/user/user_request_details_page.dart';
 import '../features/dashboards/inspector/inspector_dashboard_page.dart';
 import '../features/dashboards/inspector/inspector_request_details_page.dart';
 import '../features/dashboards/inspector/start_inspection_page.dart';
-import '../features/dashboards/inspector/inspector_request_details_page.dart';
-import '../features/dashboards/inspector/start_inspection_page.dart';
 
 import '../features/dashboards/admin/admin_dashboard_page.dart';
 import '../features/dashboards/admin/users/users_page.dart';
@@ -228,6 +226,7 @@ import '../features/dashboards/admin/manage_reviews/manage_reviews_page.dart';
 import '../features/dashboards/admin/vehicle_catalog_page.dart';
 import '../features/dashboards/admin/configure_inputs/configure_inputs_page.dart';
 import '../features/dashboards/admin/vehicle_inputs/vehicle_inputs_hub_page.dart';
+import '../features/dashboards/admin/emirates/emirates_page.dart';
 
 import '../features/profile/profile_page.dart';
 
@@ -382,6 +381,10 @@ GoRouter buildRouter() {
       GoRoute(
         path: '/dashboard/admin/configure-inputs',
         builder: (context, state) => const ConfigureInputsPage(),
+      ),
+      GoRoute(
+        path: '/dashboard/admin/emirates',
+        builder: (context, state) => const EmiratesPage(),
       ),
 
       GoRoute(

@@ -66,7 +66,31 @@ String _toCamelCase(String s) {
   return first + rest.join();
 }
 
-// ─── Section labels ────────────────────────────────────────────────────────
+// ─── Field definition model ───────────────────────────────────────────────────
+// Populated from the backend's fieldDefinitions array; falls back to static
+// defaults when the API does not yet return them.
+
+class FieldDefinition {
+  final String key;            // camelCase,  e.g. 'gradeVariant'
+  final String label;          // display name, e.g. 'Grade / Variant'
+  final List<String> defaultOptions;
+
+  const FieldDefinition({
+    required this.key,
+    required this.label,
+    required this.defaultOptions,
+  });
+
+  factory FieldDefinition.fromJson(Map<dynamic, dynamic> j) => FieldDefinition(
+    key: j['key']?.toString() ?? '',
+    label: j['label']?.toString() ?? '',
+    defaultOptions:
+        (j['defaultOptions'] as List?)?.map((x) => x.toString()).toList() ?? [],
+  );
+}
+
+// ─── Section labels (static fallback) ─────────────────────────────────────────
+// Overridden at runtime when the backend returns sectionDefinitions.
 
 const sectionLabels = <String, String>{
   'vehicle_details': 'Vehicle Details',
@@ -76,21 +100,26 @@ const sectionLabels = <String, String>{
 };
 
 // ─── Service ──────────────────────────────────────────────────────────────────
-
-// Expected GET /api/configured-inputs response shape:
+//
+// GET /api/configured-inputs — expected response:
 // {
 //   "data": {
-//     "dropdownOptions": { "gradeVariant": [...], "transmission": [...], ... },
-//     "customFields":    [ { "id": "...", "label": "...", "type": "text|dropdown",
-//                            "section": "vehicle_details|...", "options": [...], "required": true } ]
+//     "fieldDefinitions": [
+//       { "key": "gradeVariant", "label": "Grade / Variant", "defaultOptions": ["XLE", "LIMITED"] },
+//       ...
+//     ],
+//     "sectionDefinitions": [
+//       { "key": "vehicle_details", "label": "Vehicle Details" },
+//       ...
+//     ],
+//     "configuredInputs": { "Grade / Variant": { "options": [...], "status": "active" }, ... },
+//     "customFields": [ { "id": "...", "label": "...", "type": "text|dropdown",
+//                         "section": "vehicle_details|...", "options": [...], "required": true } ]
 //   }
 // }
 //
-// PATCH /api/admin/configured-inputs body shape:
-// {
-//   "dropdownOptions": { ... },
-//   "customFields":    [ ... ]
-// }
+// PATCH /api/admin/configured-inputs — body:
+// { "configuredInputs": { "Grade / Variant": { "options": [...], "status": "active" }, ... } }
 
 class DropdownConfigService {
   DropdownConfigService({required this.apiClient});
@@ -99,6 +128,8 @@ class DropdownConfigService {
 
   static const String _getPath   = '/configured-inputs';
   static const String _patchPath = '/admin/configured-inputs';
+
+  // ── Static fallbacks (used when API does not return definitions) ────────────
 
   static const Map<String, List<String>> defaults = {
     'gradeVariant': ['XLE', 'LIMITED'],
@@ -144,16 +175,34 @@ class DropdownConfigService {
     'servicedWith': 'Serviced With',
   };
 
-  // Reverse of fieldLabels: "Grade / Variant" → "gradeVariant"
-  static final Map<String, String> _labelToKey = {
-    for (final e in fieldLabels.entries) e.value: e.key,
-  };
-
   // ── In-memory cache (cleared on logout) ────────────────────────────────────
 
   Map<String, List<String>>? _dropdownCache;
-  Map<String, String>? _statusCache;   // camelKey → 'active' | 'inactive'
+  Map<String, String>? _statusCache;
   List<CustomField>? _customFieldsCache;
+  List<FieldDefinition>? _fieldDefsCache;
+  Map<String, String>? _sectionDefsCache;
+
+  // ── Field / section definitions ────────────────────────────────────────────
+
+  /// Ordered list of built-in dropdown field definitions. Populated from the
+  /// API when available; falls back to [fieldLabels] + [defaults] otherwise.
+  List<FieldDefinition> get fieldDefinitions =>
+      _fieldDefsCache ?? _buildDefaultFieldDefs();
+
+  /// Section key → label map. Populated from the API; falls back to the
+  /// top-level [sectionLabels] const otherwise.
+  Map<String, String> get currentSectionLabels =>
+      _sectionDefsCache ?? Map<String, String>.from(sectionLabels);
+
+  static List<FieldDefinition> _buildDefaultFieldDefs() => [
+    for (final e in fieldLabels.entries)
+      FieldDefinition(
+        key: e.key,
+        label: e.value,
+        defaultOptions: List<String>.from(defaults[e.key] ?? []),
+      ),
+  ];
 
   // ── Fetch from API ─────────────────────────────────────────────────────────
 
@@ -176,10 +225,55 @@ class DropdownConfigService {
   /// Full status map — used by the configure page to render toggles.
   Map<String, String> get statusMap => Map.unmodifiable(_statusCache ?? {});
 
+  static dynamic _extractFromResponse(dynamic res, String key) {
+    if (res is! Map) return null;
+    final data = res['data'];
+    if (data is Map && data.containsKey(key)) return data[key];
+    return res[key];
+  }
+
   Future<void> _fetchFromApi() async {
     try {
       final res = await apiClient.getJson(_getPath);
 
+      // ── Section definitions ───────────────────────────────────────────────
+      // Optional backend key; falls back to the top-level const sectionLabels.
+      final rawSectionDefs = _extractFromResponse(res, 'sectionDefinitions');
+      if (rawSectionDefs is List) {
+        final map = <String, String>{};
+        for (final d in rawSectionDefs.whereType<Map>()) {
+          final k = d['key']?.toString() ?? '';
+          final v = d['label']?.toString() ?? '';
+          if (k.isNotEmpty && v.isNotEmpty) map[k] = v;
+        }
+        if (map.isNotEmpty) _sectionDefsCache = map;
+      }
+      _sectionDefsCache ??= Map<String, String>.from(sectionLabels);
+
+      // ── label → camelKey mapping ──────────────────────────────────────────
+      // Seed with static fieldLabels so known labels get the expected camelCase
+      // keys. The optional backend fieldDefinitions array can extend/override
+      // this for any labels not covered by the static map.
+      final labelToKey = <String, String>{
+        for (final e in fieldLabels.entries) e.value: e.key,
+      };
+      List<FieldDefinition>? explicitDefs;
+      final rawFieldDefs = _extractFromResponse(res, 'fieldDefinitions');
+      if (rawFieldDefs is List) {
+        explicitDefs = rawFieldDefs
+            .whereType<Map>()
+            .map(FieldDefinition.fromJson)
+            .where((d) => d.key.isNotEmpty && d.label.isNotEmpty)
+            .toList();
+        for (final d in explicitDefs) {
+          labelToKey[d.label] = d.key; // extend/override static mapping
+        }
+        if (explicitDefs.isEmpty) explicitDefs = null;
+      }
+
+      // ── Configured inputs ─────────────────────────────────────────────────
+      // The backend returns every active field with its current options.
+      // We derive _fieldDefsCache from these keys — no hardcoded list needed.
       Map? rawInputs;
       if (res is Map) {
         final data = res['data'];
@@ -187,44 +281,49 @@ class DropdownConfigService {
         rawInputs ??= res['configuredInputs'] as Map?;
       }
 
-      if (rawInputs != null) {
+      if (rawInputs != null && rawInputs.isNotEmpty) {
         final optionsResult = <String, List<String>>{};
         final statusResult  = <String, String>{};
+        final derivedDefs   = <FieldDefinition>[];
 
         for (final e in rawInputs.entries) {
-          final camelKey = _labelToKey[e.key.toString()] ?? e.key.toString();
+          final labelStr = e.key.toString();
+          // Use static/explicit mapping first; fall back to toCamelCase
+          final camelKey = labelToKey[labelStr] ?? _toCamelCase(labelStr);
           final fieldData = e.value;
 
           if (fieldData is Map) {
-            // New format: { options: [...], status: 'active' }
             final opts = fieldData['options'];
             if (opts is List) {
               optionsResult[camelKey] = opts.map((x) => x.toString()).toList();
             }
             statusResult[camelKey] = (fieldData['status'] ?? 'active').toString();
           } else if (fieldData is List) {
-            // Legacy flat format
             optionsResult[camelKey] = fieldData.map((x) => x.toString()).toList();
             statusResult[camelKey] = 'active';
           }
+
+          // Build field definition from API key — backend is the source of truth
+          final explicitDef = explicitDefs?.firstWhere(
+            (d) => d.label == labelStr,
+            orElse: () => FieldDefinition(key: camelKey, label: labelStr, defaultOptions: []),
+          );
+          derivedDefs.add(explicitDef ??
+              FieldDefinition(key: camelKey, label: labelStr, defaultOptions: []));
         }
 
-        for (final k in defaults.keys) {
-          optionsResult.putIfAbsent(k, () => List<String>.from(defaults[k]!));
-          statusResult.putIfAbsent(k, () => 'active');
-        }
-
-        _dropdownCache = optionsResult;
-        _statusCache   = statusResult;
+        _fieldDefsCache = derivedDefs;
+        _dropdownCache  = optionsResult;
+        _statusCache    = statusResult;
       } else {
-        _dropdownCache = _copyDefaults();
-        _statusCache   = {for (final k in defaults.keys) k: 'active'};
+        // API returned no configuredInputs — fall back to static defaults
+        _fieldDefsCache = explicitDefs ?? _buildDefaultFieldDefs();
+        _dropdownCache  = _copyDefaults();
+        _statusCache    = {for (final d in _fieldDefsCache!) d.key: 'active'};
       }
 
-      // Custom fields
-      final rawFields = (res is Map)
-          ? ((res['data'] is Map ? res['data']['customFields'] : null) ?? res['customFields'])
-          : null;
+      // ── Custom fields ─────────────────────────────────────────────────────
+      final rawFields = _extractFromResponse(res, 'customFields');
       if (rawFields is List) {
         _customFieldsCache = rawFields
             .whereType<Map<String, dynamic>>()
@@ -235,8 +334,10 @@ class DropdownConfigService {
         _customFieldsCache = [];
       }
     } catch (_) {
-      _dropdownCache ??= _copyDefaults();
-      _statusCache   ??= {for (final k in defaults.keys) k: 'active'};
+      _fieldDefsCache   ??= _buildDefaultFieldDefs();
+      _sectionDefsCache ??= Map<String, String>.from(sectionLabels);
+      _dropdownCache    ??= _copyDefaults();
+      _statusCache      ??= {for (final d in _fieldDefsCache!) d.key: 'active'};
       _customFieldsCache ??= [];
     }
   }
@@ -254,15 +355,23 @@ class DropdownConfigService {
   }
 
   Future<void> setStatus(String camelKey, String status) async {
-    _statusCache ??= {for (final k in defaults.keys) k: 'active'};
+    _statusCache ??= {for (final d in fieldDefinitions) d.key: 'active'};
     _statusCache![camelKey] = status;
     await _patchApi();
   }
 
   Future<void> _patchApi() async {
+    // Build key → label mapping from current field definitions
+    final keyToLabel = <String, String>{
+      for (final d in fieldDefinitions) d.key: d.label,
+    };
+    for (final e in fieldLabels.entries) {
+      keyToLabel.putIfAbsent(e.key, () => e.value);
+    }
+
     final configuredInputs = <String, dynamic>{};
     for (final e in (_dropdownCache ?? {}).entries) {
-      final label = fieldLabels[e.key] ?? e.key;
+      final label = keyToLabel[e.key] ?? e.key;
       configuredInputs[label] = {
         'options': e.value,
         'status': _statusCache?[e.key] ?? 'active',
@@ -302,6 +411,8 @@ class DropdownConfigService {
     _dropdownCache = null;
     _statusCache = null;
     _customFieldsCache = null;
+    _fieldDefsCache = null;
+    _sectionDefsCache = null;
   }
 
   // clearCustomFieldsCache kept for compatibility — clearCache() covers both

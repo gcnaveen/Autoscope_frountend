@@ -956,6 +956,7 @@ import 'package:flutter/services.dart'
 import 'package:go_router/go_router.dart';
 
 import '../../../services/service_locator.dart';
+import '../../../services/emirates_service.dart';
 import '../../shared/top_snackbar.dart';
 import '../widgets/public_navbar.dart';
 
@@ -982,6 +983,47 @@ class UpperCaseTextFormatter extends TextInputFormatter {
     );
   }
 }
+
+// UAE Emirates → Areas reference data (static, no API needed)
+const _kUaeAreas = <String, List<String>>{
+  'Abu Dhabi': [
+    'Abu Dhabi City', 'Al Ain', 'Al Dhafra', 'Khalifa City',
+    'Mohammed Bin Zayed City', 'Mussafah', 'Baniyas', 'Shakhbout City',
+    'Yas Island', 'Saadiyat Island', 'Al Reem Island', 'Al Raha',
+    'Corniche Area', 'Al Maryah Island', 'Al Shamkha', 'Al Wathba',
+    'Ruwais', 'Liwa Oasis', 'Madinat Zayed', 'Ghayathi', 'Mirfa',
+  ],
+  'Dubai': [
+    'Deira', 'Bur Dubai', 'Downtown Dubai', 'Business Bay', 'Dubai Marina',
+    'Jumeirah', 'Jumeirah Village Circle (JVC)', 'Jumeirah Lake Towers (JLT)',
+    'Al Barsha', 'Palm Jumeirah', 'Arabian Ranches', 'Mirdif',
+    'International City', 'Silicon Oasis', 'Dubai Sports City', 'Motor City',
+    'Dubai Hills Estate', 'Dubai South', 'Al Quoz', 'Karama', 'Satwa',
+    'Discovery Gardens',
+  ],
+  'Sharjah': [
+    'Sharjah City', 'Al Nahda', 'Al Majaz', 'Al Khan', 'Muwaileh',
+    'University City', 'Rolla', 'Al Qasimia', 'Al Taawun', 'Al Dhaid',
+    'Kalba', 'Khor Fakkan', 'Dibba Al Hisn', 'Hamriyah', 'Mleiha',
+  ],
+  'Ajman': [
+    'Ajman City', 'Al Nuaimiya', 'Al Rashidiya', 'Al Jurf', 'Al Mowaihat',
+    'Al Rawda', 'Emirates City', 'Masfout', 'Manama',
+  ],
+  'Umm Al Quwain': [
+    'Umm Al Quwain City', 'Al Salamah', 'Al Raas', 'Falaj Al Mualla',
+    'Al Sinniyah Island',
+  ],
+  'Ras Al Khaimah': [
+    'Ras Al Khaimah City', 'Al Nakheel', 'Al Hamra', 'Mina Al Arab',
+    'Julphar', 'Khuzam', 'Al Marjan Island', 'Digdaga', 'Shaam', 'Rams',
+    'Masafi',
+  ],
+  'Fujairah': [
+    'Fujairah City', 'Dibba Fujairah', 'Al Faseel', 'Sakamkam', 'Mirbah',
+    'Qidfa', 'Masafi', 'Al Bidyah', 'Madhab',
+  ],
+};
 
 class RequestPage extends StatefulWidget {
   const RequestPage({super.key});
@@ -1021,10 +1063,15 @@ class _RequestPageState extends State<RequestPage> {
 
   // Location
   final addressCtrl = TextEditingController();
-  String? selectedCity;
-  bool _cityIsOther = false;
-  final otherCityCtrl = TextEditingController();
-  final stateCtrl = TextEditingController();
+
+  // Emirates & Areas — loaded from API; falls back to _kUaeAreas if API fails
+  List<EmirateDto> _emirates = const [];
+  bool _loadingEmirates = false;
+  String? selectedEmirate;
+  List<String> _areaOptions = const [];
+  String? selectedArea;
+  bool _areaIsOther = false;
+  final otherAreaCtrl = TextEditingController();
 
   // Notes
   final notesCtrl = TextEditingController();
@@ -1062,8 +1109,9 @@ class _RequestPageState extends State<RequestPage> {
   void initState() {
     super.initState();
 
-    // ✅ Load makes from API once
+    // ✅ Load makes and emirates from API once
     _loadMakes();
+    _loadEmirates();
 
     if (phoneCtrl.text.isEmpty) phoneCtrl.text = UaEPhoneInputFormatter.prefix;
   }
@@ -1086,13 +1134,12 @@ class _RequestPageState extends State<RequestPage> {
     preferredTimeCtrl.dispose();
 
     addressCtrl.dispose();
-    stateCtrl.dispose();
+    otherAreaCtrl.dispose();
 
     notesCtrl.dispose();
 
     otherMakeCtrl.dispose();
     otherModelCtrl.dispose();
-    otherCityCtrl.dispose();
 
     super.dispose();
   }
@@ -1382,6 +1429,20 @@ Dummy Terms & Conditions
     }
   }
 
+  Future<void> _loadEmirates() async {
+    setState(() => _loadingEmirates = true);
+    try {
+      final list = await emiratesService.listEmirates();
+      if (!mounted) return;
+      // Only replace if the API returned data; otherwise keep fallback
+      if (list.isNotEmpty) setState(() => _emirates = list);
+    } catch (_) {
+      // Silently fall back to _kUaeAreas constant
+    } finally {
+      if (mounted) setState(() => _loadingEmirates = false);
+    }
+  }
+
   bool _applyMakeModelToControllersNoNetwork() {
     // MAKE
     String make = '';
@@ -1541,8 +1602,8 @@ Dummy Terms & Conditions
         "preferredTime": preferredTimeCtrl.text.trim(),
         "location": {
           "address": addressCtrl.text.trim(),
-          "city": _cityIsOther ? otherCityCtrl.text.trim() : (selectedCity ?? ''),
-          "state": stateCtrl.text.trim(),
+          "city": selectedEmirate ?? '',
+          "state": _areaIsOther ? otherAreaCtrl.text.trim() : (selectedArea ?? ''),
         },
         "notes": notesCtrl.text.trim(),
       };
@@ -2110,67 +2171,102 @@ Dummy Terms & Conditions
                                     ),
                                     field(
                                       DropdownButtonFormField<String>(
-                                        value: selectedCity,
+                                        initialValue: selectedEmirate,
                                         autovalidateMode: AutovalidateMode.onUserInteraction,
                                         decoration: _dec(
-                                          label: 'City',
-                                          hint: 'Select city',
+                                          label: 'City / Emirate',
+                                          hint: _loadingEmirates
+                                              ? 'Loading…'
+                                              : 'Select emirate',
                                           icon: Icons.location_city_outlined,
                                         ),
-                                        items: const [
-                                          'Abu Dhabi',
-                                          'Ajman',
-                                          'Dubai',
-                                          'Fujairah',
-                                          'Ras Al Khaimah',
-                                          'Sharjah',
-                                          'Umm Al Quwain',
-                                          'Other',
-                                        ].map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-                                        onChanged: (v) {
-                                          setState(() {
-                                            selectedCity = v;
-                                            _cityIsOther = v == 'Other';
-                                            if (!_cityIsOther) otherCityCtrl.clear();
-                                          });
-                                        },
-                                        validator: (v) => v == null ? 'City is required' : null,
+                                        items: (_emirates.isNotEmpty
+                                                ? _emirates.map((e) => e.name)
+                                                : _kUaeAreas.keys)
+                                            .map((e) => DropdownMenuItem(
+                                                value: e, child: Text(e)))
+                                            .toList(),
+                                        onChanged: _loadingEmirates
+                                            ? null
+                                            : (v) {
+                                                setState(() {
+                                                  selectedEmirate = v;
+                                                  selectedArea = null;
+                                                  _areaIsOther = false;
+                                                  otherAreaCtrl.clear();
+                                                  if (_emirates.isNotEmpty) {
+                                                    final entry = _emirates.firstWhere(
+                                                      (e) => e.name == v,
+                                                      orElse: () => const EmirateDto(
+                                                          id: '', name: '', isActive: true, areas: []),
+                                                    );
+                                                    _areaOptions = [
+                                                      ...entry.areas
+                                                          .where((a) => a.isActive)
+                                                          .map((a) => a.name),
+                                                      'OTHER',
+                                                    ];
+                                                  } else {
+                                                    _areaOptions = [
+                                                      ...(_kUaeAreas[v] ?? []),
+                                                      'OTHER',
+                                                    ];
+                                                  }
+                                                });
+                                              },
+                                        validator: (v) =>
+                                            v == null ? 'City is required' : null,
                                       ),
                                     ),
-                                    if (_cityIsOther)
+                                    if (selectedEmirate != null)
+                                      field(
+                                        DropdownButtonFormField<String>(
+                                          key: ValueKey(selectedEmirate),
+                                          initialValue: selectedArea,
+                                          autovalidateMode: AutovalidateMode.onUserInteraction,
+                                          decoration: _dec(
+                                            label: 'Area / Region',
+                                            hint: 'Select area',
+                                            icon: Icons.map_outlined,
+                                          ),
+                                          items: _areaOptions
+                                              .map((a) => DropdownMenuItem(
+                                                  value: a, child: Text(a)))
+                                              .toList(),
+                                          onChanged: (v) {
+                                            setState(() {
+                                              selectedArea = v;
+                                              _areaIsOther = v == 'OTHER';
+                                              if (!_areaIsOther) otherAreaCtrl.clear();
+                                            });
+                                          },
+                                          validator: (v) =>
+                                              v == null ? 'Area is required' : null,
+                                        ),
+                                      ),
+                                    if (_areaIsOther)
                                       field(
                                         TextFormField(
-                                          controller: otherCityCtrl,
+                                          controller: otherAreaCtrl,
                                           autovalidateMode: AutovalidateMode.onUserInteraction,
                                           inputFormatters: [
-                                            LengthLimitingTextInputFormatter(40),
+                                            LengthLimitingTextInputFormatter(60),
                                             _upper,
                                           ],
                                           decoration: _dec(
-                                            label: 'Other City',
-                                            hint: 'ENTER CITY NAME',
+                                            label: 'Other Area',
+                                            hint: 'ENTER AREA NAME',
                                             icon: Icons.edit_outlined,
                                           ),
                                           validator: (v) {
-                                            if (!_cityIsOther) return null;
-                                            if (v == null || v.trim().isEmpty) return 'City is required';
+                                            if (!_areaIsOther) return null;
+                                            if (v == null || v.trim().isEmpty) {
+                                              return 'Area is required';
+                                            }
                                             return null;
                                           },
                                         ),
                                       ),
-                                    field(
-                                      TextFormField(
-                                        controller: stateCtrl,
-                                        autovalidateMode: AutovalidateMode.onUserInteraction,
-                                        inputFormatters: _nameFormatters(max: 30),
-                                        decoration: _dec(
-                                          label: 'State / Area',
-                                          hint: 'UAE',
-                                          icon: Icons.map_outlined,
-                                        ),
-                                        validator: (v) => _req(v, msg: 'State is required'),
-                                      ),
-                                    ),
                                   ],
                                 ),
 
