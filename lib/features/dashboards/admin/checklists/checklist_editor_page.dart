@@ -71,18 +71,9 @@ class _ChecklistEditorPageState extends State<ChecklistEditorPage> {
       0.0, (s, it) => s + (double.tryParse(it.weightageCtrl.text.trim()) ?? 0));
 
   Widget _buildWeightageTotal(double total, String label) {
-    final over = total > 100;
     final exact = total == 100;
-    final color = over
-        ? Colors.red.shade700
-        : exact
-            ? Colors.green.shade700
-            : Colors.black45;
-    final bg = over
-        ? Colors.red.shade50
-        : exact
-            ? Colors.green.shade50
-            : Colors.grey.shade200;
+    final color = exact ? Colors.green.shade700 : Colors.red.shade700;
+    final bg    = exact ? Colors.green.shade50   : Colors.red.shade50;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
       color: Colors.grey.shade50,
@@ -393,17 +384,17 @@ class _ChecklistEditorPageState extends State<ChecklistEditorPage> {
       }
     }
     final secTotal = _sectionWeightageTotal;
-    if (secTotal > 100) {
+    if (secTotal != 100) {
       showTopSnack(context,
-          'Section weightages total ${secTotal % 1 == 0 ? secTotal.toInt() : secTotal.toStringAsFixed(1)}% — must not exceed 100%',
+          'Section weightages total ${secTotal % 1 == 0 ? secTotal.toInt() : secTotal.toStringAsFixed(1)}% — must equal exactly 100%',
           variant: 'error');
       return false;
     }
     for (int i = 0; i < _sections.length; i++) {
       final t = _itemWeightageTotal(i);
-      if (t > 100) {
+      if (t != 100) {
         showTopSnack(context,
-            'Item weightages in "${_sections[i].typeNameCtrl.text}" total ${t % 1 == 0 ? t.toInt() : t.toStringAsFixed(1)}% — must not exceed 100%',
+            'Item weightages in "${_sections[i].typeNameCtrl.text}" total ${t % 1 == 0 ? t.toInt() : t.toStringAsFixed(1)}% — must equal exactly 100%',
             variant: 'error');
         return false;
       }

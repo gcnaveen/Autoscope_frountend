@@ -3,7 +3,6 @@
 import 'dart:html' as html;
 
 import 'dart:async';
-import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui_web' as ui;
 
@@ -75,8 +74,6 @@ class _WebCameraCaptureDialogState extends State<_WebCameraCaptureDialog> {
 
   StreamSubscription? _subLoadedMetadata;
   StreamSubscription? _subCanPlay;
-
-  final GlobalKey _previewKey = GlobalKey();
 
   @override
   void initState() {
@@ -195,51 +192,40 @@ class _WebCameraCaptureDialogState extends State<_WebCameraCaptureDialog> {
     return c.future;
   }
 
-  Size _previewSize() {
-    final ctx = _previewKey.currentContext;
-    final ro = ctx?.findRenderObject();
-    if (ro is RenderBox) return ro.size;
-    return const Size(0, 0);
-  }
-
-  /// ✅ Capture exactly what user sees (objectFit: cover)
+  /// Capture at a fixed 4:3 aspect ratio regardless of device orientation.
+  /// Ignores the preview container size so portrait and landscape shots
+  /// always produce the same shape output (1440 × 1080 px).
   Future<Uint8List> _captureVisibleFrame() async {
     final video = _video!;
-    final vw = (video.videoWidth > 0) ? video.videoWidth.toDouble() : 1920.0;
+    final vw = (video.videoWidth  > 0) ? video.videoWidth.toDouble()  : 1920.0;
     final vh = (video.videoHeight > 0) ? video.videoHeight.toDouble() : 1080.0;
 
-    final ps = _previewSize();
-    // If preview size isn't ready, fallback to full frame
-    final cw = (ps.width > 0) ? ps.width : vw;
-    final ch = (ps.height > 0) ? ps.height : vh;
+    // Always output 4:3 landscape — consistent across portrait/landscape capture
+    const kAspect = 4.0 / 3.0;
+    const kOutW   = 1440;
+    const kOutH   = 1080;
 
-    // objectFit: cover => scale by max ratio
-    final scale = math.max(cw / vw, ch / vh);
-
-    // Divide crop area by zoom so canvas captures the zoomed-in center
-    final cropW = (cw / scale) / _zoom;
-    final cropH = (ch / scale) / _zoom;
+    // Center-crop the raw video frame to kAspect, then shrink by zoom factor.
+    double cropW, cropH;
+    if (vw / vh >= kAspect) {
+      // Video wider than 4:3 — constrain by height, trim sides
+      cropH = vh / _zoom;
+      cropW = cropH * kAspect;
+    } else {
+      // Video taller than 4:3 — constrain by width, trim top/bottom
+      cropW = vw / _zoom;
+      cropH = cropW / kAspect;
+    }
 
     final sx = (vw - cropW) / 2.0;
     final sy = (vh - cropH) / 2.0;
 
-    final outW = cropW.round().clamp(320, 4096);
-    final outH = cropH.round().clamp(320, 4096);
-
-    final canvas = html.CanvasElement(width: outW, height: outH);
-    final ctx = canvas.context2D;
-
-    // Draw cropped portion to canvas
-    ctx.drawImageScaledFromSource(
+    final canvas = html.CanvasElement(width: kOutW, height: kOutH);
+    canvas.context2D.drawImageScaledFromSource(
       video,
-      sx,
-      sy,
-      cropW,
-      cropH,
-      0,
-      0,
-      outW.toDouble(),
-      outH.toDouble(),
+      sx.clamp(0.0, vw), sy.clamp(0.0, vh),
+      cropW.clamp(1.0, vw), cropH.clamp(1.0, vh),
+      0, 0, kOutW.toDouble(), kOutH.toDouble(),
     );
 
     final blob = await _canvasToBlob(canvas, 'image/jpeg', 0.92);
@@ -372,7 +358,6 @@ class _WebCameraCaptureDialogState extends State<_WebCameraCaptureDialog> {
               // Live preview
               Positioned.fill(
                 child: Container(
-                  key: _previewKey,
                   color: Colors.black,
                   child: _ready
                       ? HtmlElementView(viewType: _viewType)

@@ -645,6 +645,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         icon: Icons.rate_review_outlined,
                         onTap: () => context.go('/dashboard/admin/reviews'),
                       ),
+                      _KpiActionCard(
+                        kpiTitle: 'Report Settings',
+                        kpiValue: 'Edit',
+                        kpiSubtitle: 'Configure inspection report disclaimer',
+                        icon: Icons.description_outlined,
+                        onTap: () => context.go('/dashboard/admin/report-settings'),
+                      ),
                     ],
                   ),
 

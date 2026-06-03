@@ -12,11 +12,13 @@ import 'user_requests_service.dart';
 import 'reviews_service.dart';
 import 'dropdown_config_service.dart';
 import 'emirates_service.dart';
+import 'report_settings_service.dart';
 
 
 final apiClient = ApiClient(baseUrl: ApiConfig.apiBaseUrl);
 final dropdownConfigService = DropdownConfigService(apiClient: apiClient);
 final emiratesService = EmiratesService(apiClient: apiClient);
+final reportSettingsService = ReportSettingsService(apiClient: apiClient);
 
 final authService = AuthService(apiClient: apiClient);
 final usersService = UsersService(apiClient: apiClient);

@@ -227,6 +227,7 @@ import '../features/dashboards/admin/vehicle_catalog_page.dart';
 import '../features/dashboards/admin/configure_inputs/configure_inputs_page.dart';
 import '../features/dashboards/admin/vehicle_inputs/vehicle_inputs_hub_page.dart';
 import '../features/dashboards/admin/emirates/emirates_page.dart';
+import '../features/dashboards/admin/report_settings/report_settings_page.dart';
 
 import '../features/profile/profile_page.dart';
 
@@ -385,6 +386,10 @@ GoRouter buildRouter() {
       GoRoute(
         path: '/dashboard/admin/emirates',
         builder: (context, state) => const EmiratesPage(),
+      ),
+      GoRoute(
+        path: '/dashboard/admin/report-settings',
+        builder: (context, state) => const ReportSettingsPage(),
       ),
 
       GoRoute(

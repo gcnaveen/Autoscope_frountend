@@ -23,11 +23,24 @@ class InspectionReportPage extends StatefulWidget {
 
 class _InspectionReportPageState extends State<InspectionReportPage> {
   late Future<Map<String, dynamic>> _future;
+  List<String>? _disclaimerPoints;
 
   @override
   void initState() {
     super.initState();
     _future = inspectionRequestsService.getInspectionById(widget.inspectionId);
+    _loadDisclaimer();
+  }
+
+  Future<void> _loadDisclaimer() async {
+    try {
+      final points = await reportSettingsService.loadDisclaimer();
+      if (mounted && points.isNotEmpty) {
+        setState(() => _disclaimerPoints = points);
+      }
+    } catch (_) {
+      // silently fall back to the hardcoded list in _DisclaimerContent
+    }
   }
 
   void _retry() {
@@ -92,7 +105,11 @@ class _InspectionReportPageState extends State<InspectionReportPage> {
                 );
               }
 
-              return _ReportView(inspection: inspection, onRetry: _retry);
+              return _ReportView(
+                inspection: inspection,
+                onRetry: _retry,
+                disclaimerPoints: _disclaimerPoints,
+              );
             },
           ),
         ),
@@ -108,7 +125,8 @@ class _InspectionReportPageState extends State<InspectionReportPage> {
 class _ReportView extends StatefulWidget {
   final Map<String, dynamic> inspection;
   final VoidCallback onRetry;
-  const _ReportView({required this.inspection, required this.onRetry});
+  final List<String>? disclaimerPoints;
+  const _ReportView({required this.inspection, required this.onRetry, this.disclaimerPoints});
 
   @override
   State<_ReportView> createState() => _ReportViewState();
@@ -130,6 +148,7 @@ class _ReportViewState extends State<_ReportView> {
   int _viewerIndex = 0;
 
   int _heroIndex = 0;
+  final _photosKey = GlobalKey();
 
   late final List<_PhotoRef> _photos;
   late final Map<String, List<int>> _sectionToPhotoIdx;
@@ -258,6 +277,23 @@ class _ReportViewState extends State<_ReportView> {
     if (_photos.isEmpty) return;
     setState(() => _heroIndex = index.clamp(0, _photos.length - 1));
     if (openViewer) _openViewer(_heroIndex);
+  }
+
+  void _scrollToPhotos() {
+    final ctx = _photosKey.currentContext;
+    if (ctx == null || !_scrollCtrl.hasClients) return;
+    final box = ctx.findRenderObject() as RenderBox?;
+    if (box == null || !box.attached) return;
+    final anchorBox = _scrollAnchorKey.currentContext
+        ?.findRenderObject() as RenderBox?;
+    if (anchorBox == null) return;
+    final target = (box.localToGlobal(Offset.zero).dy -
+            anchorBox.localToGlobal(Offset.zero).dy)
+        .clamp(_scrollCtrl.position.minScrollExtent,
+            _scrollCtrl.position.maxScrollExtent);
+    _scrollCtrl.animateTo(target,
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeInOut);
   }
 
   void _openUrlInViewer(String url) {
@@ -603,6 +639,14 @@ class _ReportViewState extends State<_ReportView> {
               damages: damages,
               carTopAssetPath: kCarTopDamageAsset,
               onOpenImage: (url) => _openUrlInViewer(url),
+              onNavigateToPhoto: (url) {
+                final idx = _photos.indexWhere((p) => p.url == url);
+                if (idx >= 0) {
+                  _setHero(idx);
+                  WidgetsBinding.instance.addPostFrameCallback(
+                      (_) => _scrollToPhotos());
+                }
+              },
               scrollCtrl: _scrollCtrl,
               scrollAnchorKey: _scrollAnchorKey,
             ),
@@ -618,15 +662,19 @@ class _ReportViewState extends State<_ReportView> {
             const SizedBox(height: 12),
 
             // Photos
-            _PhotosBlock(
-              photos: _photos,
-              sectionToPhotoIdx: _sectionToPhotoIdx,
-              heroIndex: _heroIndex,
-              onHeroOpen: () => _openViewer(_heroIndex),
-              onThumbClick: (index) => _setHero(index, openViewer: false),
-              onOpenViewer: () => _openViewer(_heroIndex),
-              onPrevHero: _prevHero,
-              onNextHero: _nextHero,
+            SizedBox(
+              key: _photosKey,
+              width: double.infinity,
+              child: _PhotosBlock(
+                photos: _photos,
+                sectionToPhotoIdx: _sectionToPhotoIdx,
+                heroIndex: _heroIndex,
+                onHeroOpen: () => _openViewer(_heroIndex),
+                onThumbClick: (index) => _setHero(index, openViewer: false),
+                onOpenViewer: () => _openViewer(_heroIndex),
+                onPrevHero: _prevHero,
+                onNextHero: _nextHero,
+              ),
             ),
 
             // ✅ Videos
@@ -678,7 +726,7 @@ class _ReportViewState extends State<_ReportView> {
             // Disclaimer
             _Card(
               title: 'Disclaimer',
-              child: const _DisclaimerContent(),
+              child: _DisclaimerContent(points: widget.disclaimerPoints),
             ),
 
             const SizedBox(height: 12),
@@ -1234,6 +1282,7 @@ class _DamagesBlock extends StatefulWidget {
   final List<_DamagePoint> damages;
   final String carTopAssetPath;
   final void Function(String url) onOpenImage;
+  final void Function(String url)? onNavigateToPhoto;
   final ScrollController? scrollCtrl;
   final GlobalKey? scrollAnchorKey;
 
@@ -1241,6 +1290,7 @@ class _DamagesBlock extends StatefulWidget {
     required this.damages,
     required this.carTopAssetPath,
     required this.onOpenImage,
+    this.onNavigateToPhoto,
     this.scrollCtrl,
     this.scrollAnchorKey,
   });
@@ -1300,7 +1350,11 @@ class _DamagesBlockState extends State<_DamagesBlock> {
                   _selectedIdx = toggling ? null : newIdx;
                 });
                 if (!toggling) {
-                  WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToPreview());
+                  if (d.images.isNotEmpty && widget.onNavigateToPhoto != null) {
+                    widget.onNavigateToPhoto!(d.images.first);
+                  } else {
+                    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToPreview());
+                  }
                 }
               },
             ),
@@ -1313,7 +1367,6 @@ class _DamagesBlockState extends State<_DamagesBlock> {
                 child: _DamagePreview(
                   damage: selected,
                   index: _selectedIdx! + 1,
-                  onOpenImage: widget.onOpenImage,
                 ),
               ),
             ],
@@ -1350,10 +1403,10 @@ class _CarDamageMapState extends State<_CarDamageMap> {
         child: LayoutBuilder(
           builder: (context, c) {
             final w = c.maxWidth;
-            // Car image is portrait (≈0.764:1); rotating 90° CW → landscape ratio ≈ 1.308:1
+            // Portrait image (574×751) rotated 90° CCW → landscape display
             const imgW = 574.0;
             const imgH = 751.0;
-            final h = w * imgW / imgH; // landscape height after 90° rotation
+            final h = w * imgW / imgH; // landscape height after 90° CCW rotation
 
             return SizedBox(
               width: w,
@@ -1362,7 +1415,7 @@ class _CarDamageMapState extends State<_CarDamageMap> {
                 children: [
                   Positioned.fill(
                     child: RotatedBox(
-                      quarterTurns: 1, // 90° CW → portrait car becomes landscape
+                      quarterTurns: 3, // 90° CCW — landscape, front/rear correctly oriented
                       child: Image.asset(
                         widget.assetPath,
                         fit: BoxFit.fill,
@@ -1373,12 +1426,12 @@ class _CarDamageMapState extends State<_CarDamageMap> {
                       ),
                     ),
                   ),
-                  // After 90° CW rotation: new_x = old_y, new_y = 1 - old_x
+                  // After 90° CCW rotation: new_x = old_y, new_y = old_x
                   for (int i = 0; i < widget.damages.length; i++)
                     _DamageMarker(
                       index: i + 1,
                       left: (widget.damages[i].y * w).clamp(0, w),
-                      top: ((1 - widget.damages[i].x) * h).clamp(0, h),
+                      top: (widget.damages[i].x * h).clamp(0, h),
                       onTap: () => widget.onTapMarker(widget.damages[i], i + 1),
                     ),
                 ],
@@ -1446,17 +1499,12 @@ class _DamageMarker extends StatelessWidget {
 class _DamagePreview extends StatelessWidget {
   final _DamagePoint damage;
   final int index;
-  final void Function(String url) onOpenImage;
 
-  const _DamagePreview({
-    required this.damage,
-    required this.index,
-    required this.onOpenImage,
-  });
+  const _DamagePreview({required this.damage, required this.index});
 
   @override
   Widget build(BuildContext context) {
-    final desc = damage.description.trim().isEmpty ? '-' : damage.description.trim();
+    final desc = damage.description.trim();
 
     return Container(
       padding: const EdgeInsets.all(12),
@@ -1465,41 +1513,52 @@ class _DamagePreview extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
       ),
-      child: Column(
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Container(
-                width: 26,
-                height: 26,
-                decoration: BoxDecoration(
-                  color: Colors.redAccent.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(color: Colors.redAccent.withValues(alpha: 0.25)),
-                ),
-                child: Center(
-                  child: Text(
-                    '$index',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w900,
-                      color: Colors.redAccent,
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
+          Container(
+            width: 26, height: 26,
+            decoration: BoxDecoration(
+              color: Colors.redAccent.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: Colors.redAccent.withValues(alpha: 0.25)),
+            ),
+            child: Center(
+              child: Text(
+                '$index',
+                style: const TextStyle(
+                    fontWeight: FontWeight.w900,
+                    color: Colors.redAccent,
+                    fontSize: 12),
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  'Damage #$index',
-                  style: const TextStyle(fontWeight: FontWeight.w900),
-                ),
-              ),
-            ],
+            ),
           ),
-          const SizedBox(height: 8),
-          Text(desc, style: const TextStyle(color: Colors.black87)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Damage #$index',
+                    style: const TextStyle(fontWeight: FontWeight.w900)),
+                if (desc.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(desc,
+                      style: const TextStyle(
+                          color: Colors.black87, fontSize: 13)),
+                ],
+                if (damage.images.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    '${damage.images.length} photo${damage.images.length > 1 ? 's' : ''} — see Photos section below',
+                    style: const TextStyle(
+                        color: Colors.black45,
+                        fontSize: 12,
+                        fontStyle: FontStyle.italic),
+                  ),
+                ],
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -2556,9 +2615,10 @@ class _Card extends StatelessWidget {
 // ─── Disclaimer ───────────────────────────────────────────────────────────────
 
 class _DisclaimerContent extends StatelessWidget {
-  const _DisclaimerContent();
+  final List<String>? points;
+  const _DisclaimerContent({this.points});
 
-  static const _points = [
+  static const _fallback = [
     'This report reflects the visible condition of the vehicle only at the time and date of inspection.',
     'The inspection is provided solely as an aid for evaluating the vehicle\'s general condition and does not constitute a warranty, guarantee, or recommendation to buy or sell the vehicle.',
     'The inspection conducted by Auto Scope is limited strictly to the items listed in this report and is visual, non-invasive, and non-mechanical in nature.',
@@ -2573,10 +2633,11 @@ class _DisclaimerContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final items = (points != null && points!.isNotEmpty) ? points! : _fallback;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        for (int i = 0; i < _points.length; i++) ...[
+        for (int i = 0; i < items.length; i++) ...[
           if (i > 0) const SizedBox(height: 10),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -2594,7 +2655,7 @@ class _DisclaimerContent extends StatelessWidget {
               ),
               Expanded(
                 child: Text(
-                  _points[i],
+                  items[i],
                   style: const TextStyle(
                     color: Colors.black87,
                     fontSize: 13,
@@ -2669,7 +2730,7 @@ class _StampBox extends StatelessWidget {
           child: Image.asset(
             'assets/images/company_stamp.png',
             fit: BoxFit.contain,
-            errorBuilder: (_, __, ___) => Container(
+            errorBuilder: (_, _, _) => Container(
               width: 140,
               height: 140,
               decoration: BoxDecoration(

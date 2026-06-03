@@ -134,6 +134,11 @@ class _BreadcrumbBar extends StatelessWidget {
         crumbs.add(_Crumb('Emirates & Areas', null, clickable: false));
         return crumbs;
       }
+      if (location == '/dashboard/admin/report-settings') {
+        crumbs.add(_Crumb('Admin', '/dashboard/admin', clickable: true));
+        crumbs.add(_Crumb('Report Settings', null, clickable: false));
+        return crumbs;
+      }
 
       // user dashboard
       if (location == '/dashboard/user') {
