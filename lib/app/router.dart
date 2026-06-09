@@ -370,7 +370,14 @@ GoRouter buildRouter() {
         path: '/dashboard/admin/inspections/:inspectionId/report',
         builder: (context, state) {
           final id = state.pathParameters['inspectionId']!;
-          return InspectionReportPage(inspectionId: id);
+          final printMode = state.uri.queryParameters['print'] == '1';
+          final isForApproval = state.uri.queryParameters['review'] == '1';
+          return InspectionReportPage(
+            inspectionId: id,
+            isAdminContext: !printMode,
+            printMode: printMode,
+            isForApproval: isForApproval && !printMode,
+          );
         },
       ),
 
@@ -396,7 +403,11 @@ GoRouter buildRouter() {
         path: '/dashboard/user/inspections/:inspectionId/report',
         builder: (context, state) {
           final id = state.pathParameters['inspectionId']!;
-          return InspectionReportPage(inspectionId: id);
+          final printMode = state.uri.queryParameters['print'] == '1';
+          return InspectionReportPage(
+            inspectionId: id,
+            printMode: printMode,
+          );
         },
       ),
     ],

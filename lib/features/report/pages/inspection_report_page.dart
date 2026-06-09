@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 // ignore: avoid_web_libraries_in_flutter
 import 'dart:html' as html;
 import 'dart:ui_web' as ui;
+import 'dart:typed_data';
 
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
@@ -10,12 +11,22 @@ import 'package:flutter/material.dart';
 import '../../shared/app_shell.dart';
 import '../../../services/service_locator.dart';
 import '../../shared/top_snackbar.dart';
+import '../../shared/widgets/web_camera_capture_web.dart';
 
 const String kCarTopDamageAsset = 'assets/images/car_views/top.jpg';
 
 class InspectionReportPage extends StatefulWidget {
   final String inspectionId;
-  const InspectionReportPage({super.key, required this.inspectionId});
+  final bool isAdminContext;
+  final bool printMode;
+  final bool isForApproval;
+  const InspectionReportPage({
+    super.key,
+    required this.inspectionId,
+    this.isAdminContext = false,
+    this.printMode = false,
+    this.isForApproval = false,
+  });
 
   @override
   State<InspectionReportPage> createState() => _InspectionReportPageState();
@@ -24,6 +35,7 @@ class InspectionReportPage extends StatefulWidget {
 class _InspectionReportPageState extends State<InspectionReportPage> {
   late Future<Map<String, dynamic>> _future;
   List<String>? _disclaimerPoints;
+  bool _autoPrintScheduled = false;
 
   @override
   void initState() {
@@ -45,75 +57,103 @@ class _InspectionReportPageState extends State<InspectionReportPage> {
 
   void _retry() {
     setState(() {
+      _autoPrintScheduled = false;
       _future = inspectionRequestsService.getInspectionById(widget.inspectionId);
+    });
+  }
+
+  void _scheduleAutoPrint() {
+    if (_autoPrintScheduled || !widget.printMode || !kIsWeb) return;
+    _autoPrintScheduled = true;
+    // 2-second delay so network images have time to load before printing
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) html.window.print();
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    return AppShell(
-      title: 'Inspection Report',
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1150),
-          child: FutureBuilder<Map<String, dynamic>>(
-            future: _future,
-            builder: (context, snap) {
-              if (snap.connectionState == ConnectionState.waiting) {
-                return const Padding(
-                  padding: EdgeInsets.all(40),
-                  child: Center(child: CircularProgressIndicator()),
-                );
-              }
-
-              if (snap.hasError) {
-                return Padding(
-                  padding: const EdgeInsets.all(18),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Failed to load report: ${snap.error}'),
-                      const SizedBox(height: 12),
-                      FilledButton.icon(
-                        onPressed: _retry,
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('Retry'),
-                      )
-                    ],
-                  ),
-                );
-              }
-
-              final root = snap.data ?? const <String, dynamic>{};
-              final success = root['success'] == true;
-              final message = (root['message'] ?? '').toString();
-
-              final data = (root['data'] is Map)
-                  ? Map<String, dynamic>.from(root['data'] as Map)
-                  : const <String, dynamic>{};
-
-              final inspection = (data['inspection'] is Map)
-                  ? Map<String, dynamic>.from(data['inspection'] as Map)
-                  : const <String, dynamic>{};
-
-              if (!success || inspection.isEmpty) {
-                return Padding(
-                  padding: const EdgeInsets.all(18),
-                  child: Text(
-                    inspection.isEmpty ? 'No inspection data found. $message' : 'Failed to load report. $message',
-                  ),
-                );
-              }
-
-              return _ReportView(
-                inspection: inspection,
-                onRetry: _retry,
-                disclaimerPoints: _disclaimerPoints,
+    final body = Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 1150),
+        child: FutureBuilder<Map<String, dynamic>>(
+          future: _future,
+          builder: (context, snap) {
+            if (snap.connectionState == ConnectionState.waiting) {
+              return const Padding(
+                padding: EdgeInsets.all(40),
+                child: Center(child: CircularProgressIndicator()),
               );
-            },
-          ),
+            }
+
+            if (snap.hasError) {
+              return Padding(
+                padding: const EdgeInsets.all(18),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Failed to load report: ${snap.error}'),
+                    const SizedBox(height: 12),
+                    FilledButton.icon(
+                      onPressed: _retry,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Retry'),
+                    )
+                  ],
+                ),
+              );
+            }
+
+            final root = snap.data ?? const <String, dynamic>{};
+            final success = root['success'] == true;
+            final message = (root['message'] ?? '').toString();
+
+            final data = (root['data'] is Map)
+                ? Map<String, dynamic>.from(root['data'] as Map)
+                : const <String, dynamic>{};
+
+            final inspection = (data['inspection'] is Map)
+                ? Map<String, dynamic>.from(data['inspection'] as Map)
+                : const <String, dynamic>{};
+
+            if (!success || inspection.isEmpty) {
+              return Padding(
+                padding: const EdgeInsets.all(18),
+                child: Text(
+                  inspection.isEmpty ? 'No inspection data found. $message' : 'Failed to load report. $message',
+                ),
+              );
+            }
+
+            // Schedule auto-print once data is ready (print mode only)
+            if (widget.printMode) {
+              WidgetsBinding.instance.addPostFrameCallback((_) => _scheduleAutoPrint());
+            }
+
+            return _ReportView(
+              inspection: inspection,
+              onRetry: _retry,
+              disclaimerPoints: _disclaimerPoints,
+              isAdminContext: widget.isAdminContext,
+              printMode: widget.printMode,
+              isForApproval: widget.isForApproval,
+            );
+          },
         ),
       ),
+    );
+
+    // Print mode: no AppShell, plain white Scaffold so only the report prints
+    if (widget.printMode) {
+      return Scaffold(
+        backgroundColor: Colors.white,
+        body: body,
+      );
+    }
+
+    return AppShell(
+      title: 'Inspection Report',
+      child: body,
     );
   }
 }
@@ -126,7 +166,17 @@ class _ReportView extends StatefulWidget {
   final Map<String, dynamic> inspection;
   final VoidCallback onRetry;
   final List<String>? disclaimerPoints;
-  const _ReportView({required this.inspection, required this.onRetry, this.disclaimerPoints});
+  final bool isAdminContext;
+  final bool printMode;
+  final bool isForApproval;
+  const _ReportView({
+    required this.inspection,
+    required this.onRetry,
+    this.disclaimerPoints,
+    this.isAdminContext = false,
+    this.printMode = false,
+    this.isForApproval = false,
+  });
 
   @override
   State<_ReportView> createState() => _ReportViewState();
@@ -734,14 +784,26 @@ class _ReportViewState extends State<_ReportView> {
             // Company signature & stamp
             _Card(
               title: 'Authorized By',
-              child: const _AuthorizedBySection(),
+              child: _AuthorizedBySection(
+                adminSignatureUrl: _cleanStr(inspection['adminSignature']),
+                approvedByName: _cleanStr(inspection['approvedByName'] ?? inspection['adminName'] ?? ''),
+              ),
             ),
+
+            // Admin approval action bar
+            if (widget.isAdminContext && widget.isForApproval) ...[
+              const SizedBox(height: 16),
+              _AdminApprovalBar(
+                inspection: inspection,
+                onDone: widget.onRetry,
+              ),
+            ],
 
             const SizedBox(height: 18),
           ],
         ),
 
-        if (_showScrollToTop)
+        if (_showScrollToTop && !widget.printMode)
           Positioned(
             right: 18,
             bottom: 18,
@@ -877,8 +939,10 @@ class _ReportViewState extends State<_ReportView> {
     return (refs, sectionMap);
   }
 
-  // PDF download
-  void _downloadReport() async {
+  // Generate a standalone HTML report in a new window and auto-print it.
+  // Uses a Blob URL so the full multi-page report is captured correctly
+  // (bypasses Flutter's CanvasKit canvas viewport limitation).
+  void _downloadReport() {
     if (_viewerOpen) _closeViewer();
 
     if (!kIsWeb) {
@@ -886,27 +950,502 @@ class _ReportViewState extends State<_ReportView> {
       return;
     }
 
-    try {
-      final inspectionId = (widget.inspection['_id'] ?? widget.inspection['id'] ?? '').toString().trim();
-      if (inspectionId.isEmpty) throw Exception('Missing inspectionId');
+    final origin = html.window.location.origin;
+    final content = _buildPrintHtml(widget.inspection, widget.disclaimerPoints, origin: origin);
+    // Blob URLs allow inline scripts, unlike data: URIs — so window.print() fires.
+    final blob = html.Blob([content], 'text/html');
+    final url  = html.Url.createObjectUrlFromBlob(blob);
+    html.window.open(url, '_blank');
+    // Revoke after the new tab has had time to load
+    Future.delayed(const Duration(seconds: 15), () => html.Url.revokeObjectUrl(url));
+  }
 
-      final pdf = await inspectionRequestsService.getInspectionReportPdf(inspectionId);
+  static String _buildPrintHtml(
+    Map<String, dynamic> inspection,
+    List<String>? disclaimerPoints, {
+    String origin = '',
+  }) {
+    // ── helpers ──────────────────────────────────────────────────────────────
+    String s(dynamic v) => _cleanStr(v);
+    String d(dynamic v) => s(v).isEmpty ? '-' : s(v);
 
-      final blob = html.Blob([pdf.bytes], pdf.contentType);
-      final url = html.Url.createObjectUrlFromBlob(blob);
-
-      final a = html.AnchorElement(href: url)
-        ..style.display = 'none'
-        ..download = pdf.fileName;
-
-      html.document.body?.children.add(a);
-      a.click();
-      a.remove();
-
-      html.Url.revokeObjectUrl(url);
-    } catch (e) {
-      if (mounted) showTopSnack(context, 'PDF download failed: $e', variant: 'error');
+    // Mirrors the app's _kv widget: bold label (fixed width) + regular value
+    String kv(String label, dynamic val) {
+      final v = d(val);
+      return '<div class="kv"><span class="kv-k">$label:</span><span class="kv-v">$v</span></div>';
     }
+
+    // Uses same _prettyKey overrides as the app
+    String kvMap(Map<String, dynamic> data, List<String> order) {
+      final keys = <String>[
+        ...order.where((k) => data.containsKey(k)),
+        ...data.keys.where((k) => !order.contains(k) && k != 'chassisPhotoUrl'),
+      ];
+      if (keys.isEmpty) return '<span class="muted">—</span>';
+      return keys.map((k) => kv(_prettyKey(k), data[k])).join('');
+    }
+
+    // Mirrors _StatusChip: bg = color.withOpacity(0.12), no border
+    String statusChip(String st) {
+      final sl = st.trim().toLowerCase();
+      String bg, fg;
+      if (sl == 'excellent')   { bg = 'rgba(76,175,80,0.12)';  fg = '#2e7d32'; }
+      else if (sl == 'good')   { bg = 'rgba(21,101,192,0.12)'; fg = '#1565c0'; }
+      else if (sl == 'average'){ bg = 'rgba(230,81,0,0.12)';   fg = '#e65100'; }
+      else if (sl == 'poor')   { bg = 'rgba(198,40,40,0.12)';  fg = '#c62828'; }
+      else { bg = 'rgba(0,0,0,0.06)'; fg = '#555'; }
+      return '<span class="chip" style="background:$bg;color:$fg">${st.isEmpty ? "-" : st}</span>';
+    }
+
+    // Mirrors _RatingChip: grey bg, ★ prefix
+    String ratingChip(dynamic r) {
+      final v = _toDouble(r);
+      if (v == null) return '<span class="rchip">-</span>';
+      return '<span class="rchip">★ ${v.toStringAsFixed(1)}</span>';
+    }
+
+    // Mirrors _Badge tones used for overall rating label
+    String ratingBadge(String label) {
+      final ll = label.toLowerCase();
+      String bg, fg, bd;
+      if (ll == 'excellent')  { bg='rgba(76,175,80,0.12)';  fg='#2e7d32'; bd='rgba(76,175,80,0.2)'; }
+      else if (ll == 'good')  { bg='rgba(21,101,192,0.12)'; fg='#1565c0'; bd='rgba(21,101,192,0.2)'; }
+      else if (ll == 'average'){ bg='rgba(230,81,0,0.12)';  fg='#e65100'; bd='rgba(230,81,0,0.2)'; }
+      else                    { bg='rgba(198,40,40,0.12)';  fg='#c62828'; bd='rgba(198,40,40,0.2)'; }
+      return '<span class="badge" style="background:$bg;color:$fg;border:1px solid $bd">$label</span>';
+    }
+
+    String ratingLabel(double? r) {
+      if (r == null) return 'N/A';
+      if (r >= 4.5) return 'Excellent';
+      if (r >= 3.5) return 'Good';
+      if (r >= 2.0) return 'Average';
+      return 'Poor';
+    }
+
+    // ── data ─────────────────────────────────────────────────────────────────
+    final rawId = (inspection['_id'] ?? inspection['id'] ?? '').toString();
+    final virId = rawId.isEmpty ? '-' : _formatVirId(rawId, inspection['inspectionDate']);
+    final overallRating = _toDouble(inspection['overallRating']);
+    final overallRatingStr = overallRating?.toStringAsFixed(2) ?? '-';
+    final rlabel = ratingLabel(overallRating);
+    final inspDate  = _fmtIso(inspection['inspectionDate']);
+    final compDate  = _fmtIso(inspection['completedAt']);
+    final createDate = _fmtIso(inspection['createdAt']);
+    final updateDate = _fmtIso(inspection['updatedAt']);
+    final notes = s(inspection['notes']);
+
+    final inspector = _asMap(inspection['inspectorId']);
+    final inspName  = [s(inspector['firstName']), s(inspector['lastName'])].where((x) => x.isNotEmpty).join(' ');
+    final inspEmail = s(inspector['email']);
+
+    final vd   = _asMap(inspection['vehicleDetails']);
+    final ext  = _asMap(inspection['exteriorDetails']);
+    final int_ = _asMap(inspection['interiorDetails']);
+    final sw   = _asMap(inspection['serviceWarrantyOverview']);
+
+    final types   = (inspection['types'] as List?) ?? const [];
+    final damages = _parseDamages(inspection);
+
+    // Chassis photo
+    final chassisPhotoUrl = s(vd['chassisPhotoUrl']);
+    final chassisNoRaw    = s(vd['chassisNo']);
+    final chassisPhoto = chassisPhotoUrl.startsWith('http') ? chassisPhotoUrl
+        : chassisNoRaw.startsWith('http') ? chassisNoRaw : '';
+
+    const vdOrder = ['make','model','gradeVariant','engineCapacity','modelYear','cylinderSize',
+      'transmission','fuelType','driveTrain','specs','odometerReading','registrationNo',
+      'emiratesRegAt','chassisNo','ownershipType'];
+
+    // ── photos ────────────────────────────────────────────────────────────────
+    final allPhotos = <String>[];
+    // Chassis photo first
+    if (chassisPhoto.isNotEmpty) allPhotos.add(chassisPhoto);
+    for (final t in types) {
+      final tm = _asMap(t);
+      for (final u in (tm['overallPhotos'] as List?) ?? const []) {
+        final us = u.toString().trim(); if (us.isNotEmpty && !allPhotos.contains(us)) allPhotos.add(us);
+      }
+      for (final it in (tm['checklistItems'] as List?) ?? const []) {
+        for (final u in (_asMap(it)['photos'] as List?) ?? const []) {
+          final us = u.toString().trim(); if (us.isNotEmpty && !allPhotos.contains(us)) allPhotos.add(us);
+        }
+      }
+    }
+    for (final dmg in damages) {
+      for (final u in dmg.images) { if (u.isNotEmpty && !allPhotos.contains(u)) allPhotos.add(u); }
+    }
+
+    // ── HTML sections ─────────────────────────────────────────────────────────
+
+    // Header — matches _HeaderRow: logo left, "Inspection Report" center, ID right
+    final headerHtml = '''
+<div class="hdr">
+  <img src="$origin/assets/logo/autoscope_logo_old.png" height="52" alt="" onerror="this.style.display='none'">
+  <div class="hdr-title">Inspection Report</div>
+  <div class="hdr-id">$virId</div>
+</div>''';
+
+    // Report Information + Inspector — matches the two _Card widgets side by side
+    final infoHtml = '''
+<div class="row-2" style="margin-bottom:12px">
+  <div class="card">
+    <div class="card-title">Report Information</div>
+    ${kv('Inspection ID', virId)}
+    ${kv('Overall Rating', overallRatingStr)}
+    ${kv('Inspection Date', inspDate.isEmpty ? '-' : inspDate)}
+    ${compDate.isNotEmpty ? kv('Completed At', compDate) : ''}
+    ${kv('Created At', createDate.isEmpty ? '-' : createDate)}
+    ${kv('Updated At', updateDate.isEmpty ? '-' : updateDate)}
+  </div>
+  <div class="card">
+    <div class="card-title">Inspector</div>
+    ${kv('Inspector', inspName.isEmpty ? '-' : inspName)}
+    ${kv('Email', inspEmail.isEmpty ? '-' : inspEmail)}
+  </div>
+</div>''';
+
+    // Overall Rating + Section Overview — matches the row in the app
+    final sectionTiles = types.map((t) {
+      final tm   = _asMap(t);
+      final name = s(tm['typeName']).isEmpty ? 'Section' : s(tm['typeName']);
+      final avg  = _toDouble(tm['averageRating']);
+      final avgStr = avg?.toStringAsFixed(2) ?? '-';
+      return '<div class="sec-tile"><div class="sec-tile-name">$name</div><div class="sec-tile-avg">★ $avgStr</div></div>';
+    }).join('');
+
+    final overallHtml = '''
+<div class="row-2" style="margin-bottom:12px">
+  <div class="card">
+    <div class="card-title">Section Overview</div>
+    <div class="sec-grid">$sectionTiles</div>
+  </div>
+  <div class="card">
+    <div class="card-title">Overall Rating</div>
+    <div style="font-size:22px;font-weight:900;margin-bottom:6px">$overallRatingStr</div>
+    ${ratingBadge(rlabel)}
+    <div style="margin-top:8px;color:rgba(0,0,0,0.54);font-size:13px">Scale: 0 to 5</div>
+  </div>
+</div>''';
+
+    // Vehicle Information — matches the _Card wrapping sub-section boxes
+    final chassisPhotoBlock = chassisPhoto.isNotEmpty ? '''
+<div style="margin-top:10px">
+  <div style="font-weight:700;font-size:11px;color:rgba(0,0,0,0.54);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:5px">Chassis Photo</div>
+  <img src="$chassisPhoto" style="max-height:160px;max-width:100%;border-radius:8px;border:1px solid rgba(0,0,0,0.06);display:block" alt="" onerror="this.style.display='none'">
+</div>''' : '';
+
+    final vehicleHtml = '''
+<div class="card" style="margin-bottom:12px">
+  <div class="card-title">Vehicle Information</div>
+  <div class="row-2">
+    <div class="box">
+      <div class="box-title">Vehicle Details</div>
+      ${kvMap(vd, vdOrder)}
+      $chassisPhotoBlock
+    </div>
+    <div>
+      <div class="box" style="margin-bottom:10px">
+        <div class="box-title">Exterior Details</div>
+        ${kvMap(ext, const [])}
+      </div>
+      <div class="box" style="margin-bottom:10px">
+        <div class="box-title">Interior Details</div>
+        ${kvMap(int_, const [])}
+      </div>
+      <div class="box">
+        <div class="box-title">Service / Warranty Overview</div>
+        ${kvMap(sw, const [])}
+      </div>
+    </div>
+  </div>
+</div>''';
+
+    // Damages — matches _DamagesBlock with canvas map + _DamagePreview list
+    final damageJson = '[${damages.map((dp) => '{"x":${dp.x},"y":${dp.y}}').join(',')}]';
+
+    final dmgMapHtml = (origin.isEmpty || damages.isEmpty) ? '' : '''
+<div id="car-map-wrapper" style="margin-bottom:12px">
+  <div class="box" style="padding:12px">
+    <div style="position:relative;display:inline-block;width:100%">
+      <canvas id="car-canvas" style="width:100%;display:block;border-radius:8px"></canvas>
+      <div id="car-markers" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none"></div>
+    </div>
+  </div>
+</div>''';
+
+    final dmgItems = damages.isEmpty
+        ? '<span class="muted">No damages marked.</span>'
+        : damages.asMap().entries.map((e) {
+            final i  = e.key;
+            final dp = e.value;
+            final imgs = dp.images.isEmpty ? ''
+                : '<div class="photo-grid" style="margin-top:8px">${dp.images.map((u) => '<img class="photo-thumb" src="$u" alt="">').join('')}</div>';
+            return '''<div class="dmg-row">
+  <div class="dmg-dot">${i + 1}</div>
+  <div style="flex:1">
+    <div style="font-weight:800;font-size:14px">${d(dp.description)}</div>
+    $imgs
+  </div>
+</div>''';
+          }).join('');
+
+    final damagesHtml = '''
+<div class="card" style="margin-bottom:12px">
+  <div class="card-title">Damages (${damages.length})</div>
+  $dmgMapHtml
+  $dmgItems
+</div>''';
+
+    // Photos — matches _PhotosBlock overview
+    final photosHtml = allPhotos.isEmpty ? '' : '''
+<div class="card" style="margin-bottom:12px">
+  <div class="card-title">Photos</div>
+  <div class="photo-grid">${allPhotos.map((u) => '<img class="photo-thumb" src="$u" alt="">').join('')}</div>
+</div>''';
+
+    // Checklist — matches _ChecklistSection + _ChecklistRow (4 equal columns)
+    final clSections = types.map((t) {
+      final tm    = _asMap(t);
+      final name  = s(tm['typeName']).isEmpty ? 'Section' : s(tm['typeName']);
+      final avg   = s(tm['averageRating']);
+      final items = (tm['checklistItems'] as List?) ?? const [];
+
+      final rows = items.map((it) {
+        final im     = _asMap(it);
+        final pos    = s(im['position']);
+        final label  = s(im['label']).isEmpty ? '-' : s(im['label']);
+        final status = s(im['status']).isEmpty ? '-' : s(im['status']);
+        final remark = s(im['remarks']).isEmpty ? '-' : s(im['remarks']);
+        return '''<div class="cl-row">
+  <div><span class="cl-pos">${pos.isNotEmpty ? "$pos." : ""}</span> <span class="cl-label">$label</span></div>
+  <div>${statusChip(status)}</div>
+  <div>${ratingChip(im['rating'])}</div>
+  <div class="cl-remarks">$remark</div>
+</div>''';
+      }).join('');
+
+      return '''<div class="cl-section">
+  <div class="cl-hdr">
+    <span class="cl-name">$name</span>
+    <span class="cl-avg">Avg: ${avg.isEmpty ? '-' : avg}</span>
+  </div>
+  <div class="box" style="border-radius:0 0 14px 14px;padding:0">
+    $rows
+  </div>
+</div>''';
+    }).join('');
+
+    final checklistHtml = '''
+<div class="card" style="margin-bottom:12px">
+  <div class="card-title">Checklist</div>
+  $clSections
+</div>''';
+
+    // Notes (only if present)
+    final notesHtml = notes.isEmpty ? '' : '''
+<div class="card" style="margin-bottom:12px">
+  <div class="card-title">Overall Description</div>
+  <p style="color:rgba(0,0,0,0.87);font-size:13px;line-height:1.55">$notes</p>
+</div>''';
+
+    // Disclaimer — matches _DisclaimerContent (numbered list)
+    final discPoints = (disclaimerPoints != null && disclaimerPoints.isNotEmpty)
+        ? disclaimerPoints
+        : const [
+            'This report reflects the visible condition of the vehicle only at the time and date of inspection.',
+            'The inspection is provided solely as an aid for evaluating the vehicle\'s general condition and does not constitute a warranty, guarantee, or recommendation to buy or sell the vehicle.',
+            'The inspection conducted by Auto Scope is limited strictly to the items listed in this report and is visual, non-invasive, and non-mechanical in nature.',
+            'No dismantling, disassembly, or internal examination of components has been carried out.',
+            'Certain hidden, internal, or intermittent defects may not be detectable at the time of inspection despite standard inspection procedures being followed.',
+            'Auto Scope shall not be liable for repair costs, damages, losses, undiscovered defects, or differences between this report and future third-party assessments.',
+            'This report is issued strictly for informational purposes and should not be considered a warranty or guarantee of the vehicle\'s condition.',
+          ];
+    final discItems = discPoints.asMap().entries.map((e) => '''<div class="disc-item">
+  <span class="disc-num">${e.key + 1}</span>
+  <span class="disc-text">${e.value}</span>
+</div>''').join('');
+
+    final disclaimerHtml = '''
+<div class="card" style="margin-bottom:12px">
+  <div class="card-title">Disclaimer</div>
+  $discItems
+</div>''';
+
+    // Authorized By — matches _AuthorizedBySection
+    final sigUrl     = s(inspection['adminSignature']);
+    final approvedBy = s(inspection['approvedByName'] ?? inspection['adminName'] ?? '');
+    final sigBlock = sigUrl.isNotEmpty
+        ? '<img src="$sigUrl" style="height:80px;max-width:220px;border-radius:6px;margin-top:8px;display:block" alt="Signature">'
+        : '<div style="width:200px;height:72px;border:1px solid rgba(0,0,0,0.12);border-radius:6px;margin-top:8px"></div>';
+
+    final authorizedHtml = '''
+<div class="card" style="margin-bottom:12px">
+  <div class="card-title">Authorized By</div>
+  <div class="auth-company">AUTO SCOPE INSPECTION AND PRICING SERVICES - L.L.C - S.P.C</div>
+  <div class="auth-sub">Abu Dhabi, U.A.E</div>
+  <div style="display:flex;gap:48px;margin-top:20px;flex-wrap:wrap;align-items:flex-start">
+    <div>
+      <div class="auth-lbl">Company Stamp</div>
+      <img src="$origin/assets/images/company_stamp.png" width="140" height="140" style="object-fit:contain;display:block;margin-top:6px" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+      <div style="display:none;width:120px;height:120px;border:1.5px solid rgba(0,0,0,0.12);border-radius:50%;align-items:center;justify-content:center;color:rgba(0,0,0,0.3);font-weight:700;margin-top:6px">STAMP</div>
+    </div>
+    <div>
+      <div class="auth-lbl">Authorized Signature</div>
+      $sigBlock
+      ${approvedBy.isNotEmpty ? '<div style="margin-top:6px;font-weight:700">$approvedBy</div>' : ''}
+    </div>
+  </div>
+</div>''';
+
+    // ── assemble ──────────────────────────────────────────────────────────────
+    return '''<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Inspection Report – $virId</title>
+  <style>
+    @page { size: A4 portrait; margin: 10mm 12mm }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0 }
+
+    /* Matches Flutter's default body font and print-mode white background */
+    body { font-family: Arial, Helvetica, sans-serif; font-size: 14px; color: #1a1a1a; background: #fff; padding: 0 }
+
+    /* _HeaderRow */
+    .hdr { display: flex; align-items: center; margin-bottom: 18px }
+    .hdr-title { flex: 1; text-align: center; font-size: 24px; font-weight: 900 }
+    .hdr-id { min-width: 80px; text-align: right; font-size: 11px; color: #aaa }
+
+    /* _Card  (elevation:0, color: Colors.black.withValues(alpha:0.02)) */
+    .card { background: rgba(0,0,0,0.02); border-radius: 12px; padding: 14px; margin-bottom: 0 }
+    .card-title { font-size: 16px; font-weight: 900; margin-bottom: 10px }
+
+    /* Sub-section boxes (_VehicleDetailsCard, _SubSectionMapCard — white bg, rgba(0,0,0,0.06) border, 14px radius) */
+    .box { background: white; border-radius: 14px; border: 1px solid rgba(0,0,0,0.06); padding: 12px }
+    .box-title { font-weight: 900; font-size: 14px; margin-bottom: 10px }
+
+    /* _kv widget: bold label fixed 140px, regular value */
+    .kv { display: flex; margin-bottom: 6px; line-height: 1.4; font-size: 14px }
+    .kv-k { width: 140px; flex-shrink: 0; font-weight: 900; padding-right: 8px }
+    .kv-v { flex: 1 }
+
+    /* Layout */
+    .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px }
+
+    /* _StatusChip: bg = color.withOpacity(0.12), no border */
+    .chip { display: inline-block; padding: 4px 10px; border-radius: 999px; font-weight: 900; font-size: 13px }
+
+    /* _RatingChip: grey bg, ★ prefix */
+    .rchip { display: inline-block; padding: 4px 10px; border-radius: 999px; background: rgba(0,0,0,0.06); font-weight: 900; font-size: 13px; color: #1a1a1a }
+
+    /* _Badge */
+    .badge { display: inline-block; padding: 5px 10px; border-radius: 999px; font-weight: 900; font-size: 13px }
+
+    /* Section overview tiles (simplified _SectionOverviewTile) */
+    .sec-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px }
+    .sec-tile { background: rgba(255,255,255,0.65); border-radius: 14px; border: 1px solid rgba(0,0,0,0.06); padding: 10px 12px; display: flex; justify-content: space-between; align-items: center }
+    .sec-tile-name { font-weight: 900; font-size: 13px }
+    .sec-tile-avg { font-weight: 900; font-size: 13px; color: #1565c0; background: rgba(21,101,192,0.12); padding: 3px 10px; border-radius: 999px }
+
+    /* Checklist (_ChecklistSection / _ChecklistRow) */
+    .cl-section { margin-bottom: 12px; break-inside: avoid }
+    .cl-hdr { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px }
+    .cl-name { font-weight: 900; font-size: 14px }
+    .cl-avg { font-size: 12px; color: rgba(0,0,0,0.54) }
+    /* 4 equal columns matching _ChecklistRow expanded layout */
+    .cl-row { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 12px; padding: 10px 12px; border-top: 1px solid rgba(0,0,0,0.06); align-items: start; font-size: 13px }
+    .cl-pos { font-weight: 900; color: rgba(0,0,0,0.54) }
+    .cl-label { font-weight: 800 }
+    .cl-remarks { color: rgba(0,0,0,0.87); line-height: 1.25 }
+
+    /* _DamageMarker */
+    .dmg-dot { display: inline-flex; min-width: 26px; width: 26px; height: 26px; background: #ff5252; border-radius: 50%; color: white; font-weight: 900; align-items: center; justify-content: center; font-size: 12px; border: 2px solid white; box-shadow: 0 3px 8px rgba(0,0,0,0.2); flex-shrink: 0 }
+    /* _DamagePreview style */
+    .dmg-row { display: flex; gap: 12px; align-items: flex-start; padding: 8px 0; border-top: 1px solid rgba(0,0,0,0.06); break-inside: avoid }
+    .dmg-row:first-of-type { border-top: none }
+
+    /* Photos grid */
+    .photo-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px }
+    .photo-thumb { width: 100%; aspect-ratio: 4/3; object-fit: cover; border-radius: 8px; display: block }
+
+    /* _DisclaimerContent (numbered) */
+    .disc-item { display: flex; gap: 12px; margin-bottom: 10px }
+    .disc-num { font-weight: 700; color: rgba(0,0,0,0.54); font-size: 13px; flex-shrink: 0; width: 24px }
+    .disc-text { color: rgba(0,0,0,0.87); font-size: 13px; line-height: 1.55 }
+
+    /* _AuthorizedBySection */
+    .auth-company { font-weight: 900; font-size: 14px }
+    .auth-sub { color: rgba(0,0,0,0.54); font-size: 13px; margin-top: 2px }
+    .auth-lbl { font-weight: 700; font-size: 11px; color: rgba(0,0,0,0.54); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 6px }
+
+    .muted { color: rgba(0,0,0,0.54) }
+
+    @media print {
+      body { padding: 0 }
+      .card { break-inside: avoid }
+      .cl-section { break-inside: avoid }
+      .dmg-row { break-inside: avoid }
+    }
+  </style>
+</head>
+<body>
+
+  $headerHtml
+
+  $infoHtml
+
+  $vehicleHtml
+
+  $overallHtml
+
+  $damagesHtml
+
+  $photosHtml
+
+  $checklistHtml
+
+  $notesHtml
+
+  $disclaimerHtml
+
+  $authorizedHtml
+
+  <script>
+    window.addEventListener('load', function(){
+      var damages = $damageJson;
+      var canvas  = document.getElementById('car-canvas');
+      var markers = document.getElementById('car-markers');
+      function doPrint(){ window.print(); }
+      if(canvas && damages.length){
+        var img = new Image();
+        img.onload = function(){
+          var W=img.naturalWidth, H=img.naturalHeight;
+          canvas.width=H; canvas.height=W;
+          var ctx=canvas.getContext('2d');
+          ctx.translate(H/2,W/2); ctx.rotate(-Math.PI/2);
+          ctx.drawImage(img,-W/2,-H/2);
+          damages.forEach(function(d,i){
+            var m=document.createElement('div');
+            m.style.cssText='position:absolute;transform:translate(-50%,-50%);width:26px;height:26px;border-radius:50%;background:#ff5252;color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:900;border:2px solid #fff;box-shadow:0 3px 8px rgba(0,0,0,.2)';
+            m.style.left=(d.y*100)+'%'; m.style.top=(d.x*100)+'%';
+            m.textContent=i+1;
+            markers.appendChild(m);
+          });
+          setTimeout(doPrint,500);
+        };
+        img.onerror=function(){
+          var w=document.getElementById('car-map-wrapper');
+          if(w) w.style.display='none';
+          setTimeout(doPrint,500);
+        };
+        img.src='$origin/assets/images/car_views/top.jpg';
+      } else {
+        setTimeout(doPrint,2000);
+      }
+    });
+  </script>
+</body>
+</html>''';
   }
 }
 
@@ -2674,7 +3213,13 @@ class _DisclaimerContent extends StatelessWidget {
 // ─── Authorized By ────────────────────────────────────────────────────────────
 
 class _AuthorizedBySection extends StatelessWidget {
-  const _AuthorizedBySection();
+  final String adminSignatureUrl;
+  final String approvedByName;
+
+  const _AuthorizedBySection({
+    this.adminSignatureUrl = '',
+    this.approvedByName = '',
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -2695,7 +3240,10 @@ class _AuthorizedBySection extends StatelessWidget {
           builder: (context, c) {
             final wide = c.maxWidth >= 500;
             final stamp = _StampBox();
-            final sig = _SigBox();
+            final sig = _SigBox(
+              signatureUrl: adminSignatureUrl,
+              approvedByName: approvedByName,
+            );
             if (!wide) {
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -2752,6 +3300,11 @@ class _StampBox extends StatelessWidget {
 }
 
 class _SigBox extends StatelessWidget {
+  final String signatureUrl;
+  final String approvedByName;
+
+  const _SigBox({this.signatureUrl = '', this.approvedByName = ''});
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -2769,6 +3322,344 @@ class _SigBox extends StatelessWidget {
             border: Border.all(color: Colors.black26),
             borderRadius: BorderRadius.circular(8),
           ),
+          child: signatureUrl.isNotEmpty
+              ? ClipRRect(
+                  borderRadius: BorderRadius.circular(7),
+                  child: _NetImageBox(
+                    url: signatureUrl,
+                    width: 200,
+                    height: 80,
+                    fit: BoxFit.contain,
+                  ),
+                )
+              : null,
+        ),
+        if (approvedByName.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(
+            approvedByName,
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+// ─── Admin Approval Bar ───────────────────────────────────────────────────────
+
+class _AdminApprovalBar extends StatelessWidget {
+  final Map<String, dynamic> inspection;
+  final VoidCallback onDone;
+
+  const _AdminApprovalBar({required this.inspection, required this.onDone});
+
+  @override
+  Widget build(BuildContext context) {
+    final id = (inspection['_id'] ?? inspection['id'] ?? '').toString();
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: Colors.amber.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.amber.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.pending_actions_outlined, color: Colors.amber),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Text(
+              'This inspection is awaiting your approval.',
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+          const SizedBox(width: 12),
+          OutlinedButton(
+            onPressed: () => _showReject(context, id),
+            style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Reject'),
+          ),
+          const SizedBox(width: 8),
+          FilledButton(
+            onPressed: () => _showApprove(context, id),
+            style: FilledButton.styleFrom(backgroundColor: Colors.green),
+            child: const Text('Approve'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showApprove(BuildContext context, String id) {
+    showDialog(
+      context: context,
+      builder: (_) => _ApproveDialog(inspectionId: id, onApproved: onDone),
+    );
+  }
+
+  void _showReject(BuildContext context, String id) {
+    showDialog(
+      context: context,
+      builder: (_) => _RejectDialog(inspectionId: id, onRejected: onDone),
+    );
+  }
+}
+
+// ─── Approve Dialog ───────────────────────────────────────────────────────────
+
+class _ApproveDialog extends StatefulWidget {
+  final String inspectionId;
+  final VoidCallback onApproved;
+
+  const _ApproveDialog({required this.inspectionId, required this.onApproved});
+
+  @override
+  State<_ApproveDialog> createState() => _ApproveDialogState();
+}
+
+class _ApproveDialogState extends State<_ApproveDialog> {
+  Uint8List? _sigBytes;
+  String _sigFileName = 'signature.png';
+  String _sigContentType = 'image/png';
+  bool _busy = false;
+
+  void _showSourcePicker() {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_camera_outlined),
+              title: const Text('Capture Photo'),
+              onTap: () { Navigator.pop(ctx); _captureSignature(); },
+            ),
+            ListTile(
+              leading: const Icon(Icons.upload_file_outlined),
+              title: const Text('Upload from Files'),
+              onTap: () { Navigator.pop(ctx); _uploadSignature(); },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _captureSignature() async {
+    if (!mounted) return;
+    final cap = await capturePhotoBytesViaPopup(context);
+    if (cap == null || !mounted) return;
+    setState(() {
+      _sigBytes = cap.bytes;
+      _sigFileName = cap.fileName;
+      _sigContentType = cap.contentType;
+    });
+  }
+
+  Future<void> _uploadSignature() async {
+    final input = html.FileUploadInputElement()..accept = 'image/*';
+    input.click();
+    await input.onChange.first;
+    final file = input.files?.first;
+    if (file == null) return;
+    final reader = html.FileReader();
+    reader.readAsArrayBuffer(file);
+    await reader.onLoad.first;
+    setState(() {
+      _sigBytes = Uint8List.fromList(reader.result as List<int>);
+      _sigFileName = file.name;
+      _sigContentType = file.type.isNotEmpty ? file.type : 'image/png';
+    });
+  }
+
+  Future<void> _submit() async {
+    if (_sigBytes == null) return;
+    setState(() => _busy = true);
+    try {
+      final sigUrl = await inspectionRequestsService.uploadSignatureImage(
+        bytes: _sigBytes!,
+        fileName: _sigFileName,
+        contentType: _sigContentType,
+      );
+      await inspectionRequestsService.approveInspection(
+        inspectionId: widget.inspectionId,
+        signatureUrl: sigUrl,
+      );
+      if (!mounted) return;
+      Navigator.pop(context);
+      widget.onApproved();
+      showTopSnack(context, 'Inspection approved successfully.', variant: 'success');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      showTopSnack(context, 'Failed to approve: $e', variant: 'error');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Approve Inspection'),
+      content: SizedBox(
+        width: 400,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'AUTHORIZED SIGNATURE',
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                color: Colors.black54,
+                fontSize: 11,
+                letterSpacing: 0.4,
+              ),
+            ),
+            const SizedBox(height: 8),
+            GestureDetector(
+              onTap: _showSourcePicker,
+              child: Container(
+                width: double.infinity,
+                height: 120,
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.black26),
+                  borderRadius: BorderRadius.circular(8),
+                  color: Colors.black.withValues(alpha: 0.02),
+                ),
+                child: _sigBytes != null
+                    ? ClipRRect(
+                        borderRadius: BorderRadius.circular(7),
+                        child: Image.memory(_sigBytes!, fit: BoxFit.contain),
+                      )
+                    : const Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.add_a_photo_outlined, color: Colors.black38),
+                            SizedBox(height: 4),
+                            Text(
+                              'Tap to capture or upload signature',
+                              style: TextStyle(color: Colors.black54, fontSize: 12),
+                            ),
+                          ],
+                        ),
+                      ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _busy ? null : () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: (_busy || _sigBytes == null) ? null : _submit,
+          style: FilledButton.styleFrom(backgroundColor: Colors.green),
+          child: _busy
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                )
+              : const Text('Approve'),
+        ),
+      ],
+    );
+  }
+}
+
+// ─── Reject Dialog ────────────────────────────────────────────────────────────
+
+class _RejectDialog extends StatefulWidget {
+  final String inspectionId;
+  final VoidCallback onRejected;
+
+  const _RejectDialog({required this.inspectionId, required this.onRejected});
+
+  @override
+  State<_RejectDialog> createState() => _RejectDialogState();
+}
+
+class _RejectDialogState extends State<_RejectDialog> {
+  final _reasonCtrl = TextEditingController();
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _reasonCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final reason = _reasonCtrl.text.trim();
+    if (reason.isEmpty) return;
+    setState(() => _busy = true);
+    try {
+      await inspectionRequestsService.rejectInspection(
+        inspectionId: widget.inspectionId,
+        rejectionReason: reason,
+      );
+      if (!mounted) return;
+      Navigator.pop(context);
+      widget.onRejected();
+      showTopSnack(context, 'Inspection rejected — returned to inspector.', variant: 'success');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      showTopSnack(context, 'Failed to reject: $e', variant: 'error');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Reject Inspection'),
+      content: SizedBox(
+        width: 400,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'The inspection will be returned to in-progress status.',
+              style: TextStyle(color: Colors.black54),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _reasonCtrl,
+              onChanged: (_) => setState(() {}),
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'Reason for Rejection',
+                hintText: 'e.g. Missing damage photos on rear bumper section.',
+                border: OutlineInputBorder(),
+                alignLabelWithHint: true,
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _busy ? null : () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: (_busy || _reasonCtrl.text.trim().isEmpty) ? null : _submit,
+          style: FilledButton.styleFrom(backgroundColor: Colors.red),
+          child: _busy
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                )
+              : const Text('Reject'),
         ),
       ],
     );

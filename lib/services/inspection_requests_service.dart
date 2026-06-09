@@ -645,6 +645,54 @@ class InspectionRequestsService {
   }
 
   /* =========================================================
+     ADMIN – APPROVE / REJECT INSPECTION
+  ========================================================= */
+
+  Future<Map<String, dynamic>> approveInspection({
+    required String inspectionId,
+    required String signatureUrl,
+  }) async {
+    final res = await apiClient.putJson(
+      '/admin/inspections/$inspectionId/review',
+      {'action': 'approve', 'adminSignature': signatureUrl},
+    );
+    if (res is Map<String, dynamic>) return res;
+    if (res is Map) return Map<String, dynamic>.from(res);
+    return {};
+  }
+
+  Future<Map<String, dynamic>> rejectInspection({
+    required String inspectionId,
+    required String rejectionReason,
+  }) async {
+    final res = await apiClient.putJson(
+      '/admin/inspections/$inspectionId/review',
+      {'action': 'reject', 'rejectionReason': rejectionReason},
+    );
+    if (res is Map<String, dynamic>) return res;
+    if (res is Map) return Map<String, dynamic>.from(res);
+    return {};
+  }
+
+  Future<String> uploadSignatureImage({
+    required Uint8List bytes,
+    required String fileName,
+    required String contentType,
+  }) async {
+    final safeName = 'signature_${DateTime.now().millisecondsSinceEpoch}_$fileName';
+    final presigned = await getPresignedUrlSimple(
+      fileName: safeName,
+      contentType: contentType,
+    );
+    await uploadToS3(
+      uploadUrl: presigned['uploadUrl']!,
+      bytes: bytes,
+      contentType: contentType,
+    );
+    return presigned['fileUrl']!;
+  }
+
+  /* =========================================================
     MOCK (KEEP)
   ========================================================= */
 

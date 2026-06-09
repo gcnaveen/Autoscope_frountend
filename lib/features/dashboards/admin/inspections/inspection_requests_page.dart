@@ -64,7 +64,8 @@ class _InspectionRequestsPageState extends State<InspectionRequestsPage> {
       showTopSnack(context, 'Inspection report not available yet.', variant: 'warning');
       return;
     }
-    context.go('/dashboard/admin/inspections/$id/report');
+    final isPending = r.status.toLowerCase() == 'pending_admin_approval';
+    context.go('/dashboard/admin/inspections/$id/report${isPending ? '?review=1' : ''}');
   }
 
   @override
@@ -456,12 +457,20 @@ class _RequestCardState extends State<_RequestCard> with TickerProviderStateMixi
     final isCompleted = status == 'completed';
     final isInProgress = status == 'inprogress' || status == 'in_progress';
     final isCancelled = status == 'cancelled' || status == 'canceled';
+    final isPendingAdminApproval = status == 'pending_admin_approval';
 
     final hasReport = _s(r.inspectionId).isNotEmpty;
-    final buttonText = isCompleted ? 'View Report' : 'Manage';
+    final buttonText = isCompleted
+        ? 'View Report'
+        : isPendingAdminApproval
+            ? 'Review Report'
+            : 'Manage';
 
-    final VoidCallback? buttonAction =
-        isInProgress ? null : (isCompleted ? (hasReport ? widget.onViewReport : null) : widget.onManage);
+    final VoidCallback? buttonAction = isInProgress
+        ? null
+        : (isCompleted || isPendingAdminApproval)
+            ? (hasReport ? widget.onViewReport : null)
+            : widget.onManage;
 
     final inspectorName = _s(r.inspectorName);
     final inspectorEmail = _s(r.inspectorEmail);
@@ -487,6 +496,7 @@ class _RequestCardState extends State<_RequestCard> with TickerProviderStateMixi
       if (isAssigned) return Colors.green.withOpacity(0.12);
       if (isCompleted) return Colors.blue.withOpacity(0.12);
       if (isInProgress) return Colors.purple.withOpacity(0.12);
+      if (isPendingAdminApproval) return Colors.amber.withOpacity(0.18);
       return Colors.grey.withOpacity(0.12);
     }
 

@@ -1675,6 +1675,7 @@ class UserRequestRow {
     if (s == 'pending') return true;
     if (s == 'assigned') return true;
     if (s == 'in_progress' || s == 'inprogress' || s == 'in progress') return true;
+    if (s == 'pending_admin_approval') return true;
     return false;
   }
 
