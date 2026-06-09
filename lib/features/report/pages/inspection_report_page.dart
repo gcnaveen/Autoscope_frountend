@@ -4,9 +4,11 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'dart:html' as html;
 import 'dart:ui_web' as ui;
 import 'dart:typed_data';
+import 'dart:convert' show base64Encode;
 
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle, Clipboard, ClipboardData;
 
 import '../../shared/app_shell.dart';
 import '../../../services/service_locator.dart';
@@ -20,12 +22,14 @@ class InspectionReportPage extends StatefulWidget {
   final bool isAdminContext;
   final bool printMode;
   final bool isForApproval;
+  final bool noShell;
   const InspectionReportPage({
     super.key,
     required this.inspectionId,
     this.isAdminContext = false,
     this.printMode = false,
     this.isForApproval = false,
+    this.noShell = false,
   });
 
   @override
@@ -143,8 +147,8 @@ class _InspectionReportPageState extends State<InspectionReportPage> {
       ),
     );
 
-    // Print mode: no AppShell, plain white Scaffold so only the report prints
-    if (widget.printMode) {
+    // Print mode or public (no-shell) view: plain Scaffold, no AppShell nav
+    if (widget.printMode || widget.noShell) {
       return Scaffold(
         backgroundColor: Colors.white,
         body: body,
@@ -460,6 +464,7 @@ class _ReportViewState extends State<_ReportView> {
             _HeaderRow(
               title: 'Inspection Report',
               onDownload: _downloadReport,
+              onCopyLink: kIsWeb ? _copyShareLink : null,
               showReview: _canReview,
               reviewSubmitted: _reviewSubmitted,
               onReview: (_canReview && !_reviewSubmitted) ? () => _openReviewDialog(auto: false) : null,
@@ -939,10 +944,25 @@ class _ReportViewState extends State<_ReportView> {
     return (refs, sectionMap);
   }
 
+  void _copyShareLink() {
+    if (!kIsWeb) return;
+    final inspectionId = _cleanStr(widget.inspection['_id']).isEmpty
+        ? _cleanStr(widget.inspection['id'])
+        : _cleanStr(widget.inspection['_id']);
+    if (inspectionId.isEmpty) {
+      showTopSnack(context, 'Could not determine inspection ID.', variant: 'warning');
+      return;
+    }
+    final base = html.window.location.href.split('#').first;
+    final link = '${base.endsWith('/') ? base.substring(0, base.length - 1) : base}/#/viewreport/$inspectionId';
+    Clipboard.setData(ClipboardData(text: link));
+    showTopSnack(context, 'Report link copied!', variant: 'success');
+  }
+
   // Generate a standalone HTML report in a new window and auto-print it.
   // Uses a Blob URL so the full multi-page report is captured correctly
   // (bypasses Flutter's CanvasKit canvas viewport limitation).
-  void _downloadReport() {
+  Future<void> _downloadReport() async {
     if (_viewerOpen) _closeViewer();
 
     if (!kIsWeb) {
@@ -950,8 +970,40 @@ class _ReportViewState extends State<_ReportView> {
       return;
     }
 
-    final origin = html.window.location.origin;
-    final content = _buildPrintHtml(widget.inspection, widget.disclaimerPoints, origin: origin);
+    // Load static assets as base64 data URIs so they work in any deployment
+    // (handles sub-path base-href builds where origin-only URLs would 404).
+    String b64(ByteData data, String mime) =>
+        'data:$mime;base64,${base64Encode(data.buffer.asUint8List())}';
+
+    // rootBundle.load() is intercepted by the service worker in production.
+    // If the SW is inactive (first visit / cleared cache), it falls through to
+    // the server which only has user assets at /assets/assets/{key} — not /assets/{key}.
+    // The fallback fetches from that double-prefix path directly.
+    Future<String> webLoad(String key, String mime) async {
+      try { return b64(await rootBundle.load(key), mime); } catch (_) {}
+      try {
+        final req = await html.HttpRequest.request(
+            'assets/$key', responseType: 'arraybuffer');
+        if ((req.status ?? 0) == 200) {
+          return 'data:$mime;base64,${base64Encode(Uint8List.view(req.response as ByteBuffer))}';
+        }
+      } catch (_) {}
+      return '';
+    }
+
+    final logoUri  = await webLoad('assets/logo/autoscope_logo_old.png', 'image/png');
+    final stampUri = await webLoad('assets/images/company_stamp.png', 'image/png');
+    final carUri   = await webLoad('assets/images/car_views/top.jpg', 'image/jpeg');
+
+    if (!mounted) return;
+
+    final content = _buildPrintHtml(
+      widget.inspection,
+      widget.disclaimerPoints,
+      logoUri: logoUri,
+      stampUri: stampUri,
+      carImageUri: carUri,
+    );
     // Blob URLs allow inline scripts, unlike data: URIs — so window.print() fires.
     final blob = html.Blob([content], 'text/html');
     final url  = html.Url.createObjectUrlFromBlob(blob);
@@ -963,7 +1015,9 @@ class _ReportViewState extends State<_ReportView> {
   static String _buildPrintHtml(
     Map<String, dynamic> inspection,
     List<String>? disclaimerPoints, {
-    String origin = '',
+    String logoUri = '',
+    String stampUri = '',
+    String carImageUri = '',
   }) {
     // ── helpers ──────────────────────────────────────────────────────────────
     String s(dynamic v) => _cleanStr(v);
@@ -1081,14 +1135,14 @@ class _ReportViewState extends State<_ReportView> {
     // Header — matches _HeaderRow: logo left, "Inspection Report" center, ID right
     final headerHtml = '''
 <div class="hdr">
-  <img src="$origin/assets/logo/autoscope_logo_old.png" height="52" alt="" onerror="this.style.display='none'">
+  ${logoUri.isNotEmpty ? '<img src="$logoUri" height="52" alt="">' : ''}
   <div class="hdr-title">Inspection Report</div>
   <div class="hdr-id">$virId</div>
 </div>''';
 
     // Report Information + Inspector — matches the two _Card widgets side by side
     final infoHtml = '''
-<div class="row-2" style="margin-bottom:12px">
+<div class="row-2 info-row" style="margin-bottom:12px">
   <div class="card">
     <div class="card-title">Report Information</div>
     ${kv('Inspection ID', virId)}
@@ -1105,7 +1159,7 @@ class _ReportViewState extends State<_ReportView> {
   </div>
 </div>''';
 
-    // Overall Rating + Section Overview — matches the row in the app
+    // Section Overview + Overall Rating — matches the row in the app
     final sectionTiles = types.map((t) {
       final tm   = _asMap(t);
       final name = s(tm['typeName']).isEmpty ? 'Section' : s(tm['typeName']);
@@ -1114,27 +1168,76 @@ class _ReportViewState extends State<_ReportView> {
       return '<div class="sec-tile"><div class="sec-tile-name">$name</div><div class="sec-tile-avg">★ $avgStr</div></div>';
     }).join('');
 
+    // ── rating gauge SVG ─────────────────────────────────────────────────────
+    String buildGauge(double? val) {
+      const gcx = 110.0, gcy = 105.0, gRo = 88.0, gRi = 60.0;
+      double gcos(double deg) => math.cos(deg * math.pi / 180);
+      double gsin(double deg) => math.sin(deg * math.pi / 180);
+      String gpx(double deg, double r) => (gcx + r * gcos(deg)).toStringAsFixed(1);
+      String gpy(double deg, double r) => (gcy - r * gsin(deg)).toStringAsFixed(1);
+
+      String gseg(double sd, double ed, String c) =>
+          '<path d="M ${gpx(sd,gRo)} ${gpy(sd,gRo)}'
+          ' A $gRo $gRo 0 0 0 ${gpx(ed,gRo)} ${gpy(ed,gRo)}'
+          ' L ${gpx(ed,gRi)} ${gpy(ed,gRi)}'
+          ' A $gRi $gRi 0 0 1 ${gpx(sd,gRi)} ${gpy(sd,gRi)} Z" fill="$c"/>';
+
+      final segs = [
+        gseg(180, 144, '#ef5350'),
+        gseg(144, 108, '#ff7043'),
+        gseg(108,  72, '#ffa726'),
+        gseg( 72,  36, '#42a5f5'),
+        gseg( 36,   0, '#66bb6a'),
+      ].join();
+
+      String gtick(int v) {
+        const lr = gRo + 14;
+        final a = 180.0 - v * 36.0;
+        final tx = (gcx + lr * gcos(a)).toStringAsFixed(1);
+        final ty = (gcy - lr * gsin(a) + 4).toStringAsFixed(1);
+        return '<text x="$tx" y="$ty" text-anchor="middle"'
+            ' font-size="10" fill="rgba(0,0,0,0.54)" font-family="Arial,sans-serif">$v</text>';
+      }
+
+      final ticks = [0, 1, 2, 3, 4, 5].map(gtick).join();
+      final angle = val == null ? 90.0 : 180.0 - val.clamp(0.0, 5.0) * 36.0;
+      final nx = (gcx + 74.0 * gcos(angle)).toStringAsFixed(1);
+      final ny = (gcy - 74.0 * gsin(angle)).toStringAsFixed(1);
+      final caps =
+          '<circle cx="${gpx(180, gRo)}" cy="${gpy(180, gRo)}" r="4.5" fill="rgba(0,0,0,0.2)"/>'
+          '<circle cx="${gpx(0, gRo)}" cy="${gpy(0, gRo)}" r="4.5" fill="rgba(0,0,0,0.2)"/>';
+
+      return '<svg viewBox="-8 -20 236 138" width="196" height="115"'
+          ' xmlns="http://www.w3.org/2000/svg">'
+          '$segs$caps$ticks'
+          '<line x1="$gcx" y1="$gcy" x2="$nx" y2="$ny"'
+          ' stroke="#1a1a1a" stroke-width="2.5" stroke-linecap="round"/>'
+          '<circle cx="$gcx" cy="$gcy" r="5" fill="#333"/>'
+          '</svg>';
+    }
+
+    final gaugeSvg = buildGauge(overallRating);
+
     final overallHtml = '''
-<div class="row-2" style="margin-bottom:12px">
+<div class="row-2 overall-row" style="margin-bottom:12px">
   <div class="card">
     <div class="card-title">Section Overview</div>
     <div class="sec-grid">$sectionTiles</div>
   </div>
   <div class="card">
     <div class="card-title">Overall Rating</div>
-    <div style="font-size:22px;font-weight:900;margin-bottom:6px">$overallRatingStr</div>
-    ${ratingBadge(rlabel)}
-    <div style="margin-top:8px;color:rgba(0,0,0,0.54);font-size:13px">Scale: 0 to 5</div>
+    <div style="display:flex;align-items:center;gap:20px">
+      $gaugeSvg
+      <div>
+        <div style="font-size:28px;font-weight:900;line-height:1">$overallRatingStr</div>
+        <div style="margin-top:8px">${ratingBadge(rlabel)}</div>
+        <div style="margin-top:8px;color:rgba(0,0,0,0.54);font-size:12px">Scale: 0 to 5</div>
+      </div>
+    </div>
   </div>
 </div>''';
 
     // Vehicle Information — matches the _Card wrapping sub-section boxes
-    final chassisPhotoBlock = chassisPhoto.isNotEmpty ? '''
-<div style="margin-top:10px">
-  <div style="font-weight:700;font-size:11px;color:rgba(0,0,0,0.54);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:5px">Chassis Photo</div>
-  <img src="$chassisPhoto" style="max-height:160px;max-width:100%;border-radius:8px;border:1px solid rgba(0,0,0,0.06);display:block" alt="" onerror="this.style.display='none'">
-</div>''' : '';
-
     final vehicleHtml = '''
 <div class="card" style="margin-bottom:12px">
   <div class="card-title">Vehicle Information</div>
@@ -1142,16 +1245,17 @@ class _ReportViewState extends State<_ReportView> {
     <div class="box">
       <div class="box-title">Vehicle Details</div>
       ${kvMap(vd, vdOrder)}
-      $chassisPhotoBlock
     </div>
     <div>
-      <div class="box" style="margin-bottom:10px">
-        <div class="box-title">Exterior Details</div>
-        ${kvMap(ext, const [])}
-      </div>
-      <div class="box" style="margin-bottom:10px">
-        <div class="box-title">Interior Details</div>
-        ${kvMap(int_, const [])}
+      <div class="row-2" style="margin-bottom:10px">
+        <div class="box">
+          <div class="box-title">Exterior Details</div>
+          ${kvMap(ext, const [])}
+        </div>
+        <div class="box">
+          <div class="box-title">Interior Details</div>
+          ${kvMap(int_, const [])}
+        </div>
       </div>
       <div class="box">
         <div class="box-title">Service / Warranty Overview</div>
@@ -1164,7 +1268,7 @@ class _ReportViewState extends State<_ReportView> {
     // Damages — matches _DamagesBlock with canvas map + _DamagePreview list
     final damageJson = '[${damages.map((dp) => '{"x":${dp.x},"y":${dp.y}}').join(',')}]';
 
-    final dmgMapHtml = (origin.isEmpty || damages.isEmpty) ? '' : '''
+    final dmgMapHtml = (carImageUri.isEmpty || damages.isEmpty) ? '' : '''
 <div id="car-map-wrapper" style="margin-bottom:12px">
   <div class="box" style="padding:12px">
     <div style="position:relative;display:inline-block;width:100%">
@@ -1280,15 +1384,14 @@ class _ReportViewState extends State<_ReportView> {
         : '<div style="width:200px;height:72px;border:1px solid rgba(0,0,0,0.12);border-radius:6px;margin-top:8px"></div>';
 
     final authorizedHtml = '''
-<div class="card" style="margin-bottom:12px">
+<div class="card auth-block" style="margin-bottom:12px">
   <div class="card-title">Authorized By</div>
   <div class="auth-company">AUTO SCOPE INSPECTION AND PRICING SERVICES - L.L.C - S.P.C</div>
   <div class="auth-sub">Abu Dhabi, U.A.E</div>
   <div style="display:flex;gap:48px;margin-top:20px;flex-wrap:wrap;align-items:flex-start">
     <div>
       <div class="auth-lbl">Company Stamp</div>
-      <img src="$origin/assets/images/company_stamp.png" width="140" height="140" style="object-fit:contain;display:block;margin-top:6px" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
-      <div style="display:none;width:120px;height:120px;border:1.5px solid rgba(0,0,0,0.12);border-radius:50%;align-items:center;justify-content:center;color:rgba(0,0,0,0.3);font-weight:700;margin-top:6px">STAMP</div>
+      ${stampUri.isNotEmpty ? '<img src="$stampUri" width="140" height="140" style="object-fit:contain;display:block;margin-top:6px" alt="">' : '<div style="width:120px;height:120px;border:1.5px solid rgba(0,0,0,0.12);border-radius:50%;display:flex;align-items:center;justify-content:center;color:rgba(0,0,0,0.3);font-weight:700;margin-top:6px">STAMP</div>'}
     </div>
     <div>
       <div class="auth-lbl">Authorized Signature</div>
@@ -1305,7 +1408,7 @@ class _ReportViewState extends State<_ReportView> {
   <meta charset="UTF-8">
   <title>Inspection Report – $virId</title>
   <style>
-    @page { size: A4 portrait; margin: 10mm 12mm }
+    @page { size: A4 portrait; margin: 10mm 8mm }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0 }
 
     /* Matches Flutter's default body font and print-mode white background */
@@ -1382,9 +1485,14 @@ class _ReportViewState extends State<_ReportView> {
 
     @media print {
       body { padding: 0 }
-      .card { break-inside: avoid }
+      /* Do NOT put break-inside:avoid on .card — large cards (vehicle info) would
+         push entirely to the next page leaving page 1 mostly empty.
+         Only block breaks on the small 2-col header rows and fine-grained rows. */
+      .info-row { break-inside: avoid }
+      .overall-row { break-inside: avoid }
       .cl-section { break-inside: avoid }
       .dmg-row { break-inside: avoid }
+      .auth-block { break-inside: avoid }
     }
   </style>
 </head>
@@ -1427,7 +1535,7 @@ class _ReportViewState extends State<_ReportView> {
           damages.forEach(function(d,i){
             var m=document.createElement('div');
             m.style.cssText='position:absolute;transform:translate(-50%,-50%);width:26px;height:26px;border-radius:50%;background:#ff5252;color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:900;border:2px solid #fff;box-shadow:0 3px 8px rgba(0,0,0,.2)';
-            m.style.left=(d.y*100)+'%'; m.style.top=(d.x*100)+'%';
+            m.style.left=(d.y*100)+'%'; m.style.top=((1-d.x)*100)+'%';
             m.textContent=i+1;
             markers.appendChild(m);
           });
@@ -1438,7 +1546,7 @@ class _ReportViewState extends State<_ReportView> {
           if(w) w.style.display='none';
           setTimeout(doPrint,500);
         };
-        img.src='$origin/assets/images/car_views/top.jpg';
+        img.src='$carImageUri';
       } else {
         setTimeout(doPrint,2000);
       }
@@ -1965,12 +2073,12 @@ class _CarDamageMapState extends State<_CarDamageMap> {
                       ),
                     ),
                   ),
-                  // After 90° CCW rotation: new_x = old_y, new_y = old_x
+                  // After 90° CCW rotation: new_x = old_y, new_y = 1 - old_x
                   for (int i = 0; i < widget.damages.length; i++)
                     _DamageMarker(
                       index: i + 1,
                       left: (widget.damages[i].y * w).clamp(0, w),
-                      top: (widget.damages[i].x * h).clamp(0, h),
+                      top: ((1.0 - widget.damages[i].x) * h).clamp(0, h),
                       onTap: () => widget.onTapMarker(widget.damages[i], i + 1),
                     ),
                 ],
@@ -2908,6 +3016,7 @@ class _OdometerPainter extends CustomPainter {
 class _HeaderRow extends StatelessWidget {
   final String title;
   final VoidCallback onDownload;
+  final VoidCallback? onCopyLink;
 
   final bool showReview;
   final bool reviewSubmitted;
@@ -2916,6 +3025,7 @@ class _HeaderRow extends StatelessWidget {
   const _HeaderRow({
     required this.title,
     required this.onDownload,
+    this.onCopyLink,
     this.showReview = false,
     this.reviewSubmitted = false,
     this.onReview,
@@ -2960,6 +3070,24 @@ class _HeaderRow extends StatelessWidget {
                       reviewSubmitted ? Icons.star : Icons.star_border,
                       size: 20,
                     ),
+                  ),
+                ),
+              ),
+            if (onCopyLink != null)
+              Tooltip(
+                message: 'Copy shareable link',
+                child: InkWell(
+                  onTap: onCopyLink,
+                  borderRadius: BorderRadius.circular(999),
+                  child: Container(
+                    padding: const EdgeInsets.all(10),
+                    margin: const EdgeInsets.only(right: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.06),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: Colors.black.withValues(alpha: 0.10)),
+                    ),
+                    child: const Icon(Icons.link_outlined, size: 20),
                   ),
                 ),
               ),

@@ -181,9 +181,13 @@ class ApiClient {
       '/auth/register',
     };
 
-    // If your API uses query params, strip them
     final cleanPath = path.split('?').first;
-    return !publicPaths.contains(cleanPath);
+    if (publicPaths.contains(cleanPath)) return false;
+
+    // Attach auth when token is present, but don't block if it's absent —
+    // the server decides whether the endpoint requires auth.
+    // (Covers public /viewreport/:id access where no session exists.)
+    return true;
   }
 
   Uri _uri(String path) {

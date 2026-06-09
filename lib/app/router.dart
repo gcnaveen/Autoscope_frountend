@@ -205,6 +205,7 @@ import '../features/public/products/products_page.dart';
 import '../features/public/request/request_page.dart';
 
 import '../features/report/pages/inspection_report_page.dart';
+import '../features/report/pages/view_report_page.dart';
 
 import '../features/auth/auth_page.dart';
 import '../features/auth/staff_login_page.dart';
@@ -249,6 +250,7 @@ GoRouter buildRouter() {
 
       // Public
       final isPublic = loc == '/' || loc == '/products' || loc == '/request';
+      final isPublicReport = loc.startsWith('/viewreport/');
 
       // Protected
       final isProfile = loc == '/profile';
@@ -256,7 +258,7 @@ GoRouter buildRouter() {
 
       // --- Not logged in ---
       if (s == null) {
-        if (isPublic || isAnyAuth) return null;
+        if (isPublic || isAnyAuth || isPublicReport) return null;
         return '/auth/user'; // default login entry for public users
       }
 
@@ -408,6 +410,15 @@ GoRouter buildRouter() {
             inspectionId: id,
             printMode: printMode,
           );
+        },
+      ),
+
+      // Public shareable report — no auth required
+      GoRoute(
+        path: '/viewreport/:inspectionId',
+        builder: (context, state) {
+          final id = state.pathParameters['inspectionId']!;
+          return ViewReportPage(inspectionId: id);
         },
       ),
     ],

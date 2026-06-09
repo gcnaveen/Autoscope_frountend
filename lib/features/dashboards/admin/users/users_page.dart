@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 
 import '../../../shared/app_shell.dart';
+import '../../../shared/widgets/pagination_bar.dart';
+import '../../../../models/app_user.dart';
 import '../../../../services/service_locator.dart';
 import '../../../shared/top_snackbar.dart';
 
@@ -13,64 +14,74 @@ class UsersPage extends StatefulWidget {
 }
 
 class _UsersPageState extends State<UsersPage> {
-  late Future<List<Map<String, dynamic>>> _future;
   final _searchCtrl = TextEditingController();
+  final _scrollCtrl = ScrollController();
+
+  List<AppUser> _items = [];
+  int _page = 1;
+  int _totalPages = 1;
+  int _totalItems = 0;
+  static const int _pageSize = 20;
+  bool _loading = true;
+  String? _error;
+
+  int _searchVersion = 0;
 
   @override
   void initState() {
     super.initState();
-    _future = _loadUsers();
+    _loadPage(1);
   }
 
   @override
   void dispose() {
     _searchCtrl.dispose();
+    _scrollCtrl.dispose();
     super.dispose();
   }
 
-  Future<List<Map<String, dynamic>>> _loadUsers() async {
-    final res = await apiClient.getJson('/users');
-
-    List<dynamic> items = [];
-
-    if (res is Map<String, dynamic>) {
-      final data = res['data'];
-      if (data is Map<String, dynamic>) {
-        final u = data['users'];
-        if (u is List) items = u;
-      }
-
-      if (items.isEmpty && res['users'] is List) items = res['users'] as List;
-      if (items.isEmpty && res['items'] is List) items = res['items'] as List;
+  Future<void> _loadPage(int page) async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      final result = await usersService.listUsersPaged(
+        page: page,
+        limit: _pageSize,
+        search: _searchCtrl.text.trim().isEmpty ? null : _searchCtrl.text.trim(),
+        role: 'user',
+      );
+      if (!mounted) return;
+      setState(() {
+        _items = result.users;
+        _page = page;
+        _totalPages = result.totalPages;
+        _totalItems = result.total;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() { _error = e.toString(); _loading = false; });
     }
-
-    final list = items.whereType<Map>().map((x) => Map<String, dynamic>.from(x)).toList();
-
-    // Only role=user
-    final onlyUsers = list.where((u) {
-      final role = (u['role'] ?? '').toString().toLowerCase();
-      return role == 'user';
-    }).toList();
-
-    return onlyUsers;
   }
 
   void _reload() {
-    setState(() {
-      _future = _loadUsers();
-    });
+    _searchCtrl.clear();
+    _loadPage(1);
   }
 
-  String _fullName(Map<String, dynamic> u) {
-    final fn = (u['firstName'] ?? '').toString().trim();
-    final ln = (u['lastName'] ?? '').toString().trim();
-    final name = ('$fn $ln').trim();
-    if (name.isNotEmpty) return name;
+  void _goToPage(int p) {
+    _searchCtrl.clear();
+    if (_scrollCtrl.hasClients) {
+      _scrollCtrl.animateTo(0, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+    }
+    _loadPage(p);
+  }
 
-    final email = (u['email'] ?? '').toString().trim();
-    if (email.isNotEmpty && email.contains('@')) return email.split('@').first;
-
-    return '—';
+  void _onSearchChanged(String _) async {
+    final ver = ++_searchVersion;
+    setState(() {});
+    await Future.delayed(const Duration(milliseconds: 400));
+    if (!mounted || _searchVersion != ver) return;
+    _loadPage(1);
   }
 
   @override
@@ -81,9 +92,35 @@ class _UsersPageState extends State<UsersPage> {
     return AppShell(
       title: 'Users',
       child: ListView(
+        controller: _scrollCtrl,
         padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
-            children: [
-              if (!isMobile)
+        children: [
+          if (!isMobile)
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Users',
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Refresh',
+                  onPressed: _loading ? null : _reload,
+                  icon: const Icon(Icons.refresh),
+                ),
+                const SizedBox(width: 8),
+                FilledButton.tonalIcon(
+                  onPressed: () => showTopSnack(context, 'Export will be added later.', variant: 'warning'),
+                  icon: const Icon(Icons.download),
+                  label: const Text('Export'),
+                ),
+              ],
+            )
+          else
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
                 Row(
                   children: [
                     Expanded(
@@ -94,155 +131,95 @@ class _UsersPageState extends State<UsersPage> {
                     ),
                     IconButton(
                       tooltip: 'Refresh',
-                      onPressed: _reload,
+                      onPressed: _loading ? null : _reload,
                       icon: const Icon(Icons.refresh),
                     ),
-                    const SizedBox(width: 8),
-                    FilledButton.tonalIcon(
-                      onPressed: () {
-                        showTopSnack(context, 'Export will be added later.', variant: 'warning');
-                      },
-                      icon: const Icon(Icons.download),
-                      label: const Text('Export'),
-                    ),
-                  ],
-                )
-              else
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            'Users',
-                            style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
-                          ),
-                        ),
-                        IconButton(
-                          tooltip: 'Refresh',
-                          onPressed: _reload,
-                          icon: const Icon(Icons.refresh),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton.tonalIcon(
-                        onPressed: () {
-                          showTopSnack(context, 'Export will be added later.', variant: 'warning');
-                        },
-                        icon: const Icon(Icons.download),
-                        label: const Text('Export'),
-                      ),
-                    ),
                   ],
                 ),
-
-              const SizedBox(height: 12),
-
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(14),
-                  child: Column(
-                    children: [
-                      TextField(
-                        controller: _searchCtrl,
-                        onChanged: (_) => setState(() {}),
-                        decoration: InputDecoration(
-                          prefixIcon: const Icon(Icons.search),
-                          hintText: 'Search users by name/email/phone...',
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-
-                      FutureBuilder<List<Map<String, dynamic>>>(
-                        future: _future,
-                        builder: (context, snap) {
-                          if (snap.connectionState == ConnectionState.waiting) {
-                            return const Padding(
-                              padding: EdgeInsets.all(24),
-                              child: Center(child: CircularProgressIndicator()),
-                            );
-                          }
-
-                          if (snap.hasError) {
-                            return Padding(
-                              padding: const EdgeInsets.all(14),
-                              child: Column(
-                                children: [
-                                  Text(
-                                    'Failed to load users: ${snap.error}',
-                                    style: const TextStyle(color: Colors.red),
-                                    textAlign: TextAlign.center,
-                                  ),
-                                  const SizedBox(height: 10),
-                                  FilledButton(
-                                    onPressed: _reload,
-                                    child: const Text('Retry'),
-                                  )
-                                ],
-                              ),
-                            );
-                          }
-
-                          final list = snap.data ?? [];
-                          final q = _searchCtrl.text.trim().toLowerCase();
-
-                          final filtered = q.isEmpty
-                              ? list
-                              : list.where((u) {
-                                  final name = _fullName(u).toLowerCase();
-                                  final email = (u['email'] ?? '').toString().toLowerCase();
-                                  final phone = (u['phone'] ?? '').toString().toLowerCase();
-                                  return name.contains(q) || email.contains(q) || phone.contains(q);
-                                }).toList();
-
-                          if (filtered.isEmpty) {
-                            return const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 24),
-                              child: Text('No users found.'),
-                            );
-                          }
-
-                          return Column(
-                            children: filtered.map((u) => _UserCard(u: u)).toList(),
-                          );
-                        },
-                      ),
-                    ],
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.tonalIcon(
+                    onPressed: () => showTopSnack(context, 'Export will be added later.', variant: 'warning'),
+                    icon: const Icon(Icons.download),
+                    label: const Text('Export'),
                   ),
                 ),
+              ],
+            ),
+
+          const SizedBox(height: 12),
+
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                children: [
+                  TextField(
+                    controller: _searchCtrl,
+                    onChanged: _onSearchChanged,
+                    decoration: InputDecoration(
+                      prefixIcon: const Icon(Icons.search),
+                      hintText: 'Search users by name/email/phone...',
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+
+                  if (_loading)
+                    const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator()))
+                  else if (_error != null)
+                    Padding(
+                      padding: const EdgeInsets.all(14),
+                      child: Column(
+                        children: [
+                          Text('Failed to load users: $_error', style: const TextStyle(color: Colors.red), textAlign: TextAlign.center),
+                          const SizedBox(height: 10),
+                          FilledButton(onPressed: _reload, child: const Text('Retry')),
+                        ],
+                      ),
+                    )
+                  else if (_items.isEmpty)
+                    const Padding(padding: EdgeInsets.symmetric(vertical: 24), child: Text('No users found.'))
+                  else ...[
+                    ..._items.map((u) => _UserCard(user: u)),
+                    if (_totalPages > 1) ...[
+                      const SizedBox(height: 12),
+                      PaginationBar(
+                        currentPage: _page,
+                        totalPages: _totalPages,
+                        totalItems: _totalItems,
+                        pageSize: _pageSize,
+                        onPrev: _page > 1 ? () => _goToPage(_page - 1) : null,
+                        onNext: _page < _totalPages ? () => _goToPage(_page + 1) : null,
+                      ),
+                    ],
+                  ],
+                ],
               ),
-            ],
+            ),
           ),
+        ],
+      ),
     );
   }
 }
 
 class _UserCard extends StatelessWidget {
-  final Map<String, dynamic> u;
-  const _UserCard({required this.u});
+  final AppUser user;
+  const _UserCard({required this.user});
 
   @override
   Widget build(BuildContext context) {
     final w = MediaQuery.sizeOf(context).width;
     final isMobile = w < 720;
 
-    final email = (u['email'] ?? '—').toString().trim();
-    final fn = (u['firstName'] ?? '').toString().trim();
-    final ln = (u['lastName'] ?? '').toString().trim();
-    final name = ('$fn $ln').trim().isEmpty ? '—' : ('$fn $ln').trim();
-
-    final phone = (u['phone'] ?? '—').toString().trim();
-    final status = (u['status'] ?? '—').toString().trim();
+    final email = user.email.isEmpty ? '—' : user.email;
+    final name = user.fullName;
+    final phone = user.phone?.trim() ?? '—';
+    final status = user.status.isEmpty ? '—' : user.status;
     final active = status.toLowerCase() == 'active';
-
-    final id = (u['_id'] ?? u['id'] ?? '').toString().trim();
+    final id = user.id;
 
     Widget statusChip() {
       return Chip(

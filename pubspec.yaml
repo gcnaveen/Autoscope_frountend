@@ -68,8 +68,12 @@ flutter:
   # To add assets to your application, add an assets section, like this:
   assets:
     - assets/images/
+    - assets/images/company_stamp.png
     - assets/images/car_views/
+    - assets/images/car_views/top.jpg
     - assets/logo/
+    - assets/logo/autoscope_logo.png
+    - assets/logo/autoscope_logo_old.png
     - assets/pdfs/sample_report.pdf
     - assets/data/vehicle_catalog_uae.json
 

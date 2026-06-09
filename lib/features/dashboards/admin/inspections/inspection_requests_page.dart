@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../shared/app_shell.dart';
+import '../../../shared/widgets/pagination_bar.dart';
 import '../../../../services/service_locator.dart';
 import '../../../shared/top_snackbar.dart';
 import 'widgets/inspection_request_manage_dialog.dart';
@@ -14,32 +15,66 @@ class InspectionRequestsPage extends StatefulWidget {
 }
 
 class _InspectionRequestsPageState extends State<InspectionRequestsPage> {
-  late Future<List<_RequestRow>> _future;
   final _searchCtrl = TextEditingController();
-  int _tick = 0;
+  final _scrollCtrl = ScrollController();
+
+  List<_RequestRow> _items = [];
+  int _page = 1;
+  int _totalPages = 1;
+  int _totalItems = 0;
+  static const int _pageSize = 20;
+  bool _loading = true;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
-    _future = _load();
+    _loadPage(1);
   }
 
   @override
   void dispose() {
     _searchCtrl.dispose();
+    _scrollCtrl.dispose();
     super.dispose();
   }
 
-  Future<List<_RequestRow>> _load() async {
-    final raw = await inspectionRequestsService.listAdminRequests();
-    return raw.whereType<Map>().map((x) => _RequestRow.fromJson(Map<String, dynamic>.from(x))).toList();
+  Future<void> _loadPage(int page) async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      final result = await inspectionRequestsService.listAdminRequestsPaged(
+        page: page,
+        limit: _pageSize,
+      );
+      if (!mounted) return;
+      final rows = result.requests
+          .whereType<Map>()
+          .map((x) => _RequestRow.fromJson(Map<String, dynamic>.from(x)))
+          .toList();
+      setState(() {
+        _items = rows;
+        _page = page;
+        _totalPages = result.totalPages;
+        _totalItems = result.total;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() { _error = e.toString(); _loading = false; });
+    }
   }
 
   void _reload() {
-    setState(() {
-      _tick++;
-      _future = _load();
-    });
+    _searchCtrl.clear();
+    _loadPage(1);
+  }
+
+  void _goToPage(int p) {
+    _searchCtrl.clear();
+    if (_scrollCtrl.hasClients) {
+      _scrollCtrl.animateTo(0, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+    }
+    _loadPage(p);
   }
 
   Future<void> _openManage(_RequestRow r) async {
@@ -73,105 +108,106 @@ class _InspectionRequestsPageState extends State<InspectionRequestsPage> {
     final w = MediaQuery.sizeOf(context).width;
     final isMobile = w < 720;
 
+    final q = _searchCtrl.text.trim().toLowerCase();
+    final filtered = q.isEmpty
+        ? _items
+        : _items.where((r) {
+            final hay = <String>[
+              r.requestId,
+              r.city,
+              r.type,
+              r.status,
+              r.customerName ?? '',
+              r.customerEmail ?? '',
+              r.customerPhone ?? '',
+              r.vehicleMake ?? '',
+              r.vehicleModel ?? '',
+              r.licensePlate ?? '',
+              r.inspectorName ?? '',
+            ].join(' ').toLowerCase();
+            return hay.contains(q);
+          }).toList();
+
     return AppShell(
       title: 'Inspection Requests',
-      child: FutureBuilder<List<_RequestRow>>(
-            key: ValueKey(_tick),
-            future: _future,
-            builder: (context, snap) {
-              if (snap.connectionState == ConnectionState.waiting) {
-                return const Padding(
-                  padding: EdgeInsets.all(40),
-                  child: Center(child: CircularProgressIndicator()),
-                );
-              }
-
-              if (snap.hasError) {
-                return Padding(
-                  padding: const EdgeInsets.all(18),
-                  child: Text('Failed to load requests: ${snap.error}'),
-                );
-              }
-
-              final all = snap.data ?? [];
-              final q = _searchCtrl.text.trim().toLowerCase();
-
-              final filtered = q.isEmpty
-                  ? all
-                  : all.where((r) {
-                      final hay = <String>[
-                        r.requestId,
-                        r.city,
-                        r.type,
-                        r.status,
-                        r.customerName ?? '',
-                        r.customerEmail ?? '',
-                        r.customerPhone ?? '',
-                        r.vehicleMake ?? '',
-                        r.vehicleModel ?? '',
-                        r.licensePlate ?? '',
-                        r.inspectorName ?? '',
-                      ].join(' ').toLowerCase();
-                      return hay.contains(q);
-                    }).toList();
-
-              return ListView(
-                padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
+      child: ListView(
+        controller: _scrollCtrl,
+        padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Inspection Requests',
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Refresh',
+                onPressed: _loading ? null : _reload,
+                icon: const Icon(Icons.refresh),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
                 children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'Inspection Requests',
-                          style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
-                        ),
-                      ),
-                      IconButton(
-                        tooltip: 'Refresh',
-                        onPressed: _reload,
-                        icon: const Icon(Icons.refresh),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(14),
-                      child: Column(
-                        children: [
-                          TextField(
-                            controller: _searchCtrl,
-                            onChanged: (_) => setState(() {}),
-                            decoration: InputDecoration(
-                              prefixIcon: const Icon(Icons.search),
-                              hintText: 'Search by requestId / city / type / customer / vehicle / inspector...',
-                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          if (filtered.isEmpty)
-                            const Padding(
-                              padding: EdgeInsets.all(30),
-                              child: Text('No inspection requests found.'),
-                            )
-                          else
-                            ...filtered.map(
-                              (r) => _RequestCard(
-                                key: ValueKey('req-${r.mongoId}'),
-                                r: r,
-                                isMobile: isMobile,
-                                onManage: () => _openManage(r),
-                                onViewReport: () => _openReport(r),
-                              ),
-                            ),
-                        ],
-                      ),
+                  TextField(
+                    controller: _searchCtrl,
+                    onChanged: (_) => setState(() {}),
+                    decoration: InputDecoration(
+                      prefixIcon: const Icon(Icons.search),
+                      hintText: 'Search by requestId / city / type / customer / vehicle / inspector...',
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                     ),
                   ),
+                  const SizedBox(height: 12),
+                  if (_loading)
+                    const Padding(
+                      padding: EdgeInsets.all(40),
+                      child: Center(child: CircularProgressIndicator()),
+                    )
+                  else if (_error != null)
+                    Padding(
+                      padding: const EdgeInsets.all(18),
+                      child: Text('Failed to load requests: $_error'),
+                    )
+                  else if (filtered.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.all(30),
+                      child: Text('No inspection requests found.'),
+                    )
+                  else ...[
+                    ...filtered.map(
+                      (r) => _RequestCard(
+                        key: ValueKey('req-${r.mongoId}'),
+                        r: r,
+                        isMobile: isMobile,
+                        onManage: () => _openManage(r),
+                        onViewReport: () => _openReport(r),
+                      ),
+                    ),
+                    if (_totalPages > 1 && q.isEmpty) ...[
+                      const SizedBox(height: 12),
+                      PaginationBar(
+                        currentPage: _page,
+                        totalPages: _totalPages,
+                        totalItems: _totalItems,
+                        pageSize: _pageSize,
+                        onPrev: _page > 1 ? () => _goToPage(_page - 1) : null,
+                        onNext: _page < _totalPages ? () => _goToPage(_page + 1) : null,
+                      ),
+                    ],
+                  ],
                 ],
-              );
-            },
+              ),
+            ),
           ),
+        ],
+      ),
     );
   }
 }

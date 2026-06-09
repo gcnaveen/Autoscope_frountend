@@ -34,10 +34,69 @@ class ReviewsService {
     return items;
   }
 
-  /// GET /reviews/admin?status=pending&page=1&limit=20
-  /// Returns list of admin reviews (parsed safely)
+  /// GET /reviews/admin — paged, returns reviews + pagination metadata
+  Future<({List<Map<String, dynamic>> reviews, int total, int totalPages})>
+      getAdminReviewsPaged({
+    int page = 1,
+    int limit = 20,
+    String? status,
+    String? search,
+  }) async {
+    final params = <String, dynamic>{'page': page, 'limit': limit};
+    if (status != null && status.trim().isNotEmpty) params['status'] = status.trim();
+    if (search != null && search.trim().isNotEmpty) params['search'] = search.trim();
+
+    final url = _withQuery('$_base/admin', params);
+    final res = await apiClient.getJson(url);
+
+    List<Map<String, dynamic>> reviews = [];
+    int total = 0;
+    int totalPages = 1;
+
+    if (res is Map) {
+      final data = res['data'];
+      if (data is Map) {
+        final list = data['reviews'] ?? data['items'] ?? data['data'];
+        if (list is List) {
+          reviews = list.whereType<Map>().map((x) => Map<String, dynamic>.from(x)).toList();
+        }
+        final pag = data['pagination'];
+        if (pag is Map) {
+          total = _asInt(pag['total'] ?? pag['totalCount']) ?? 0;
+          totalPages = _asInt(pag['totalPages'] ?? pag['pages']) ?? 1;
+        } else {
+          total = _asInt(data['total'] ?? data['totalCount']) ?? 0;
+          totalPages = _asInt(data['totalPages'] ?? data['pages']) ?? 1;
+        }
+      } else if (data is List) {
+        reviews = data.whereType<Map>().map((x) => Map<String, dynamic>.from(x)).toList();
+        final pag = res['pagination'];
+        if (pag is Map) {
+          total = _asInt(pag['total'] ?? pag['totalCount']) ?? 0;
+          totalPages = _asInt(pag['totalPages'] ?? pag['pages']) ?? 1;
+        } else {
+          total = _asInt(res['total'] ?? res['totalCount']) ?? 0;
+          totalPages = _asInt(res['totalPages'] ?? res['pages']) ?? 1;
+        }
+      }
+      if (reviews.isEmpty) {
+        reviews = _extractList(res, preferKeys: const ['reviews', 'items', 'data']);
+      }
+    } else if (res is List) {
+      reviews = res.whereType<Map>().map((x) => Map<String, dynamic>.from(x)).toList();
+      total = reviews.length;
+      totalPages = 1;
+    }
+
+    if (total == 0) total = reviews.length;
+    if (totalPages <= 0) totalPages = (total / limit).ceil().clamp(1, 999999);
+
+    return (reviews: reviews, total: total, totalPages: totalPages);
+  }
+
+  /// GET /reviews/admin?status=pending&page=1&limit=20 (legacy, returns list only)
   Future<List<Map<String, dynamic>>> getAllAdminReviews({
-    String? status, // pending/approved/rejected
+    String? status,
     int? page,
     int? limit,
   }) async {
@@ -140,5 +199,12 @@ class ReviewsService {
     if (v is Map<String, dynamic>) return v;
     if (v is Map) return Map<String, dynamic>.from(v);
     return <String, dynamic>{};
+  }
+
+  int? _asInt(dynamic v) {
+    if (v is int) return v;
+    if (v is num) return v.toInt();
+    if (v is String) return int.tryParse(v);
+    return null;
   }
 }

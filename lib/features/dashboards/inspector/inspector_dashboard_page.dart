@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../shared/app_shell.dart';
+import '../../shared/widgets/pagination_bar.dart';
 import '../../../services/service_locator.dart';
 
 class InspectorDashboardPage extends StatefulWidget {
@@ -12,19 +13,56 @@ class InspectorDashboardPage extends StatefulWidget {
 }
 
 class _InspectorDashboardPageState extends State<InspectorDashboardPage> {
-  late Future<List<Map<String, dynamic>>> _future;
+  final _scrollCtrl = ScrollController();
+
+  List<Map<String, dynamic>> _jobs = [];
+  int _page = 1;
+  int _totalPages = 1;
+  int _totalItems = 0;
+  static const int _pageSize = 20;
+  bool _loading = true;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
-    _future = inspectionRequestsService.listInspectorAssigned();
+    _loadPage(1);
   }
 
-  Future<void> _refresh() async {
-    setState(() {
-      _future = inspectionRequestsService.listInspectorAssigned();
-    });
-    await _future;
+  @override
+  void dispose() {
+    _scrollCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadPage(int page) async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      final result = await inspectionRequestsService.listInspectorAssignedPaged(
+        page: page,
+        limit: _pageSize,
+      );
+      if (!mounted) return;
+      setState(() {
+        _jobs = result.requests;
+        _page = page;
+        _totalPages = result.totalPages;
+        _totalItems = result.total;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() { _error = e.toString(); _loading = false; });
+    }
+  }
+
+  Future<void> _refresh() => _loadPage(1);
+
+  void _goToPage(int p) {
+    if (_scrollCtrl.hasClients) {
+      _scrollCtrl.animateTo(0, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+    }
+    _loadPage(p);
   }
 
   String _s(dynamic v) => (v ?? '').toString();
@@ -110,6 +148,111 @@ class _InspectorDashboardPageState extends State<InspectorDashboardPage> {
     context.push('/dashboard/inspector/requests/$id');
   }
 
+  Widget _buildJobCard(Map<String, dynamic> r, bool isMobile, bool isVeryNarrow) {
+    final status = _statusOf(r);
+    final isCompleted = _isCompletedStatus(status);
+    final title = _titleOf(r);
+    final addr = _formatAddress(r['address']);
+    final when = _formatWhen(r);
+
+    final statusChip = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: _statusBg(status),
+        border: Border.all(color: _statusBorder(status)),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(status, style: const TextStyle(fontWeight: FontWeight.w800)),
+    );
+
+    final openBtn = FilledButton.tonal(
+      onPressed: isCompleted ? null : () => _openRequest(r),
+      child: const Text('Open'),
+    );
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const CircleAvatar(
+                    radius: 20,
+                    child: Icon(Icons.directions_car_filled_outlined),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          style: const TextStyle(fontWeight: FontWeight.w900),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 6),
+                        if (addr.trim().isNotEmpty)
+                          Text(
+                            addr,
+                            style: const TextStyle(color: Colors.black54),
+                            maxLines: isMobile ? 3 : 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        if (when.trim().isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            when,
+                            style: const TextStyle(color: Colors.black54),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  if (!isMobile)
+                    Row(
+                      children: [
+                        statusChip,
+                        const SizedBox(width: 10),
+                        SizedBox(height: 36, child: openBtn),
+                      ],
+                    ),
+                ],
+              ),
+              if (isMobile) ...[
+                const SizedBox(height: 12),
+                if (isVeryNarrow)
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      statusChip,
+                      const SizedBox(height: 10),
+                      SizedBox(width: double.infinity, height: 40, child: openBtn),
+                    ],
+                  )
+                else
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [statusChip, SizedBox(height: 36, child: openBtn)],
+                  ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final screenW = MediaQuery.sizeOf(context).width;
@@ -121,197 +264,77 @@ class _InspectorDashboardPageState extends State<InspectorDashboardPage> {
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 1100),
-          child: FutureBuilder<List<Map<String, dynamic>>>(
-            future: _future,
-            builder: (context, snap) {
-              if (snap.connectionState == ConnectionState.waiting) {
-                return const Padding(
-                  padding: EdgeInsets.all(40),
-                  child: Center(child: CircularProgressIndicator()),
-                );
-              }
-
-              if (snap.hasError) {
-                return Padding(
-                  padding: const EdgeInsets.all(18),
-                  child: Text('Failed to load assigned jobs: ${snap.error}'),
-                );
-              }
-
-              final jobs = snap.data ?? const [];
-
-              return ListView(
+          child: Stack(
+            children: [
+              ListView(
+                controller: _scrollCtrl,
                 padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
                 children: [
-                  if (!isMobile)
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            'Assigned Jobs',
-                            style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
-                          ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Assigned Jobs',
+                          style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
                         ),
-                        IconButton(
-                          tooltip: 'Refresh',
-                          onPressed: _refresh,
-                          icon: const Icon(Icons.refresh),
-                        ),
-                      ],
-                    )
-                  else
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                'Assigned Jobs',
-                                style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
-                              ),
-                            ),
-                            IconButton(
-                              tooltip: 'Refresh',
-                              onPressed: _refresh,
-                              icon: const Icon(Icons.refresh),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
+                      ),
+                      if (_totalItems > 0)
+                        Text('$_totalItems total', style: const TextStyle(color: Colors.black54)),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        tooltip: 'Refresh',
+                        onPressed: _loading ? null : _refresh,
+                        icon: const Icon(Icons.refresh),
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 12),
 
-                  if (jobs.isEmpty)
+                  if (_error != null) ...[
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: Column(
+                          children: [
+                            Text('Failed to load jobs: $_error', textAlign: TextAlign.center),
+                            const SizedBox(height: 10),
+                            FilledButton.tonal(onPressed: _refresh, child: const Text('Retry')),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ] else if (!_loading && _jobs.isEmpty) ...[
                     const Card(
                       child: Padding(
                         padding: EdgeInsets.all(14),
                         child: Text('No assigned jobs found.'),
                       ),
                     ),
-
-                  ...jobs.map((r) {
-                    final status = _statusOf(r);
-                    final isCompleted = _isCompletedStatus(status);
-                    final title = _titleOf(r);
-                    final addr = _formatAddress(r['address']);
-                    final when = _formatWhen(r);
-
-                    final statusChip = Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: _statusBg(status),
-                        border: Border.all(color: _statusBorder(status)),
-                        borderRadius: BorderRadius.circular(999),
+                  ] else ...[
+                    ..._jobs.map((r) => _buildJobCard(r, isMobile, isVeryNarrow)),
+                    if (_totalPages > 1) ...[
+                      const SizedBox(height: 8),
+                      PaginationBar(
+                        currentPage: _page,
+                        totalPages: _totalPages,
+                        totalItems: _totalItems,
+                        pageSize: _pageSize,
+                        onPrev: _page > 1 ? () => _goToPage(_page - 1) : null,
+                        onNext: _page < _totalPages ? () => _goToPage(_page + 1) : null,
                       ),
-                      child: Text(status, style: const TextStyle(fontWeight: FontWeight.w800)),
-                    );
-
-                    final openBtn = FilledButton.tonal(
-                      onPressed: isCompleted ? null : () => _openRequest(r),
-                      child: const Text('Open'),
-                    );
-
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: Card(
-                        child: Padding(
-                          padding: const EdgeInsets.all(14),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const CircleAvatar(
-                                    radius: 20,
-                                    child: Icon(Icons.directions_car_filled_outlined),
-                                  ),
-                                  const SizedBox(width: 12),
-
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          title,
-                                          style: const TextStyle(fontWeight: FontWeight.w900),
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                        const SizedBox(height: 6),
-
-                                        if (addr.trim().isNotEmpty)
-                                          Text(
-                                            addr,
-                                            style: const TextStyle(color: Colors.black54),
-                                            maxLines: isMobile ? 3 : 2,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-
-                                        if (when.trim().isNotEmpty) ...[
-                                          const SizedBox(height: 4),
-                                          Text(
-                                            when,
-                                            style: const TextStyle(color: Colors.black54),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ],
-                                      ],
-                                    ),
-                                  ),
-
-                                  const SizedBox(width: 10),
-
-                                  if (!isMobile)
-                                    Row(
-                                      children: [
-                                        statusChip,
-                                        const SizedBox(width: 10),
-                                        SizedBox(height: 36, child: openBtn),
-                                      ],
-                                    ),
-                                ],
-                              ),
-
-                              if (isMobile) ...[
-                                const SizedBox(height: 12),
-
-                                // On very narrow screens make Open button full-width
-                                if (isVeryNarrow)
-                                  Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      statusChip,
-                                      const SizedBox(height: 10),
-                                      SizedBox(
-                                        width: double.infinity,
-                                        height: 40,
-                                        child: openBtn,
-                                      ),
-                                    ],
-                                  )
-                                else
-                                  Wrap(
-                                    spacing: 10,
-                                    runSpacing: 10,
-                                    crossAxisAlignment: WrapCrossAlignment.center,
-                                    children: [
-                                      statusChip,
-                                      SizedBox(height: 36, child: openBtn),
-                                    ],
-                                  ),
-                              ],
-                            ],
-                          ),
-                        ),
-                      ),
-                    );
-                  }),
+                    ],
+                  ],
                 ],
-              );
-            },
+              ),
+              if (_loading)
+                Positioned.fill(
+                  child: Container(
+                    color: Colors.black.withValues(alpha: 0.04),
+                    alignment: Alignment.center,
+                    child: const CircularProgressIndicator(),
+                  ),
+                ),
+            ],
           ),
         ),
       ),

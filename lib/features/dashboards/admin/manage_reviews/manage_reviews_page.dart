@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../shared/app_shell.dart';
+import '../../../shared/widgets/pagination_bar.dart';
 import '../../../../services/service_locator.dart';
 
 class ManageReviewsPage extends StatefulWidget {
@@ -15,29 +16,43 @@ class _ManageReviewsPageState extends State<ManageReviewsPage> {
   bool _loading = false;
   String? _error;
 
-  String _status = 'all'; // all | pending | approved | rejected
+  String _status = 'all';
   List<Map<String, dynamic>> _reviews = [];
+  int _page = 1;
+  int _totalPages = 1;
+  int _totalItems = 0;
+  static const int _pageSize = 20;
+
+  final _scrollCtrl = ScrollController();
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _loadPage(1);
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  @override
+  void dispose() {
+    _scrollCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadPage(int page) async {
+    setState(() { _loading = true; _error = null; });
 
     try {
-      final list = await reviewsService.getAllAdminReviews(
+      final result = await reviewsService.getAdminReviewsPaged(
+        page: page,
+        limit: _pageSize,
         status: _status == 'all' ? null : _status,
       );
 
       if (!mounted) return;
       setState(() {
-        _reviews = list;
+        _reviews = result.reviews;
+        _page = page;
+        _totalPages = result.totalPages;
+        _totalItems = result.total;
         _loading = false;
       });
     } catch (e) {
@@ -49,10 +64,19 @@ class _ManageReviewsPageState extends State<ManageReviewsPage> {
     }
   }
 
+  Future<void> _load() => _loadPage(1);
+
+  void _goToPage(int p) {
+    if (_scrollCtrl.hasClients) {
+      _scrollCtrl.animateTo(0, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+    }
+    _loadPage(p);
+  }
+
   Future<void> _setStatus(String v) async {
     if (_status == v) return;
-    setState(() => _status = v);
-    await _load();
+    setState(() { _status = v; _page = 1; });
+    await _loadPage(1);
   }
 
   Future<void> _approve(String id) async {
@@ -151,6 +175,7 @@ class _ManageReviewsPageState extends State<ManageReviewsPage> {
           RefreshIndicator(
             onRefresh: _load,
             child: ListView(
+              controller: _scrollCtrl,
               padding: const EdgeInsets.all(16),
               children: [
                 Row(
@@ -188,7 +213,20 @@ class _ManageReviewsPageState extends State<ManageReviewsPage> {
                   const Center(child: Text('No reviews found.')),
                 ],
 
-                ..._reviews.map((r) {
+                if (_totalPages > 1 && !_loading)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: PaginationBar(
+                      currentPage: _page,
+                      totalPages: _totalPages,
+                      totalItems: _totalItems,
+                      pageSize: _pageSize,
+                      onPrev: _page > 1 ? () => _goToPage(_page - 1) : null,
+                      onNext: _page < _totalPages ? () => _goToPage(_page + 1) : null,
+                    ),
+                  ),
+
+                ..._reviews.map<Widget>((r) {
                   final id = _s(r['_id'] ?? r['id'] ?? r['reviewId'], fallback: '');
                   final status = _s(r['status'], fallback: 'pending').toLowerCase();
                   final rating = _rating(r['rating']);

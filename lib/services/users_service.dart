@@ -5,8 +5,79 @@ class UsersService {
   final ApiClient apiClient;
   UsersService({required this.apiClient});
 
+  Future<({List<AppUser> users, int total, int totalPages})> listUsersPaged({
+    int page = 1,
+    int limit = 20,
+    String? search,
+    String? role,
+  }) async {
+    final buf = StringBuffer('/users?page=$page&limit=$limit');
+    if (search != null && search.trim().isNotEmpty) {
+      buf.write('&search=${Uri.encodeQueryComponent(search.trim())}');
+    }
+    if (role != null && role.trim().isNotEmpty) {
+      buf.write('&role=${Uri.encodeQueryComponent(role.trim())}');
+    }
+
+    final res = await apiClient.getJson(buf.toString());
+
+    List<dynamic> raw = [];
+    int total = 0;
+    int totalPages = 1;
+
+    if (res is Map) {
+      final data = res['data'];
+      if (data is Map) {
+        final list = data['users'] ?? data['items'] ?? data['data'];
+        if (list is List) raw = list;
+        final pag = data['pagination'];
+        if (pag is Map) {
+          total = _asInt(pag['total'] ?? pag['totalCount']) ?? 0;
+          totalPages = _asInt(pag['totalPages'] ?? pag['pages']) ?? 1;
+        } else {
+          total = _asInt(data['total'] ?? data['totalCount']) ?? 0;
+          totalPages = _asInt(data['totalPages'] ?? data['pages']) ?? 1;
+        }
+      } else if (data is List) {
+        raw = data;
+        final pag = res['pagination'];
+        if (pag is Map) {
+          total = _asInt(pag['total'] ?? pag['totalCount']) ?? 0;
+          totalPages = _asInt(pag['totalPages'] ?? pag['pages']) ?? 1;
+        } else {
+          total = _asInt(res['total'] ?? res['totalCount']) ?? 0;
+          totalPages = _asInt(res['totalPages'] ?? res['pages']) ?? 1;
+        }
+      }
+      if (raw.isEmpty) {
+        final v = res['users'] ?? res['items'];
+        if (v is List) raw = v;
+      }
+    } else if (res is List) {
+      raw = res;
+      total = raw.length;
+      totalPages = 1;
+    }
+
+    if (total == 0) total = raw.length;
+    if (totalPages <= 0) totalPages = (total / limit).ceil().clamp(1, 999999);
+
+    final users = raw
+        .whereType<Map>()
+        .map((x) => AppUser.fromJson(Map<String, dynamic>.from(x)))
+        .toList();
+
+    return (users: users, total: total, totalPages: totalPages);
+  }
+
+  int? _asInt(dynamic v) {
+    if (v is int) return v;
+    if (v is num) return v.toInt();
+    if (v is String) return int.tryParse(v);
+    return null;
+  }
+
   Future<List<AppUser>> listUsers() async {
-    // final res = await apiClient.getJson('/users');
     final ts = DateTime.now().millisecondsSinceEpoch;
     final res = await apiClient.getJson('/users?ts=$ts');
 

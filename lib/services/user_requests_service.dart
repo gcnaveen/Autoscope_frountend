@@ -38,6 +38,70 @@ class UserRequestsService {
     return items.whereType<Map>().map((x) => Map<String, dynamic>.from(x)).toList();
   }
 
+  Future<({List<Map<String, dynamic>> requests, int total, int totalPages})>
+      listMyRequestsPaged({
+    int page = 1,
+    int limit = 20,
+  }) async {
+    final res = await apiClient.getJson(
+      '/inspection-requests/me?page=$page&limit=$limit',
+    );
+
+    List<Map<String, dynamic>> items = [];
+    int total = 0;
+    int totalPages = 1;
+
+    if (res is Map) {
+      final data = res['data'];
+      if (data is Map) {
+        final list = data['requests'] ?? data['items'] ?? data['data'];
+        if (list is List) {
+          items = list.whereType<Map>().map((x) => Map<String, dynamic>.from(x)).toList();
+        }
+        final pag = data['pagination'];
+        if (pag is Map) {
+          total = _asInt(pag['total'] ?? pag['totalCount']) ?? 0;
+          totalPages = _asInt(pag['totalPages'] ?? pag['pages']) ?? 1;
+        } else {
+          total = _asInt(data['total'] ?? data['totalCount']) ?? 0;
+          totalPages = _asInt(data['totalPages'] ?? data['pages']) ?? 1;
+        }
+      } else if (data is List) {
+        items = data.whereType<Map>().map((x) => Map<String, dynamic>.from(x)).toList();
+        final pag = res['pagination'];
+        if (pag is Map) {
+          total = _asInt(pag['total'] ?? pag['totalCount']) ?? 0;
+          totalPages = _asInt(pag['totalPages'] ?? pag['pages']) ?? 1;
+        } else {
+          total = _asInt(res['total'] ?? res['totalCount']) ?? 0;
+          totalPages = _asInt(res['totalPages'] ?? res['pages']) ?? 1;
+        }
+      }
+      if (items.isEmpty) {
+        final v = res['requests'] ?? res['items'];
+        if (v is List) {
+          items = v.whereType<Map>().map((x) => Map<String, dynamic>.from(x)).toList();
+        }
+      }
+    } else if (res is List) {
+      items = res.whereType<Map>().map((x) => Map<String, dynamic>.from(x)).toList();
+      total = items.length;
+      totalPages = 1;
+    }
+
+    if (total == 0) total = items.length;
+    if (totalPages <= 0) totalPages = (total / limit).ceil().clamp(1, 999999);
+
+    return (requests: items, total: total, totalPages: totalPages);
+  }
+
+  int? _asInt(dynamic v) {
+    if (v is int) return v;
+    if (v is num) return v.toInt();
+    if (v is String) return int.tryParse(v);
+    return null;
+  }
+
   /// Get single request details by id
   /// GET /api/inspection-requests/:id
   Future<Map<String, dynamic>> getRequestById(String id) async {

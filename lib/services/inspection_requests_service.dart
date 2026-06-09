@@ -65,9 +65,134 @@ class InspectionRequestsService {
     return [];
   }
 
+  Future<({List<Map<String, dynamic>> requests, int total, int totalPages})>
+      listAdminRequestsPaged({
+    int page = 1,
+    int limit = 20,
+  }) async {
+    final res = await apiClient.getJson(
+      '/inspection-requests/admin/all?page=$page&limit=$limit',
+    );
+
+    List<Map<String, dynamic>> items = [];
+    int total = 0;
+    int totalPages = 1;
+
+    if (res is Map) {
+      final data = res['data'];
+
+      if (data is Map) {
+        final list = data['requests'] ?? data['data'] ?? data['items'];
+        if (list is List) items = List<Map<String, dynamic>>.from(list);
+
+        final pag = data['pagination'];
+        if (pag is Map) {
+          total = _asInt(pag['total'] ?? pag['totalCount']) ?? 0;
+          totalPages = _asInt(pag['totalPages'] ?? pag['pages']) ?? 1;
+        } else {
+          total = _extractTotal(data) ?? 0;
+          totalPages = _asInt(data['totalPages'] ?? data['pages']) ?? 1;
+        }
+      } else if (data is List) {
+        items = List<Map<String, dynamic>>.from(data);
+        final pag = res['pagination'];
+        if (pag is Map) {
+          total = _asInt(pag['total'] ?? pag['totalCount']) ?? 0;
+          totalPages = _asInt(pag['totalPages'] ?? pag['pages']) ?? 1;
+        } else {
+          total = _extractTotal(res) ?? 0;
+          totalPages = _asInt(res['totalPages'] ?? res['pages']) ?? 1;
+        }
+      }
+    } else if (res is List) {
+      items = List<Map<String, dynamic>>.from(res);
+      total = items.length;
+      totalPages = 1;
+    }
+
+    if (total == 0) total = items.length;
+    if (totalPages <= 0) totalPages = (total / limit).ceil().clamp(1, 999999);
+
+    return (requests: items, total: total, totalPages: totalPages);
+  }
+
+  int? _asInt(dynamic v) {
+    if (v is int) return v;
+    if (v is num) return v.toInt();
+    if (v is String) return int.tryParse(v);
+    return null;
+  }
+
+  int? _extractTotal(dynamic obj) {
+    if (obj is! Map) return null;
+    for (final key in const ['total', 'totalCount', 'count', 'totalItems', 'Total']) {
+      final v = _asInt(obj[key]);
+      if (v != null) return v;
+    }
+    final pagination = obj['pagination'];
+    if (pagination is Map) {
+      for (final key in const ['total', 'totalCount', 'count', 'totalItems']) {
+        final v = _asInt(pagination[key]);
+        if (v != null) return v;
+      }
+    }
+    return null;
+  }
+
   /* =========================================================
      INSPECTOR – ASSIGNED REQUESTS
   ========================================================= */
+
+  Future<({List<Map<String, dynamic>> requests, int total, int totalPages})>
+      listInspectorAssignedPaged({
+    int page = 1,
+    int limit = 20,
+  }) async {
+    final res = await apiClient.getJson(
+      '/inspection-requests/inspector/assigned?page=$page&limit=$limit',
+    );
+
+    List<Map<String, dynamic>> items = [];
+    int total = 0;
+    int totalPages = 1;
+
+    if (res is Map) {
+      final data = res['data'];
+      if (data is Map) {
+        final list = data['requests'] ?? data['items'] ?? data['data'];
+        if (list is List) {
+          items = list.whereType<Map>().map((x) => Map<String, dynamic>.from(x)).toList();
+        }
+        final pag = data['pagination'];
+        if (pag is Map) {
+          total = _asInt(pag['total'] ?? pag['totalCount']) ?? 0;
+          totalPages = _asInt(pag['totalPages'] ?? pag['pages']) ?? 1;
+        } else {
+          total = _asInt(data['total'] ?? data['totalCount']) ?? 0;
+          totalPages = _asInt(data['totalPages'] ?? data['pages']) ?? 1;
+        }
+      } else if (data is List) {
+        items = data.whereType<Map>().map((x) => Map<String, dynamic>.from(x)).toList();
+        final pag = res['pagination'];
+        if (pag is Map) {
+          total = _asInt(pag['total'] ?? pag['totalCount']) ?? 0;
+          totalPages = _asInt(pag['totalPages'] ?? pag['pages']) ?? 1;
+        } else {
+          total = _asInt(res['total'] ?? res['totalCount']) ?? 0;
+          totalPages = _asInt(res['totalPages'] ?? res['pages']) ?? 1;
+        }
+      }
+    } else if (res is List) {
+      items = res.whereType<Map>().map((x) => Map<String, dynamic>.from(x)).toList();
+      total = items.length;
+      totalPages = 1;
+    }
+
+    if (total == 0) total = items.length;
+    if (totalPages <= 0) totalPages = (total / limit).ceil().clamp(1, 999999);
+
+    return (requests: items, total: total, totalPages: totalPages);
+  }
 
   Future<List<Map<String, dynamic>>> listInspectorAssigned() async {
     final res = await apiClient.getJson('/inspection-requests/inspector/assigned');

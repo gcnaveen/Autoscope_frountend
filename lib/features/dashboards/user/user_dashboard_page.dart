@@ -1373,6 +1373,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../shared/app_shell.dart';
+import '../../shared/widgets/pagination_bar.dart';
 import '../../../services/service_locator.dart';
 import '../../shared/top_snackbar.dart';
 
@@ -1384,39 +1385,66 @@ class UserDashboardPage extends StatefulWidget {
 }
 
 class _UserDashboardPageState extends State<UserDashboardPage> {
-  late Future<List<UserRequestRow>> _future;
   final _searchCtrl = TextEditingController();
+  final _scrollCtrl = ScrollController();
+
+  List<UserRequestRow> _items = [];
+  int _page = 1;
+  int _totalPages = 1;
+  int _totalItems = 0;
+  static const int _pageSize = 20;
+  bool _loading = true;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
-    _future = _load();
+    _loadPage(1);
   }
 
   @override
   void dispose() {
     _searchCtrl.dispose();
+    _scrollCtrl.dispose();
     super.dispose();
   }
 
-  Future<List<UserRequestRow>> _load() async {
-    final raw = await userRequestsService.listMyRequests();
-
-    if (raw is! List) return <UserRequestRow>[];
-
-    return raw
-        .whereType<Map>()
-        .map((m) => UserRequestRow.fromJson(Map<String, dynamic>.from(m)))
-        .toList();
+  Future<void> _loadPage(int page) async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      final result = await userRequestsService.listMyRequestsPaged(
+        page: page,
+        limit: _pageSize,
+      );
+      if (!mounted) return;
+      final rows = result.requests
+          .whereType<Map>()
+          .map((m) => UserRequestRow.fromJson(Map<String, dynamic>.from(m)))
+          .toList();
+      setState(() {
+        _items = rows;
+        _page = page;
+        _totalPages = result.totalPages;
+        _totalItems = result.total;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() { _error = e.toString(); _loading = false; });
+    }
   }
 
-  void _reload() => setState(() => _future = _load());
+  void _reload() => _loadPage(1);
 
-  // request details (requestId)
+  void _goToPage(int p) {
+    if (_scrollCtrl.hasClients) {
+      _scrollCtrl.animateTo(0, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+    }
+    _loadPage(p);
+  }
+
   String detailsRoute(String requestId) => '/dashboard/user/requests/$requestId';
 
-  // ✅ MUST match your GoRoute:
-  // GoRoute(path: '/dashboard/user/inspections/:inspectionId/report', ...)
   String reportRoute(String inspectionId) =>
       '/dashboard/user/inspections/$inspectionId/report';
 
@@ -1426,12 +1454,9 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
       return;
     }
 
-    // Completed -> open report by inspectionId
     String inspId = (r.inspectionId ?? '').trim();
 
-    // If list API didn't return inspectionId, fetch the request once
     if (inspId.isEmpty) {
-      // quick loader
       if (mounted) {
         showDialog(
           context: context,
@@ -1442,9 +1467,7 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
 
       try {
         final full = await userRequestsService.getRequestById(r.id);
-
         final raw = full['inspectionId'] ?? full['inspection'] ?? full['inspectionSummary']?['inspectionId'];
-
         if (raw is String) {
           inspId = raw.trim();
         } else if (raw is Map) {
@@ -1453,8 +1476,8 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
         } else {
           inspId = (raw ?? '').toString().trim();
         }
-      } catch (e) {
-        // ignore; handled below
+      } catch (_) {
+        // handled below
       } finally {
         if (mounted) {
           final nav = Navigator.of(context, rootNavigator: true);
@@ -1463,8 +1486,9 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
       }
     }
 
+    if (!mounted) return;
+
     if (inspId.isEmpty) {
-      if (!mounted) return;
       showTopSnack(context, 'Inspection report not available yet.', variant: 'warning');
       return;
     }
@@ -1477,71 +1501,30 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
     final w = MediaQuery.sizeOf(context).width;
     final isMobile = w < 900;
 
+    final q = _searchCtrl.text.trim().toLowerCase();
+    final filtered = q.isEmpty
+        ? _items
+        : _items.where((r) {
+            final s = [
+              r.requestId, r.id, r.requestType, r.status,
+              r.city, r.make, r.model, r.licensePlate,
+              r.inspectionId ?? '',
+            ].join(' ').toLowerCase();
+            return s.contains(q);
+          }).toList();
+
+    final active = filtered.where((r) => r.isActive).toList();
+    final history = filtered.where((r) => !r.isActive).toList();
+
     return AppShell(
       title: 'User Dashboard',
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 1100),
-          child: FutureBuilder<List<UserRequestRow>>(
-            future: _future,
-            builder: (context, snap) {
-              if (snap.connectionState == ConnectionState.waiting) {
-                return const Padding(
-                  padding: EdgeInsets.all(40),
-                  child: Center(child: CircularProgressIndicator()),
-                );
-              }
-
-              if (snap.hasError) {
-                return Padding(
-                  padding: const EdgeInsets.all(18),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Welcome',
-                        style: Theme.of(context)
-                            .textTheme
-                            .headlineSmall
-                            ?.copyWith(fontWeight: FontWeight.w900),
-                      ),
-                      const SizedBox(height: 10),
-                      Text('Failed to load your requests: ${snap.error}'),
-                      const SizedBox(height: 12),
-                      FilledButton.icon(
-                        onPressed: _reload,
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('Retry'),
-                      ),
-                    ],
-                  ),
-                );
-              }
-
-              final all = (snap.data ?? []);
-
-              final q = _searchCtrl.text.trim().toLowerCase();
-              final filtered = q.isEmpty
-                  ? all
-                  : all.where((r) {
-                      final s = [
-                        r.requestId,
-                        r.id,
-                        r.requestType,
-                        r.status,
-                        r.city,
-                        r.make,
-                        r.model,
-                        r.licensePlate,
-                        r.inspectionId ?? '',
-                      ].join(' ').toLowerCase();
-                      return s.contains(q);
-                    }).toList();
-
-              final active = filtered.where((r) => r.isActive).toList();
-              final history = filtered.where((r) => !r.isActive).toList();
-
-              return ListView(
+          child: Stack(
+            children: [
+              ListView(
+                controller: _scrollCtrl,
                 padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
                 children: [
                   Row(
@@ -1557,7 +1540,7 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
                       ),
                       IconButton(
                         tooltip: 'Refresh',
-                        onPressed: _reload,
+                        onPressed: _loading ? null : _reload,
                         icon: const Icon(Icons.refresh),
                       ),
                     ],
@@ -1568,6 +1551,24 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
                     style: TextStyle(color: Colors.black54),
                   ),
                   const SizedBox(height: 14),
+
+                  if (_error != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 14),
+                      child: Column(
+                        children: [
+                          Text('Failed to load requests: $_error',
+                              style: const TextStyle(color: Colors.red),
+                              textAlign: TextAlign.center),
+                          const SizedBox(height: 10),
+                          FilledButton.icon(
+                            onPressed: _reload,
+                            icon: const Icon(Icons.refresh),
+                            label: const Text('Retry'),
+                          ),
+                        ],
+                      ),
+                    ),
 
                   Card(
                     child: Padding(
@@ -1587,12 +1588,12 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
                           ),
                           const SizedBox(height: 12),
 
-                          if (filtered.isEmpty)
+                          if (!_loading && _error == null && filtered.isEmpty)
                             const Padding(
                               padding: EdgeInsets.all(30),
                               child: Text('No requests found.'),
                             )
-                          else ...[
+                          else if (!_loading) ...[
                             _SectionHeader(title: 'Active Requests', count: active.length),
                             const SizedBox(height: 8),
                             if (active.isEmpty)
@@ -1619,14 +1620,34 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
                                     onView: () => _open(r),
                                     buttonText: r.isCompleted ? 'View Report' : 'View Details',
                                   )),
+
+                            if (_totalPages > 1) ...[
+                              const SizedBox(height: 12),
+                              PaginationBar(
+                                currentPage: _page,
+                                totalPages: _totalPages,
+                                totalItems: _totalItems,
+                                pageSize: _pageSize,
+                                onPrev: _page > 1 ? () => _goToPage(_page - 1) : null,
+                                onNext: _page < _totalPages ? () => _goToPage(_page + 1) : null,
+                              ),
+                            ],
                           ],
                         ],
                       ),
                     ),
                   ),
                 ],
-              );
-            },
+              ),
+              if (_loading)
+                Positioned.fill(
+                  child: Container(
+                    color: Colors.black.withValues(alpha: 0.04),
+                    alignment: Alignment.center,
+                    child: const CircularProgressIndicator(),
+                  ),
+                ),
+            ],
           ),
         ),
       ),

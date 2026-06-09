@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../shared/app_shell.dart';
+import '../../../shared/widgets/pagination_bar.dart';
 import '../../../../models/app_user.dart';
 import '../../../../services/service_locator.dart';
 
@@ -15,38 +16,74 @@ class InspectorsPage extends StatefulWidget {
 }
 
 class _InspectorsPageState extends State<InspectorsPage> {
-  late Future<List<AppUser>> _future;
   final _searchCtrl = TextEditingController();
+  final _scrollCtrl = ScrollController();
 
-  int _tick = 0;
+  List<AppUser> _items = [];
+  int _page = 1;
+  int _totalPages = 1;
+  int _totalItems = 0;
+  static const int _pageSize = 20;
+  bool _loading = true;
+  String? _error;
+
+  int _searchVersion = 0;
 
   @override
   void initState() {
     super.initState();
-    _future = _load();
-    _searchCtrl.addListener(() => setState(() {}));
+    _loadPage(1);
   }
 
   @override
   void dispose() {
     _searchCtrl.dispose();
+    _scrollCtrl.dispose();
     super.dispose();
   }
 
-  Future<List<AppUser>> _load() async {
-    final all = await usersService.listUsers();
-
-    return all.where((u) {
-      final role = u.role.toString().toLowerCase();
-      return role == 'inspector' || role.contains('inspector');
-    }).toList();
+  Future<void> _loadPage(int page) async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      final result = await usersService.listUsersPaged(
+        page: page,
+        limit: _pageSize,
+        search: _searchCtrl.text.trim().isEmpty ? null : _searchCtrl.text.trim(),
+        role: 'inspector',
+      );
+      if (!mounted) return;
+      setState(() {
+        _items = result.users;
+        _page = page;
+        _totalPages = result.totalPages;
+        _totalItems = result.total;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() { _error = e.toString(); _loading = false; });
+    }
   }
 
   void _reload() {
-    setState(() {
-      _tick++;
-      _future = _load();
-    });
+    _searchCtrl.clear();
+    _loadPage(1);
+  }
+
+  void _goToPage(int p) {
+    _searchCtrl.clear();
+    if (_scrollCtrl.hasClients) {
+      _scrollCtrl.animateTo(0, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+    }
+    _loadPage(p);
+  }
+
+  void _onSearchChanged(String _) async {
+    final ver = ++_searchVersion;
+    setState(() {});
+    await Future.delayed(const Duration(milliseconds: 400));
+    if (!mounted || _searchVersion != ver) return;
+    _loadPage(1);
   }
 
   Future<void> _openAddInspectorDialog() async {
@@ -69,158 +106,109 @@ class _InspectorsPageState extends State<InspectorsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final q = _searchCtrl.text.trim().toLowerCase();
     final w = MediaQuery.sizeOf(context).width;
     final isMobile = w < 720;
 
     return AppShell(
       title: 'Inspectors',
       child: ListView(
+        controller: _scrollCtrl,
         padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
-            children: [
-              if (!isMobile)
+        children: [
+          if (!isMobile)
+            Row(
+              children: [
+                Expanded(
+                  child: Text('Inspectors',
+                      style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900)),
+                ),
+                IconButton(tooltip: 'Refresh', onPressed: _loading ? null : _reload, icon: const Icon(Icons.refresh)),
+                const SizedBox(width: 10),
+                FilledButton.icon(onPressed: _openAddInspectorDialog, icon: const Icon(Icons.add), label: const Text('Add Inspector')),
+              ],
+            )
+          else
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
                 Row(
                   children: [
                     Expanded(
-                      child: Text(
-                        'Inspectors',
-                        style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
-                      ),
+                      child: Text('Inspectors',
+                          style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900)),
                     ),
-                    IconButton(
-                      tooltip: 'Refresh',
-                      onPressed: _reload,
-                      icon: const Icon(Icons.refresh),
-                    ),
-                    const SizedBox(width: 10),
-                    FilledButton.icon(
-                      onPressed: _openAddInspectorDialog,
-                      icon: const Icon(Icons.add),
-                      label: const Text('Add Inspector'),
-                    ),
-                  ],
-                )
-              else
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            'Inspectors',
-                            style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
-                          ),
-                        ),
-                        IconButton(
-                          tooltip: 'Refresh',
-                          onPressed: _reload,
-                          icon: const Icon(Icons.refresh),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton.icon(
-                        onPressed: _openAddInspectorDialog,
-                        icon: const Icon(Icons.add),
-                        label: const Text('Add Inspector'),
-                      ),
-                    ),
+                    IconButton(tooltip: 'Refresh', onPressed: _loading ? null : _reload, icon: const Icon(Icons.refresh)),
                   ],
                 ),
-              const SizedBox(height: 12),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(onPressed: _openAddInspectorDialog, icon: const Icon(Icons.add), label: const Text('Add Inspector')),
+                ),
+              ],
+            ),
+          const SizedBox(height: 12),
 
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(14),
-                  child: Column(
-                    children: [
-                      TextField(
-                        controller: _searchCtrl,
-                        decoration: InputDecoration(
-                          prefixIcon: const Icon(Icons.search),
-                          hintText: 'Search inspectors by name/email/phone...',
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                children: [
+                  TextField(
+                    controller: _searchCtrl,
+                    onChanged: _onSearchChanged,
+                    decoration: InputDecoration(
+                      prefixIcon: const Icon(Icons.search),
+                      hintText: 'Search inspectors by name/email/phone...',
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+
+                  if (_loading)
+                    const Padding(padding: EdgeInsets.all(18), child: Center(child: CircularProgressIndicator()))
+                  else if (_error != null)
+                    Padding(
+                      padding: const EdgeInsets.all(18),
+                      child: Column(
+                        children: [
+                          Text('Failed to load inspectors:\n$_error', textAlign: TextAlign.center),
+                          const SizedBox(height: 10),
+                          FilledButton.tonal(onPressed: _reload, child: const Text('Retry')),
+                        ],
                       ),
+                    )
+                  else if (_items.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.all(18),
+                      child: Column(
+                        children: [
+                          Icon(Icons.badge_outlined, size: 42, color: Colors.black26),
+                          SizedBox(height: 10),
+                          Text('No inspectors found.', style: TextStyle(color: Colors.black54)),
+                        ],
+                      ),
+                    )
+                  else ...[
+                    ..._items.map((x) => _InspectorCard(u: x, onManage: () => _openManageInspector(x))),
+                    if (_totalPages > 1) ...[
                       const SizedBox(height: 12),
-
-                      FutureBuilder<List<AppUser>>(
-                        key: ValueKey(_tick),
-                        future: _future,
-                        builder: (context, snap) {
-                          if (snap.connectionState == ConnectionState.waiting) {
-                            return const Padding(
-                              padding: EdgeInsets.all(18),
-                              child: Center(child: CircularProgressIndicator()),
-                            );
-                          }
-
-                          if (snap.hasError) {
-                            return Padding(
-                              padding: const EdgeInsets.all(18),
-                              child: Column(
-                                children: [
-                                  Text(
-                                    'Failed to load inspectors:\n${snap.error}',
-                                    textAlign: TextAlign.center,
-                                  ),
-                                  const SizedBox(height: 10),
-                                  FilledButton.tonal(
-                                    onPressed: _reload,
-                                    child: const Text('Retry'),
-                                  ),
-                                ],
-                              ),
-                            );
-                          }
-
-                          final list = snap.data ?? [];
-
-                          final filtered = q.isEmpty
-                              ? list
-                              : list.where((u) {
-                                  final name = u.fullName.toLowerCase();
-                                  final email = u.email.toLowerCase();
-                                  final phone = (u.phone ?? '').toLowerCase();
-                                  return name.contains(q) || email.contains(q) || phone.contains(q);
-                                }).toList();
-
-                          if (filtered.isEmpty) {
-                            return const Padding(
-                              padding: EdgeInsets.all(18),
-                              child: Column(
-                                children: [
-                                  Icon(Icons.badge_outlined, size: 42, color: Colors.black26),
-                                  SizedBox(height: 10),
-                                  Text('No inspectors found.', style: TextStyle(color: Colors.black54)),
-                                ],
-                              ),
-                            );
-                          }
-
-                          return Column(
-                            children: filtered
-                                .map(
-                                  (x) => _InspectorCard(
-                                    u: x,
-                                    onManage: () => _openManageInspector(x),
-                                  ),
-                                )
-                                .toList(),
-                          );
-                        },
+                      PaginationBar(
+                        currentPage: _page,
+                        totalPages: _totalPages,
+                        totalItems: _totalItems,
+                        pageSize: _pageSize,
+                        onPrev: _page > 1 ? () => _goToPage(_page - 1) : null,
+                        onNext: _page < _totalPages ? () => _goToPage(_page + 1) : null,
                       ),
                     ],
-                  ),
-                ),
+                  ],
+                ],
               ),
-            ],
+            ),
           ),
+        ],
+      ),
     );
   }
 }
