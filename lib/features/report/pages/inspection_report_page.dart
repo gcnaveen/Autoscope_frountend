@@ -1,10 +1,12 @@
-﻿// lib/features/dashboards/user/inspection_report_page.dart
+// lib/features/dashboards/user/inspection_report_page.dart
 import 'package:flutter/foundation.dart' show kIsWeb;
 // ignore: avoid_web_libraries_in_flutter
 import 'dart:html' as html;
 import 'dart:ui_web' as ui;
 import 'dart:typed_data';
 import 'dart:convert' show base64Encode;
+import 'dart:async';
+import 'dart:js' as js;
 
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
@@ -216,6 +218,8 @@ class _ReportViewState extends State<_ReportView> {
   bool _canReview = false;
   bool _reviewSubmitted = false;
   bool _reviewPopupDismissed = false;
+
+  bool _downloading = false;
 
   @override
   void initState() {
@@ -464,6 +468,7 @@ class _ReportViewState extends State<_ReportView> {
             _HeaderRow(
               title: 'Inspection Report',
               onDownload: _downloadReport,
+              downloading: _downloading,
               onCopyLink: kIsWeb ? _copyShareLink : null,
               showReview: _canReview,
               reviewSubmitted: _reviewSubmitted,
@@ -795,13 +800,19 @@ class _ReportViewState extends State<_ReportView> {
               ),
             ),
 
-            // Admin approval action bar
+            // Admin approval action bar — only while the inspection is
+            // actually pending approval. Once it's approved/rejected the
+            // status moves on, so re-showing the bar here would let an
+            // admin reject/approve the same inspection twice.
             if (widget.isAdminContext && widget.isForApproval) ...[
               const SizedBox(height: 16),
-              _AdminApprovalBar(
-                inspection: inspection,
-                onDone: widget.onRetry,
-              ),
+              if (_cleanStr(inspection['status']).toLowerCase() == 'pending_admin_approval')
+                _AdminApprovalBar(
+                  inspection: inspection,
+                  onDone: widget.onRetry,
+                )
+              else
+                _AdminApprovalResolvedBanner(status: _cleanStr(inspection['status']).toLowerCase()),
             ],
 
             const SizedBox(height: 18),
@@ -959,9 +970,12 @@ class _ReportViewState extends State<_ReportView> {
     showTopSnack(context, 'Report link copied!', variant: 'success');
   }
 
-  // Generate a standalone HTML report in a new window and auto-print it.
-  // Uses a Blob URL so the full multi-page report is captured correctly
-  // (bypasses Flutter's CanvasKit canvas viewport limitation).
+  // Renders the same report markup used for print into a hidden off-screen
+  // iframe. The iframe's own inline script (see _buildPrintHtml) loads
+  // html2pdf.js and saves the PDF itself — entirely client-side (no backend
+  // call), with no new tab and no print dialog. Dart only polls simple
+  // window flags to know when it's done, avoiding any Dart<->JS function
+  // interop (not reliably available for this Flutter web build target).
   Future<void> _downloadReport() async {
     if (_viewerOpen) _closeViewer();
 
@@ -970,46 +984,107 @@ class _ReportViewState extends State<_ReportView> {
       return;
     }
 
-    // Load static assets as base64 data URIs so they work in any deployment
-    // (handles sub-path base-href builds where origin-only URLs would 404).
-    String b64(ByteData data, String mime) =>
-        'data:$mime;base64,${base64Encode(data.buffer.asUint8List())}';
+    if (_downloading) return;
+    setState(() => _downloading = true);
 
-    // rootBundle.load() is intercepted by the service worker in production.
-    // If the SW is inactive (first visit / cleared cache), it falls through to
-    // the server which only has user assets at /assets/assets/{key} — not /assets/{key}.
-    // The fallback fetches from that double-prefix path directly.
-    Future<String> webLoad(String key, String mime) async {
-      try { return b64(await rootBundle.load(key), mime); } catch (_) {}
-      try {
-        final req = await html.HttpRequest.request(
-            'assets/$key', responseType: 'arraybuffer');
-        if ((req.status ?? 0) == 200) {
-          return 'data:$mime;base64,${base64Encode(Uint8List.view(req.response as ByteBuffer))}';
+    // Single source of truth for the offscreen capture width — used for both
+    // the iframe's own CSS width and the PDF page width so they can't drift
+    // apart (a mismatch there is what caused the right edge to get clipped).
+    const contentWidth = 1150.0;
+
+    html.IFrameElement? iframe;
+    try {
+      // Load static assets as base64 data URIs so they work in any deployment
+      // (handles sub-path base-href builds where origin-only URLs would 404).
+      String b64(ByteData data, String mime) =>
+          'data:$mime;base64,${base64Encode(data.buffer.asUint8List())}';
+
+      // rootBundle.load() is intercepted by the service worker in production.
+      // If the SW is inactive (first visit / cleared cache), it falls through to
+      // the server which only has user assets at /assets/assets/{key} — not /assets/{key}.
+      // The fallback fetches from that double-prefix path directly.
+      Future<String> webLoad(String key, String mime) async {
+        try { return b64(await rootBundle.load(key), mime); } catch (_) {}
+        try {
+          final req = await html.HttpRequest.request('assets/$key', responseType: 'arraybuffer');
+          if ((req.status ?? 0) == 200) {
+            return 'data:$mime;base64,${base64Encode(Uint8List.view(req.response as ByteBuffer))}';
+          }
+        } catch (_) {}
+        return '';
+      }
+
+      final logoUri  = await webLoad('assets/logo/autoscope_logo_old.png', 'image/png');
+      final stampUri = await webLoad('assets/images/company_stamp.png', 'image/png');
+      final carUri   = await webLoad('assets/images/car_views/top.jpg', 'image/jpeg');
+
+      if (!mounted) return;
+
+      final id = (widget.inspection['_id'] ?? widget.inspection['id'] ?? '').toString();
+      final fileName = 'inspection_report_${id.isEmpty ? DateTime.now().millisecondsSinceEpoch.toString() : id}.pdf';
+
+      final content = _buildPrintHtml(
+        widget.inspection,
+        widget.disclaimerPoints,
+        logoUri: logoUri,
+        stampUri: stampUri,
+        carImageUri: carUri,
+        pdfFileName: fileName,
+        contentWidthPx: contentWidth,
+      );
+
+      // Render off-screen in a hidden same-origin iframe so html2canvas can
+      // capture the exact print layout without opening a visible tab/dialog.
+      // Width matches the on-screen report's own ConstrainedBox(maxWidth:
+      // 1150) so proportions/scale match what's actually shown on screen.
+      iframe = html.IFrameElement()
+        ..style.position = 'fixed'
+        ..style.left = '-10000px'
+        ..style.top = '0'
+        ..style.width = '${contentWidth.toStringAsFixed(0)}px'
+        ..style.height = '1px'
+        ..style.border = 'none'
+        ..style.visibility = 'hidden';
+      html.document.body!.append(iframe);
+
+      final loaded = Completer<void>();
+      late final StreamSubscription<html.Event> loadSub;
+      loadSub = iframe.onLoad.listen((_) {
+        loadSub.cancel();
+        if (!loaded.isCompleted) loaded.complete();
+      });
+      iframe.srcdoc = content;
+      await loaded.future.timeout(const Duration(seconds: 10));
+
+      // Cast to Window fails at runtime — the browser always hands back a
+      // cross-frame WindowProxy (_DOMWindowCrossFrame) for contentWindow,
+      // even for a same-document srcdoc iframe. JsObject.fromBrowserObject
+      // works with that proxy directly, no typed cast needed.
+      final iframeWindow = iframe.contentWindow;
+      if (iframeWindow == null) {
+        throw Exception('Could not render report content.');
+      }
+      final jsWindow = js.JsObject.fromBrowserObject(iframeWindow);
+
+      // Poll for the iframe's own script to report completion — it loads
+      // html2pdf.js, draws the damage-map canvas, then runs the export.
+      final deadline = DateTime.now().add(const Duration(seconds: 45));
+      while (jsWindow['__reportPdfDone'] != true) {
+        if (DateTime.now().isAfter(deadline)) {
+          throw Exception('Timed out generating the PDF.');
         }
-      } catch (_) {}
-      return '';
+        await Future.delayed(const Duration(milliseconds: 100));
+      }
+
+      final err = jsWindow['__reportPdfError'];
+      if (err != null) throw Exception(err.toString());
+    } catch (e) {
+      if (!mounted) return;
+      showTopSnack(context, 'Failed to download report: $e', variant: 'error');
+    } finally {
+      iframe?.remove();
+      if (mounted) setState(() => _downloading = false);
     }
-
-    final logoUri  = await webLoad('assets/logo/autoscope_logo_old.png', 'image/png');
-    final stampUri = await webLoad('assets/images/company_stamp.png', 'image/png');
-    final carUri   = await webLoad('assets/images/car_views/top.jpg', 'image/jpeg');
-
-    if (!mounted) return;
-
-    final content = _buildPrintHtml(
-      widget.inspection,
-      widget.disclaimerPoints,
-      logoUri: logoUri,
-      stampUri: stampUri,
-      carImageUri: carUri,
-    );
-    // Blob URLs allow inline scripts, unlike data: URIs — so window.print() fires.
-    final blob = html.Blob([content], 'text/html');
-    final url  = html.Url.createObjectUrlFromBlob(blob);
-    html.window.open(url, '_blank');
-    // Revoke after the new tab has had time to load
-    Future.delayed(const Duration(seconds: 15), () => html.Url.revokeObjectUrl(url));
   }
 
   static String _buildPrintHtml(
@@ -1018,7 +1093,16 @@ class _ReportViewState extends State<_ReportView> {
     String logoUri = '',
     String stampUri = '',
     String carImageUri = '',
+    String pdfFileName = 'inspection_report.pdf',
+    double contentWidthPx = 1150,
   }) {
+    // jsPDF page width must match the captured content's width exactly, in
+    // points (1 CSS px = 0.75pt) — otherwise jsPDF's default 'a4' page
+    // (595pt wide) is far narrower than our 1150px-wide layout and the
+    // right-hand portion of every page gets clipped instead of scaled down.
+    // Page height keeps A4's aspect ratio, just scaled up to match the width.
+    final pdfPageWidthPt = contentWidthPx * 0.75;
+    final pdfPageHeightPt = pdfPageWidthPt * (841.89 / 595.28);
     // ── helpers ──────────────────────────────────────────────────────────────
     String s(dynamic v) => _cleanStr(v);
     String d(dynamic v) => s(v).isEmpty ? '-' : s(v);
@@ -1058,15 +1142,24 @@ class _ReportViewState extends State<_ReportView> {
       return '<span class="rchip">★ ${v.toStringAsFixed(1)}</span>';
     }
 
-    // Mirrors _Badge tones used for overall rating label
+    // Mirrors _Badge tones used for overall rating label (_badgeTone: shade800 across the board)
     String ratingBadge(String label) {
       final ll = label.toLowerCase();
       String bg, fg, bd;
-      if (ll == 'excellent')  { bg='rgba(76,175,80,0.12)';  fg='#2e7d32'; bd='rgba(76,175,80,0.2)'; }
+      if (ll == 'excellent')  { bg='rgba(46,125,50,0.12)';  fg='#2e7d32'; bd='rgba(46,125,50,0.2)'; }
       else if (ll == 'good')  { bg='rgba(21,101,192,0.12)'; fg='#1565c0'; bd='rgba(21,101,192,0.2)'; }
-      else if (ll == 'average'){ bg='rgba(230,81,0,0.12)';  fg='#e65100'; bd='rgba(230,81,0,0.2)'; }
+      else if (ll == 'average'){ bg='rgba(239,108,0,0.12)';  fg='#ef6c00'; bd='rgba(239,108,0,0.2)'; }
       else                    { bg='rgba(198,40,40,0.12)';  fg='#c62828'; bd='rgba(198,40,40,0.2)'; }
       return '<span class="badge" style="background:$bg;color:$fg;border:1px solid $bd">$label</span>';
+    }
+
+    // Mirrors _SectionOverviewTile.toneFg() — note the "average" tier here is
+    // orange.shade900, distinct from the shade800 used by ratingBadge() above.
+    List<String> tileTone(double avg) {
+      if (avg >= 4.5) return ['#2e7d32', 'rgba(46,125,50,0.10)', 'rgba(46,125,50,0.18)'];
+      if (avg >= 3.5) return ['#1565c0', 'rgba(21,101,192,0.10)', 'rgba(21,101,192,0.18)'];
+      if (avg >= 2.0) return ['#e65100', 'rgba(230,81,0,0.10)', 'rgba(230,81,0,0.18)'];
+      return ['#c62828', 'rgba(198,40,40,0.10)', 'rgba(198,40,40,0.18)'];
     }
 
     String ratingLabel(double? r) {
@@ -1135,7 +1228,7 @@ class _ReportViewState extends State<_ReportView> {
     // Header — matches _HeaderRow: logo left, "Inspection Report" center, ID right
     final headerHtml = '''
 <div class="hdr">
-  ${logoUri.isNotEmpty ? '<img src="$logoUri" height="52" alt="">' : ''}
+  ${logoUri.isNotEmpty ? '<img src="$logoUri" height="104" alt="">' : ''}
   <div class="hdr-title">Inspection Report</div>
   <div class="hdr-id">$virId</div>
 </div>''';
@@ -1159,81 +1252,136 @@ class _ReportViewState extends State<_ReportView> {
   </div>
 </div>''';
 
-    // Section Overview + Overall Rating — matches the row in the app
+    // Section Overview + Overall Rating — matches the row in the app.
+    // Mirrors _SectionOverviewTile exactly: icon box, name, star badge (tone by
+    // rating), item count, and a rating/5 progress bar.
     final sectionTiles = types.map((t) {
-      final tm   = _asMap(t);
-      final name = s(tm['typeName']).isEmpty ? 'Section' : s(tm['typeName']);
-      final avg  = _toDouble(tm['averageRating']);
-      final avgStr = avg?.toStringAsFixed(2) ?? '-';
-      return '<div class="sec-tile"><div class="sec-tile-name">$name</div><div class="sec-tile-avg">★ $avgStr</div></div>';
+      final tm    = _asMap(t);
+      final name  = s(tm['typeName']).isEmpty ? 'Section' : s(tm['typeName']);
+      final avg   = _toDouble(tm['averageRating']) ?? 0.0;
+      final items = (tm['checklistItems'] as List?) ?? const [];
+      final tone  = tileTone(avg);
+      final fg = tone[0], bg = tone[1], bd = tone[2];
+      final pct = (avg / 5.0).clamp(0.0, 1.0) * 100;
+      return '''<div class="sec-tile">
+  <div class="sec-tile-head">
+    <div class="sec-tile-icon">▤</div>
+    <div class="sec-tile-name">$name</div>
+    <div class="sec-tile-badge" style="background:$bg;color:$fg;border:1px solid $bd">★ ${avg.toStringAsFixed(2)}</div>
+  </div>
+  <div class="sec-tile-items">${items.length} items</div>
+  <div class="sec-tile-bar-track"><div class="sec-tile-bar-fill" style="width:${pct.toStringAsFixed(1)}%;background:$fg"></div></div>
+</div>''';
     }).join('');
 
     // ── rating gauge SVG ─────────────────────────────────────────────────────
+    // Exact port of _OdometerPainter (300×150 box, semicircle opening upward,
+    // center near the bottom) — same center/radius/angle math, just drawn as
+    // SVG paths instead of Canvas arcs.
     String buildGauge(double? val) {
-      const gcx = 110.0, gcy = 105.0, gRo = 88.0, gRi = 60.0;
-      double gcos(double deg) => math.cos(deg * math.pi / 180);
-      double gsin(double deg) => math.sin(deg * math.pi / 180);
-      String gpx(double deg, double r) => (gcx + r * gcos(deg)).toStringAsFixed(1);
-      String gpy(double deg, double r) => (gcy - r * gsin(deg)).toStringAsFixed(1);
+      const boxW = 300.0, boxH = 150.0;
+      const gcx = boxW / 2, gcy = boxH * 0.92;
+      const radius = 117.0; // math.min(boxW, boxH) * 0.78
 
-      String gseg(double sd, double ed, String c) =>
-          '<path d="M ${gpx(sd,gRo)} ${gpy(sd,gRo)}'
-          ' A $gRo $gRo 0 0 0 ${gpx(ed,gRo)} ${gpy(ed,gRo)}'
-          ' L ${gpx(ed,gRi)} ${gpy(ed,gRi)}'
-          ' A $gRi $gRi 0 0 1 ${gpx(sd,gRi)} ${gpy(sd,gRi)} Z" fill="$c"/>';
+      double rad(double deg) => deg * math.pi / 180;
+      String px(double deg, double r) => (gcx + r * math.cos(rad(deg))).toStringAsFixed(2);
+      String py(double deg, double r) => (gcy + r * math.sin(rad(deg))).toStringAsFixed(2);
 
-      final segs = [
-        gseg(180, 144, '#ef5350'),
-        gseg(144, 108, '#ff7043'),
-        gseg(108,  72, '#ffa726'),
-        gseg( 72,  36, '#42a5f5'),
-        gseg( 36,   0, '#66bb6a'),
-      ].join();
+      // Background full-sweep arc: start=180°, sweep=180° (ends at 360°/0°),
+      // split into two 90° arcs so the exact-semicircle large-arc-flag stays
+      // unambiguous. Single <path> across both halves so the round cap only
+      // shows at the true ends, not at the 270° midpoint.
+      final bgPath = 'M ${px(180, radius)} ${py(180, radius)} '
+          'A $radius $radius 0 0 1 ${px(270, radius)} ${py(270, radius)} '
+          'A $radius $radius 0 0 1 ${px(360, radius)} ${py(360, radius)}';
+      final bg = '<path d="$bgPath" stroke="rgba(0,0,0,0.08)" stroke-width="16" '
+          'stroke-linecap="round" fill="none"/>';
 
-      String gtick(int v) {
-        const lr = gRo + 14;
-        final a = 180.0 - v * 36.0;
-        final tx = (gcx + lr * gcos(a)).toStringAsFixed(1);
-        final ty = (gcy - lr * gsin(a) + 4).toStringAsFixed(1);
-        return '<text x="$tx" y="$ty" text-anchor="middle"'
-            ' font-size="10" fill="rgba(0,0,0,0.54)" font-family="Arial,sans-serif">$v</text>';
+      // Colored zones (butt caps, matching seg() in the painter)
+      String seg(double from, double to, String color) {
+        final a0 = 180 + (from / 5) * 180;
+        final a1 = 180 + (to / 5) * 180;
+        return '<path d="M ${px(a0, radius)} ${py(a0, radius)} '
+            'A $radius $radius 0 0 1 ${px(a1, radius)} ${py(a1, radius)}" '
+            'stroke="$color" stroke-width="16" stroke-linecap="butt" fill="none"/>';
       }
 
-      final ticks = [0, 1, 2, 3, 4, 5].map(gtick).join();
-      final angle = val == null ? 90.0 : 180.0 - val.clamp(0.0, 5.0) * 36.0;
-      final nx = (gcx + 74.0 * gcos(angle)).toStringAsFixed(1);
-      final ny = (gcy - 74.0 * gsin(angle)).toStringAsFixed(1);
-      final caps =
-          '<circle cx="${gpx(180, gRo)}" cy="${gpy(180, gRo)}" r="4.5" fill="rgba(0,0,0,0.2)"/>'
-          '<circle cx="${gpx(0, gRo)}" cy="${gpy(0, gRo)}" r="4.5" fill="rgba(0,0,0,0.2)"/>';
+      final segs = [
+        seg(0, 2, '#E53935'),
+        seg(2, 3.5, '#FB8C00'),
+        seg(3.5, 4.5, '#1E88E5'),
+        seg(4.5, 5, '#43A047'),
+      ].join();
 
-      return '<svg viewBox="-8 -20 236 138" width="196" height="115"'
-          ' xmlns="http://www.w3.org/2000/svg">'
-          '$segs$caps$ticks'
-          '<line x1="$gcx" y1="$gcy" x2="$nx" y2="$ny"'
-          ' stroke="#1a1a1a" stroke-width="2.5" stroke-linecap="round"/>'
-          '<circle cx="$gcx" cy="$gcy" r="5" fill="#333"/>'
+      String tick(int i) {
+        final t = i / 5;
+        final ang = 180 + t * 180;
+        final x1 = px(ang, radius - 6), y1 = py(ang, radius - 6);
+        final x2 = px(ang, radius - 18), y2 = py(ang, radius - 18);
+        final lx = px(ang, radius - 36), ly = py(ang, radius - 36);
+        return '<line x1="$x1" y1="$y1" x2="$x2" y2="$y2" stroke="rgba(0,0,0,0.55)" stroke-width="2"/>'
+            '<text x="$lx" y="$ly" text-anchor="middle" dominant-baseline="central" '
+            'font-size="14" font-weight="800" fill="rgba(0,0,0,0.54)" font-family="Arial,sans-serif">$i</text>';
+      }
+
+      final ticks = [0, 1, 2, 3, 4, 5].map(tick).join();
+
+      final v = (val ?? 0).clamp(0.0, 5.0);
+      final needleAng = 180 + (v / 5) * 180;
+      final nx = px(needleAng, radius - 28), ny = py(needleAng, radius - 28);
+      final needle = '<line x1="$gcx" y1="$gcy" x2="$nx" y2="$ny" '
+          'stroke="rgba(0,0,0,0.75)" stroke-width="4" stroke-linecap="round"/>';
+      final pivot = '<circle cx="$gcx" cy="$gcy" r="5.5" fill="#fff"/>'
+          '<circle cx="$gcx" cy="$gcy" r="4.8" fill="rgba(0,0,0,0.7)"/>';
+
+      return '<svg viewBox="0 0 $boxW $boxH" width="$boxW" height="$boxH" '
+          'xmlns="http://www.w3.org/2000/svg">'
+          '$bg$segs$ticks$needle$pivot'
           '</svg>';
     }
 
     final gaugeSvg = buildGauge(overallRating);
 
+    // Quick Summary — matches _QuickSummaryCard / _MiniStat pills
+    int totalItems = 0;
+    for (final t in types) {
+      totalItems += ((_asMap(t)['checklistItems'] as List?) ?? const []).length;
+    }
+    String miniStat(String icon, String label, String value) => '''<div class="mini-stat">
+  <span class="mini-stat-icon">$icon</span>
+  <span class="mini-stat-label">$label</span>
+  <span class="mini-stat-value">$value</span>
+</div>''';
+    final summaryHtml = '''
+<div class="card" style="margin-top:12px">
+  <div class="card-title">Summary</div>
+  <div class="mini-stat-wrap">
+    ${miniStat('☰', 'Sections', '${types.length}')}
+    ${miniStat('☑', 'Items', '$totalItems')}
+    ${miniStat('🖼', 'Photos', '${allPhotos.length}')}
+    ${miniStat('📍', 'Damages', '${damages.length}')}
+  </div>
+</div>''';
+
     final overallHtml = '''
-<div class="row-2 overall-row" style="margin-bottom:12px">
-  <div class="card">
+<div class="overall-row" style="margin-bottom:12px">
+  <div class="card overall-col-left">
     <div class="card-title">Section Overview</div>
     <div class="sec-grid">$sectionTiles</div>
   </div>
-  <div class="card">
-    <div class="card-title">Overall Rating</div>
-    <div style="display:flex;align-items:center;gap:20px">
-      $gaugeSvg
-      <div>
-        <div style="font-size:28px;font-weight:900;line-height:1">$overallRatingStr</div>
-        <div style="margin-top:8px">${ratingBadge(rlabel)}</div>
-        <div style="margin-top:8px;color:rgba(0,0,0,0.54);font-size:12px">Scale: 0 to 5</div>
+  <div class="overall-col-right">
+    <div class="card">
+      <div class="card-title">Overall Rating</div>
+      <div style="display:flex;align-items:center;gap:20px">
+        $gaugeSvg
+        <div>
+          <div style="font-size:22px;font-weight:900;line-height:1">$overallRatingStr</div>
+          <div style="margin-top:8px">${ratingBadge(rlabel)}</div>
+          <div style="margin-top:8px;color:rgba(0,0,0,0.54);font-size:14px">Scale: 0 to 5</div>
+        </div>
       </div>
     </div>
+    $summaryHtml
   </div>
 </div>''';
 
@@ -1412,7 +1560,8 @@ class _ReportViewState extends State<_ReportView> {
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0 }
 
     /* Matches Flutter's default body font and print-mode white background */
-    body { font-family: Arial, Helvetica, sans-serif; font-size: 14px; color: #1a1a1a; background: #fff; padding: 0 }
+    /* Matches the on-screen ListView's own outer padding (fromLTRB(18,18,18,28)) */
+    body { font-family: Arial, Helvetica, sans-serif; font-size: 14px; color: #1a1a1a; background: #fff; padding: 18px 18px 28px }
 
     /* _HeaderRow */
     .hdr { display: flex; align-items: center; margin-bottom: 18px }
@@ -1430,7 +1579,10 @@ class _ReportViewState extends State<_ReportView> {
     /* _kv widget: bold label fixed 140px, regular value */
     .kv { display: flex; margin-bottom: 6px; line-height: 1.4; font-size: 14px }
     .kv-k { width: 140px; flex-shrink: 0; font-weight: 900; padding-right: 8px }
-    .kv-v { flex: 1 }
+    /* min-width:0 is required for a flex child to actually shrink/wrap instead
+       of overflowing — without it a long unbroken value (e.g. a photo URL
+       stored in a text field) bleeds past the row into whatever is below it. */
+    .kv-v { flex: 1; min-width: 0; overflow-wrap: anywhere; word-break: break-word }
 
     /* Layout */
     .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px }
@@ -1444,11 +1596,28 @@ class _ReportViewState extends State<_ReportView> {
     /* _Badge */
     .badge { display: inline-block; padding: 5px 10px; border-radius: 999px; font-weight: 900; font-size: 13px }
 
-    /* Section overview tiles (simplified _SectionOverviewTile) */
-    .sec-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px }
-    .sec-tile { background: rgba(255,255,255,0.65); border-radius: 14px; border: 1px solid rgba(0,0,0,0.06); padding: 10px 12px; display: flex; justify-content: space-between; align-items: center }
-    .sec-tile-name { font-weight: 900; font-size: 13px }
-    .sec-tile-avg { font-weight: 900; font-size: 13px; color: #1565c0; background: rgba(21,101,192,0.12); padding: 3px 10px; border-radius: 999px }
+    /* Overall Rating + Section Overview row — matches the wide (>=950px)
+       LayoutBuilder branch: Section Overview flex 7, right col flex 5 */
+    .overall-row { display: grid; grid-template-columns: 7fr 5fr; gap: 12px; align-items: start }
+    .overall-col-right { display: flex; flex-direction: column }
+
+    /* Section overview tiles — exact port of _SectionOverviewTile */
+    .sec-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px }
+    .sec-tile { background: rgba(255,255,255,0.65); border-radius: 14px; border: 1px solid rgba(0,0,0,0.06); padding: 12px }
+    .sec-tile-head { display: flex; align-items: center; gap: 10px }
+    .sec-tile-icon { width: 28px; height: 28px; flex-shrink: 0; border-radius: 10px; background: rgba(0,0,0,0.05); display: flex; align-items: center; justify-content: center; font-size: 14px }
+    .sec-tile-name { font-weight: 900; font-size: 14px; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+    .sec-tile-badge { flex-shrink: 0; font-weight: 900; font-size: 13px; padding: 6px 10px; border-radius: 999px }
+    .sec-tile-items { margin-top: 8px; color: rgba(0,0,0,0.54); font-weight: 700; font-size: 13px }
+    .sec-tile-bar-track { margin-top: 10px; height: 6px; border-radius: 999px; background: rgba(0,0,0,0.06); overflow: hidden }
+    .sec-tile-bar-fill { height: 100%; border-radius: 999px }
+
+    /* Quick Summary — exact port of _QuickSummaryCard / _MiniStat */
+    .mini-stat-wrap { display: flex; flex-wrap: wrap; gap: 10px }
+    .mini-stat { display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: rgba(255,255,255,0.6); border-radius: 14px; border: 1px solid rgba(0,0,0,0.06) }
+    .mini-stat-icon { font-size: 15px }
+    .mini-stat-label { color: rgba(0,0,0,0.54); font-weight: 800; font-size: 13px }
+    .mini-stat-value { font-weight: 900; font-size: 13px }
 
     /* Checklist (_ChecklistSection / _ChecklistRow) */
     .cl-section { margin-bottom: 12px; break-inside: avoid }
@@ -1483,18 +1652,27 @@ class _ReportViewState extends State<_ReportView> {
 
     .muted { color: rgba(0,0,0,0.54) }
 
-    @media print {
-      body { padding: 0 }
-      /* Do NOT put break-inside:avoid on .card — large cards (vehicle info) would
-         push entirely to the next page leaving page 1 mostly empty.
-         Only block breaks on the small 2-col header rows and fine-grained rows. */
-      .info-row { break-inside: avoid }
-      .overall-row { break-inside: avoid }
-      .cl-section { break-inside: avoid }
-      .dmg-row { break-inside: avoid }
-      .auth-block { break-inside: avoid }
+    /* Page-break hints for html2pdf's 'css' pagebreak mode. These must be
+       unconditional (NOT inside @media print) — html2canvas/html2pdf render
+       using the default screen media context, so @media print rules are
+       never applied during capture and were silently ignored before.
+       Do NOT put break-inside:avoid on big containers (.card, .overall-row,
+       .sec-grid) — a large card/grid would get pushed whole onto the next
+       page, leaving the previous page mostly blank. Only the small,
+       fine-grained rows/tiles are marked atomic. */
+    .info-row,
+    .sec-tile,
+    .mini-stat,
+    .overall-col-right .card,
+    #car-map-wrapper,
+    .cl-section,
+    .dmg-row,
+    .auth-block {
+      break-inside: avoid;
+      page-break-inside: avoid;
     }
   </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 </head>
 <body>
 
@@ -1519,11 +1697,35 @@ class _ReportViewState extends State<_ReportView> {
   $authorizedHtml
 
   <script>
+    // This document is rendered off-screen (never shown to the user) purely
+    // so html2pdf.js (loaded above) can rasterize it and save a PDF straight
+    // to disk. Progress/result is reported back to the Dart side via simple
+    // window flags (__reportPdfDone / __reportPdfError) that get polled —
+    // no window.print(), no visible tab.
+    window.__reportPdfDone = false;
+    window.__reportPdfError = null;
+
+    function __startPdfExport(){
+      var opts = {
+        margin: 0,
+        filename: '$pdfFileName',
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true, allowTaint: false, width: $contentWidthPx, windowWidth: $contentWidthPx },
+        jsPDF: { unit: 'pt', format: [$pdfPageWidthPt, $pdfPageHeightPt], orientation: 'portrait' },
+        pagebreak: { mode: ['css', 'legacy'] }
+      };
+      html2pdf().set(opts).from(document.body).save().then(function(){
+        window.__reportPdfDone = true;
+      }).catch(function(e){
+        window.__reportPdfError = String(e && e.message ? e.message : e);
+        window.__reportPdfDone = true;
+      });
+    }
+
     window.addEventListener('load', function(){
       var damages = $damageJson;
       var canvas  = document.getElementById('car-canvas');
       var markers = document.getElementById('car-markers');
-      function doPrint(){ window.print(); }
       if(canvas && damages.length){
         var img = new Image();
         img.onload = function(){
@@ -1539,16 +1741,16 @@ class _ReportViewState extends State<_ReportView> {
             m.textContent=i+1;
             markers.appendChild(m);
           });
-          setTimeout(doPrint,500);
+          __startPdfExport();
         };
         img.onerror=function(){
           var w=document.getElementById('car-map-wrapper');
           if(w) w.style.display='none';
-          setTimeout(doPrint,500);
+          __startPdfExport();
         };
         img.src='$carImageUri';
       } else {
-        setTimeout(doPrint,2000);
+        __startPdfExport();
       }
     });
   </script>
@@ -3021,6 +3223,7 @@ class _HeaderRow extends StatelessWidget {
   final bool showReview;
   final bool reviewSubmitted;
   final VoidCallback? onReview;
+  final bool downloading;
 
   const _HeaderRow({
     required this.title,
@@ -3029,6 +3232,7 @@ class _HeaderRow extends StatelessWidget {
     this.showReview = false,
     this.reviewSubmitted = false,
     this.onReview,
+    this.downloading = false,
   });
 
   @override
@@ -3048,7 +3252,7 @@ class _HeaderRow extends StatelessWidget {
           children: [
             Image.asset(
               'assets/logo/autoscope_logo_old.png',
-              height: 52,
+              height: 104,
               errorBuilder: (_, _, _) => const SizedBox.shrink(),
             ),
             const Spacer(),
@@ -3092,9 +3296,9 @@ class _HeaderRow extends StatelessWidget {
                 ),
               ),
             Tooltip(
-              message: 'Download (Save as PDF)',
+              message: downloading ? 'Preparing PDF…' : 'Download (Save as PDF)',
               child: InkWell(
-                onTap: onDownload,
+                onTap: downloading ? null : onDownload,
                 borderRadius: BorderRadius.circular(999),
                 child: Container(
                   padding: const EdgeInsets.all(10),
@@ -3103,7 +3307,13 @@ class _HeaderRow extends StatelessWidget {
                     borderRadius: BorderRadius.circular(999),
                     border: Border.all(color: Colors.black.withValues(alpha: 0.10)),
                   ),
-                  child: const Icon(Icons.download_outlined, size: 20),
+                  child: downloading
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.download_outlined, size: 20),
                 ),
               ),
             ),
@@ -3470,6 +3680,40 @@ class _SigBox extends StatelessWidget {
           ),
         ],
       ],
+    );
+  }
+}
+
+// ─── Admin Approval Resolved Banner ───────────────────────────────────────────
+
+class _AdminApprovalResolvedBanner extends StatelessWidget {
+  final String status;
+  const _AdminApprovalResolvedBanner({required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    final rejected = status == 'in_progress' || status == 'inprogress' || status == 'rejected';
+    final color = rejected ? Colors.red : Colors.green;
+    final text = rejected
+        ? 'This inspection was rejected and returned to the inspector.'
+        : 'This inspection has already been approved.';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        children: [
+          Icon(rejected ? Icons.undo : Icons.check_circle_outline, color: color),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(text, style: TextStyle(fontWeight: FontWeight.w600, color: color)),
+          ),
+        ],
+      ),
     );
   }
 }

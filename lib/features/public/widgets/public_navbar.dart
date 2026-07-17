@@ -209,6 +209,8 @@ class PublicNavBar extends StatelessWidget implements PreferredSizeWidget {
               'assets/logo/autoscope_logo.png',
               height: 42, // adjust to fit AppBar height
               fit: BoxFit.contain,
+              filterQuality: FilterQuality.high,
+              isAntiAlias: true,
             ),
             // const SizedBox(width: 10),
             // const Text(
