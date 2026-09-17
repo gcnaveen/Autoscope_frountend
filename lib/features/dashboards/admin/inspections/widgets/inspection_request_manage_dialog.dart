@@ -65,11 +65,22 @@ class _InspectionRequestManageDialogState extends State<InspectionRequestManageD
     );
   }
 
+  // Fails open: an inspector is only excluded when availableStatus explicitly
+  // says so. A null/empty/unrecognized value is treated as available, because
+  // hiding an assignable inspector is worse for an admin than occasionally
+  // showing one whose availability we couldn't determine.
+  bool _isAvailable(AppUser u) {
+    final raw = (u.availableStatus ?? '').trim().toLowerCase();
+    if (raw.isEmpty) return true;
+    return !raw.contains('unavailable');
+  }
+
   Future<List<AppUser>> _loadInspectors() async {
     final all = await usersService.listUsers();
 
     final inspectors = all
-        .where((u) => u.role.toLowerCase() == 'inspector' && u.status.toLowerCase() == 'active')
+        .where((u) =>
+            u.role.toLowerCase() == 'inspector' && u.status.toLowerCase() == 'active' && _isAvailable(u))
         .toList();
 
     // fallback: if current inspector missing, match by id
@@ -79,7 +90,26 @@ class _InspectionRequestManageDialogState extends State<InspectionRequestManageD
       } catch (_) {}
     }
 
-    inspectors.sort((a, b) => a.fullName.toLowerCase().compareTo(b.fullName.toLowerCase()));
+    // Sort by current workload (fewest active assignments first) so admin
+    // naturally assigns to whoever is least busy, falling back to
+    // alphabetical order when workload is equal or unknown.
+    //
+    // NOTE: `assignedInspectionsCount` is always null today — the backend
+    // does not populate it yet (see Autoscope Backend Brief ticket on
+    // workload-based assignment ordering). Until then this comparator
+    // degrades to today's plain alphabetical sort, so shipping this now is
+    // safe; ordering will start reflecting real workload automatically once
+    // the backend field is populated, with zero further frontend changes.
+    inspectors.sort((a, b) {
+      final aCount = a.assignedInspectionsCount ?? 1 << 30;
+      final bCount = b.assignedInspectionsCount ?? 1 << 30;
+
+      final workloadComparison = aCount.compareTo(bCount);
+      if (workloadComparison != 0) return workloadComparison;
+
+      return a.fullName.toLowerCase().compareTo(b.fullName.toLowerCase());
+    });
+
     return inspectors;
   }
 
@@ -246,7 +276,11 @@ class _InspectionRequestManageDialogState extends State<InspectionRequestManageD
                         .map(
                           (u) => DropdownMenuItem(
                             value: u,
-                            child: Text('${u.fullName} (${u.email})'),
+                            child: Text(
+                              u.assignedInspectionsCount != null
+                                  ? '${u.fullName} (${u.email}) — ${u.assignedInspectionsCount} active jobs'
+                                  : '${u.fullName} (${u.email})',
+                            ),
                           ),
                         )
                         .toList(),

@@ -179,6 +179,7 @@ class AuthService {
   static const String _kToken = 'autoscope_auth_token';
   static const String _kEmail = 'autoscope_auth_email';
   static const String _kRole = 'autoscope_auth_role';
+  static const String _kUserId = 'autoscope_auth_id';
   static const String _kExpiryMs = 'autoscope_auth_expiry_ms';
 
   Timer? _logoutTimer;
@@ -202,6 +203,7 @@ class AuthService {
       final token = prefs.getString(_kToken);
       final email = prefs.getString(_kEmail);
       final roleStr = prefs.getString(_kRole);
+      final userId = prefs.getString(_kUserId) ?? '';
       final expiryMs = prefs.getInt(_kExpiryMs);
 
       if (token == null || token.isEmpty || email == null || email.isEmpty || roleStr == null) {
@@ -224,7 +226,7 @@ class AuthService {
       final role = _parseRole(roleStr);
 
       // Restore
-      final s = Session(email: email.toLowerCase(), role: role, token: token);
+      final s = Session(id: userId, email: email.toLowerCase(), role: role, token: token);
       session.value = s;
       apiClient.setToken(token);
 
@@ -270,12 +272,14 @@ class AuthService {
   // =========================
 
   Future<void> _persistSession({
+    required String id,
     required String email,
     required Role role,
     required String token,
     required DateTime expiry,
   }) async {
     final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kUserId, id);
     await prefs.setString(_kEmail, email.toLowerCase());
     await prefs.setString(_kRole, role.name); // stores: admin/user/inspector
     await prefs.setString(_kToken, token);
@@ -314,18 +318,19 @@ class AuthService {
   }
 
   void _setSession({
+    required String id,
     required String email,
     required Role role,
     required String token,
   }) async {
-    final s = Session(email: email.toLowerCase(), role: role, token: token);
+    final s = Session(id: id, email: email.toLowerCase(), role: role, token: token);
     session.value = s;
     apiClient.setToken(token);
 
     // expiry based on TTL
     final expiry = DateTime.now().add(sessionTtl);
 
-    await _persistSession(email: email, role: role, token: token, expiry: expiry);
+    await _persistSession(id: id, email: email, role: role, token: token, expiry: expiry);
     _scheduleLogout(expiry: expiry);
   }
 
@@ -365,6 +370,7 @@ class AuthService {
 
     final token = (data['token'] ?? data['accessToken'] ?? data['jwt'])?.toString();
     final role = _parseRole(data['user']?['role'] ?? data['role']);
+    final id = (data['user']?['_id'] ?? data['user']?['id'] ?? data['_id'] ?? data['id'] ?? '').toString();
 
     if (token == null || token.isEmpty) {
       throw ApiException(500, 'Token missing in verify-otp response');
@@ -376,7 +382,7 @@ class AuthService {
       throw ApiException(403, 'OTP login is only allowed for users.');
     }
 
-    _setSession(email: e, role: role, token: token);
+    _setSession(id: id, email: e, role: role, token: token);
     return session.value;
   }
 
@@ -402,6 +408,7 @@ class AuthService {
 
     final token = (data['token'] ?? data['accessToken'] ?? data['jwt'])?.toString();
     final role = _parseRole(data['user']?['role'] ?? data['role']);
+    final id = (data['user']?['_id'] ?? data['user']?['id'] ?? data['_id'] ?? data['id'] ?? '').toString();
 
     if (token == null || token.isEmpty) {
       throw ApiException(500, 'Token missing in login response');
@@ -413,7 +420,7 @@ class AuthService {
       throw ApiException(403, 'Users must login via OTP. Staff login is only for Admin/Inspector.');
     }
 
-    _setSession(email: e, role: role, token: token);
+    _setSession(id: id, email: e, role: role, token: token);
     return session.value;
   }
 
@@ -449,6 +456,7 @@ class AuthService {
     await prefs.remove(_kToken);
     await prefs.remove(_kEmail);
     await prefs.remove(_kRole);
+    await prefs.remove(_kUserId);
     await prefs.remove(_kExpiryMs);
   }
 }

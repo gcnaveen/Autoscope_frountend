@@ -1421,6 +1421,26 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
           .whereType<Map>()
           .map((m) => UserRequestRow.fromJson(Map<String, dynamic>.from(m)))
           .toList();
+
+      // The request list only carries the *request's* status (which flips to
+      // "completed" as soon as the inspector finishes the checklist). Whether
+      // the report is actually safe to show the customer depends on the
+      // separate *inspection* approval status (pending_admin_approval /
+      // approved / rejected), so resolve that here — but only for rows that
+      // are already request-completed, to avoid unnecessary calls.
+      await Future.wait(rows
+          .where((r) => r.isCompleted && (r.inspectionId ?? '').isNotEmpty)
+          .map((r) async {
+        try {
+          final full = await inspectionRequestsService.getInspectionById(r.inspectionId!);
+          r.inspectionApprovalStatus = _extractInspectionStatus(full);
+        } catch (_) {
+          // Fail closed: if we can't verify approval status, don't show the report.
+          r.inspectionStatusFetchFailed = true;
+        }
+      }));
+
+      if (!mounted) return;
       setState(() {
         _items = rows;
         _page = page;
@@ -1432,6 +1452,21 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
       if (!mounted) return;
       setState(() { _error = e.toString(); _loading = false; });
     }
+  }
+
+  /// Pulls the inspection's approval status out of whatever shape
+  /// `getInspectionById` returns ({success, data: {inspection: {...}}} or a
+  /// flatter object), returning null if it can't be found.
+  static String? _extractInspectionStatus(Map<String, dynamic> root) {
+    final data = root['data'];
+    if (data is Map) {
+      final inspection = data['inspection'];
+      if (inspection is Map && inspection['status'] != null) {
+        return inspection['status'].toString();
+      }
+    }
+    if (root['status'] != null) return root['status'].toString();
+    return null;
   }
 
   void _reload() => _loadPage(1);
@@ -1451,6 +1486,17 @@ class _UserDashboardPageState extends State<UserDashboardPage> {
   Future<void> _open(UserRequestRow r) async {
     if (!r.isCompleted) {
       context.go(detailsRoute(r.id));
+      return;
+    }
+
+    if (!r.canViewReport) {
+      showTopSnack(
+        context,
+        r.isRejected
+            ? "Your inspection is being redone by our team — you'll be notified once it's ready."
+            : "Your inspection report is being reviewed. We'll notify you once it's approved.",
+        variant: 'warning',
+      );
       return;
     }
 
@@ -1675,6 +1721,16 @@ class UserRequestRow {
   // ✅ report is by inspectionId
   final String? inspectionId;
 
+  // Populated lazily (after the request itself is completed) with the
+  // *inspection's* admin-review status — distinct from `status` above,
+  // which is the request's own status. Null until resolved, or if the
+  // inspection has no review status yet (older/legacy inspections).
+  String? inspectionApprovalStatus;
+
+  // True if the lookup of `inspectionApprovalStatus` failed (network error).
+  // We fail closed in this case: don't show the report if we couldn't verify it.
+  bool inspectionStatusFetchFailed = false;
+
   UserRequestRow({
     required this.id,
     required this.requestId,
@@ -1690,6 +1746,25 @@ class UserRequestRow {
   });
 
   bool get isCompleted => status.toLowerCase().trim() == 'completed';
+
+  bool get isPendingAdminApproval =>
+      (inspectionApprovalStatus ?? '').toLowerCase().trim() == 'pending_admin_approval';
+
+  bool get isRejected =>
+      (inspectionApprovalStatus ?? '').toLowerCase().trim() == 'rejected';
+
+  /// Whether the "View Report" action should actually be shown/enabled.
+  /// The request itself being "completed" only means the inspector finished
+  /// the checklist — it says nothing about whether admin has approved it.
+  /// We only block the two known-bad cases (pending review / rejected) or
+  /// when we failed to verify the status at all (fail closed); any other
+  /// status (including missing/legacy inspections) keeps prior behavior.
+  bool get canViewReport {
+    if (!isCompleted) return false;
+    if (inspectionStatusFetchFailed) return false;
+    if (isPendingAdminApproval || isRejected) return false;
+    return true;
+  }
 
   bool get isActive {
     final s = status.toLowerCase().trim();
@@ -1856,10 +1931,12 @@ class _UserRequestCard extends StatelessWidget {
               const SizedBox(height: 8),
               Align(
                 alignment: Alignment.centerLeft,
-                child: FilledButton.tonal(
-                  onPressed: onView,
-                  child: Text(buttonText), // ✅ NOT const
-                ),
+                child: (r.isCompleted && !r.canViewReport)
+                    ? _ReportGatedNote(rejected: r.isRejected)
+                    : FilledButton.tonal(
+                        onPressed: onView,
+                        child: Text(buttonText), // ✅ NOT const
+                      ),
               ),
             ],
           ),
@@ -1869,4 +1946,47 @@ class _UserRequestCard extends StatelessWidget {
   }
 
   static String _fmtDate(DateTime d) => '${d.day}/${d.month}/${d.year}';
+}
+
+/// Inline note shown instead of the "View Report" button when the
+/// underlying inspection hasn't cleared admin review yet.
+class _ReportGatedNote extends StatelessWidget {
+  final bool rejected;
+  const _ReportGatedNote({required this.rejected});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = rejected ? Colors.red : Colors.orange;
+    final text = rejected
+        ? "Your inspection is being redone by our team — you'll be notified once it's ready."
+        : "Your inspection report is being reviewed by our team. You'll be notified once it's approved.";
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withOpacity(0.22)),
+      ),
+      constraints: const BoxConstraints(maxWidth: 420),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            rejected ? Icons.info_outline : Icons.hourglass_top,
+            size: 16,
+            color: color,
+          ),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              text,
+              style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 12.5),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

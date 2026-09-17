@@ -11,6 +11,7 @@ import 'package:go_router/go_router.dart';
 import '../../../models/checklist_template.dart';
 import '../../../services/service_locator.dart';
 import '../../../services/dropdown_config_service.dart';
+import '../../../services/rating_scale_service.dart';
 import '../../shared/app_shell.dart';
 import '../../shared/top_snackbar.dart';
 import '../../shared/widgets/image_uploader.dart';
@@ -105,6 +106,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
   final transmissionCtrl = TextEditingController();
   final fuelTypeCtrl = TextEditingController();
   final driveTrainCtrl = TextEditingController();
+  final bodyTypeCtrl = TextEditingController();
   final specsCtrl = TextEditingController();
   final odometerCtrl = TextEditingController();
   final registrationNoCtrl = TextEditingController();
@@ -175,6 +177,20 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
   final otherModelCtrl = TextEditingController();
 
   // ============================
+  // ✅ Variant/Engine catalog cascade (Make+Model → vehicle-specs lookup)
+  // Backend endpoint may not exist yet — any failure just yields an empty
+  // list and the rest of the form behaves exactly as it does today.
+  // ============================
+  bool _loadingVehicleSpecs = false;
+  List<Map<String, dynamic>> _vehicleSpecRows = [];
+  String? selectedVariant;
+  Map<String, dynamic>? selectedEngineSpec;
+  // When a catalog engine is picked, Drive Train's OPTIONS are narrowed to
+  // this list (its driveTypes) instead of the admin-configured full list.
+  // Null means "no narrowing active — use _driveTrainOptions as-is".
+  List<String>? _driveTrainCatalogOptions;
+
+  // ============================
   // CHECKLIST STATE
   // ============================
 
@@ -186,16 +202,17 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
   final Map<int, List<String>> _overallPhotos = {};
   final Map<int, List<String>> _overallVideos = {};
 
-  static const List<String> _gradeOptions = [
-    'Excellent (5)',
-    'Good (4)',
-    'Average (3)',
-    'Poor (1)',
-    'Not Applicable',
-  ];
+  // Live, admin-configurable grading scale (falls back to the legacy
+  // hardcoded scale below until it loads, or if it fails to load).
+  RatingScale? _ratingScale;
 
-  // Not configurable
-  static const List<String> _ownershipTypeOptions = ['INDIVIDUAL', 'COMPANY'];
+  /// Dropdown option labels for grading a checklist item — sourced from the
+  /// live rating scale when available, else the fallback scale.
+  List<String> get _gradeOptions {
+    final tiers = _ratingScale?.tiers ?? RatingScale.fallbackTiers;
+    final naLabel = _ratingScale?.notApplicableLabel ?? RatingScale.fallbackNotApplicableLabel;
+    return [...tiers.map((t) => t.label), naLabel];
+  }
 
   // Configurable — loaded from the backend via DropdownConfigService.load()
   List<String> _transmissionOptions    = const [];
@@ -204,6 +221,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
   List<String> _cylinderSizeOptions    = const [];
   List<String> _driveTrainOptions      = const [];
   List<String> _specsOptions           = const [];  // no 'OTHER' — appended in UI
+  List<String> _bodyTypeOptions        = const [];
   List<String> _wheelSizeOptions       = const [];  // no 'Other' — appended in UI
   List<String> _wheelTypeOptions       = const [];  // no 'Other' — appended in UI
   List<String> _servicedWithOptions    = const [];
@@ -213,6 +231,12 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
   List<String> _upholsteryOptions      = const [];
   List<String> _numberOfKeysOptions    = const [];
   List<String> _doorsOptions           = const [];
+  List<String> _ownershipTypeOptions             = const [];
+  List<String> _serviceHistoryOptions            = const [];
+  List<String> _warrantyAvailableOptions         = const [];
+  List<String> _hadAccidentsOptions              = const [];
+  List<String> _modificationDoneInteriorOptions  = const [];
+  List<String> _modificationDoneExteriorOptions  = const [];
 
   // "Other" text controllers for every configurable dropdown
   final Map<String, TextEditingController> _otherCtrls = {};
@@ -230,19 +254,21 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
   final Map<String, String> _customFieldValues = {};           // keyed by field.id
   final Map<String, TextEditingController> _customTextCtrls = {}; // keyed by field.id (text) or field.id+'_other' (dropdown other)
 
+  /// Looks up the numeric rating for a selected grade label from the live
+  /// rating scale (or the fallback scale). Returns null for "Not Applicable"
+  /// / any label that isn't a scored tier — same convention as before.
   double? _gradeToRating(String? v) {
     if (v == null) return null;
-    if (v.startsWith('Excellent')) return 5;
-    if (v.startsWith('Good')) return 4;
-    if (v.startsWith('Average')) return 3;
-    if (v.startsWith('Poor')) return 1;
+    final tiers = _ratingScale?.tiers ?? RatingScale.fallbackTiers;
+    for (final t in tiers) {
+      if (t.label == v) return t.value;
+    }
     return null;
   }
 
   String? _gradeToStatus(String? v) {
     if (v == null) return null;
-    if (v == 'Not Applicable') return 'Not Applicable';
-    return v.split(' ').first.trim();
+    return v.trim();
   }
 
   bool _isHttpUrl(String s) {
@@ -256,9 +282,11 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
     _future = _loadTemplates();
     _loadMakes();
     _loadDropdownConfig();
+    _loadRatingScale();
 
     for (final key in const [
       'gradeVariant', 'cylinderSize', 'transmission', 'fuelType', 'driveTrain',
+      'bodyType',
       'seats', 'interiorColor', 'exteriorColor', 'upholstery', 'numberOfKeys',
       'doors', 'servicedWith',
     ]) {
@@ -291,6 +319,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
     transmissionCtrl.dispose();
     fuelTypeCtrl.dispose();
     driveTrainCtrl.dispose();
+    bodyTypeCtrl.dispose();
     specsCtrl.dispose();
     odometerCtrl.dispose();
     registrationNoCtrl.dispose();
@@ -348,6 +377,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
       _fuelTypeOptions        = cfg['fuelType']       ?? const [];
       _driveTrainOptions      = cfg['driveTrain']     ?? const [];
       _specsOptions           = cfg['specs']          ?? const [];
+      _bodyTypeOptions        = cfg['bodyType']       ?? const [];
       _seatsOptions           = cfg['seats']          ?? const [];
       _interiorColorOptions   = cfg['interiorColor']  ?? const [];
       _exteriorColorOptions   = cfg['exteriorColor']  ?? const [];
@@ -357,6 +387,12 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
       _wheelSizeOptions       = cfg['wheelSize']      ?? const [];
       _wheelTypeOptions       = cfg['wheelType']      ?? const [];
       _servicedWithOptions    = cfg['servicedWith']   ?? const [];
+      _ownershipTypeOptions            = cfg['ownershipType']             ?? const ['INDIVIDUAL', 'COMPANY'];
+      _serviceHistoryOptions           = cfg['serviceHistory']            ?? const ['Available', 'Not Available'];
+      _warrantyAvailableOptions        = cfg['warrantyAvailable']         ?? const ['Yes', 'No'];
+      _hadAccidentsOptions             = cfg['hadAccidents']              ?? const ['Yes', 'No'];
+      _modificationDoneInteriorOptions = cfg['modificationDoneInterior']  ?? const ['Yes', 'No'];
+      _modificationDoneExteriorOptions = cfg['modificationDoneExterior']  ?? const ['Yes', 'No'];
       _customFields = fields;
       for (final f in fields) {
         if (f.type == 'text') {
@@ -373,6 +409,21 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
       };
       _fieldActiveLoaded = true;
     });
+  }
+
+  /// Loads the live, admin-configurable grading scale. If this fails (or
+  /// hasn't returned yet), [_gradeOptions]/[_gradeToRating] fall back to the
+  /// legacy hardcoded scale — leaving [_ratingScale] null is enough.
+  Future<void> _loadRatingScale() async {
+    try {
+      final scale = await ratingScaleService.loadRatingScale();
+      if (!mounted) return;
+      setState(() {
+        _ratingScale = scale;
+      });
+    } catch (_) {
+      // Leave _ratingScale null — callers fall back to RatingScale.fallbackTiers.
+    }
   }
 
   /// Returns the true value for a controller: if the user picked 'Other' it
@@ -746,6 +797,8 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
         _otherCtrls['fuelType']?.text = (d['fuelTypeOther'] ?? '').toString().trim();
         driveTrainCtrl.text = (d['driveTrain'] ?? driveTrainCtrl.text).toString().trim();
         _otherCtrls['driveTrain']?.text = (d['driveTrainOther'] ?? '').toString().trim();
+        bodyTypeCtrl.text = (d['bodyType'] ?? bodyTypeCtrl.text).toString().trim();
+        _otherCtrls['bodyType']?.text = (d['bodyTypeOther'] ?? '').toString().trim();
         specsCtrl.text = (d['specs'] ?? specsCtrl.text).toString().trim();
         // Migrate old 'US SPECS' to renamed 'AMERICAN'
         if (specsCtrl.text == 'US SPECS') specsCtrl.text = 'AMERICAN';
@@ -973,6 +1026,10 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
       _modelIsOther = false;
       otherMakeCtrl.text = '';
       otherModelCtrl.text = '';
+      _vehicleSpecRows = [];
+      selectedVariant = null;
+      selectedEngineSpec = null;
+      _driveTrainCatalogOptions = null;
     });
 
     try {
@@ -1008,6 +1065,10 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
       selectedModel = null;
       _modelIsOther = false;
       otherModelCtrl.text = '';
+      _vehicleSpecRows = [];
+      selectedVariant = null;
+      selectedEngineSpec = null;
+      _driveTrainCatalogOptions = null;
     });
 
     try {
@@ -1031,6 +1092,150 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
     } finally {
       if (mounted) setState(() => loadingModels = false);
     }
+  }
+
+  // ============================
+  // ✅ VEHICLE-SPECS CATALOG (Variant → Engine cascade)
+  // GET /api/admin/vehicle-specs?make=..&model=.. — not built on the backend
+  // yet, so InspectionRequestsService.getVehicleSpecs() already swallows any
+  // failure and returns []. We defensively wrap it again here and always
+  // resolve _loadingVehicleSpecs in a finally so the form can never get stuck.
+  // ============================
+  Future<void> _loadVehicleSpecsForMakeModel(String make, String model) async {
+    if (make.trim().isEmpty || model.trim().isEmpty) return;
+
+    setState(() {
+      _loadingVehicleSpecs = true;
+      _vehicleSpecRows = [];
+      selectedVariant = null;
+      selectedEngineSpec = null;
+      _driveTrainCatalogOptions = null;
+    });
+
+    try {
+      final rows = await inspectionRequestsService.getVehicleSpecs(make: make, model: model);
+      if (!mounted) return;
+      setState(() => _vehicleSpecRows = rows);
+    } catch (_) {
+      // Should not happen (service already catches), but never let a catalog
+      // lookup failure block or crash the rest of the wizard.
+      if (mounted) setState(() => _vehicleSpecRows = []);
+    } finally {
+      if (mounted) setState(() => _loadingVehicleSpecs = false);
+    }
+  }
+
+  /// Unique, non-empty 'variant' values across the current catalog rows.
+  List<String> get _variantOptions {
+    final seen = <String>{};
+    for (final r in _vehicleSpecRows) {
+      final v = (r['variant'] ?? '').toString().trim();
+      if (v.isNotEmpty) seen.add(v);
+    }
+    return seen.toList();
+  }
+
+  /// Catalog rows (= engine options) matching the currently selected variant.
+  List<Map<String, dynamic>> get _engineRowsForSelectedVariant {
+    if (selectedVariant == null) return const [];
+    return _vehicleSpecRows
+        .where((r) => (r['variant'] ?? '').toString().trim() == selectedVariant)
+        .toList();
+  }
+
+  String _engineDisplayOf(Map<String, dynamic> row) =>
+      (row['engineDisplay'] ?? '').toString().trim();
+
+  /// Adds [value] to [options] when non-empty and not already present, so a
+  /// dropdown can show a catalog-derived value even if it doesn't match any
+  /// of the admin-configured options (mirrors the 'OTHER' pattern used for
+  /// Make/Model elsewhere in this file, without requiring a literal 'OTHER').
+  List<String> _optionsWithValue(List<String> options, String value) {
+    final v = value.trim();
+    if (v.isEmpty || options.contains(v)) return options;
+    return [...options, v];
+  }
+
+  void _onVariantSelected(String? variant) {
+    setState(() {
+      selectedVariant = variant;
+      selectedEngineSpec = null;
+      _driveTrainCatalogOptions = null;
+    });
+    if (variant == null) return;
+
+    // Auto-select when there's exactly one engine option for this variant —
+    // still shown in the Engine dropdown so the inspector sees what was picked.
+    final rows = _vehicleSpecRows
+        .where((r) => (r['variant'] ?? '').toString().trim() == variant)
+        .toList();
+    if (rows.length == 1) {
+      _applyEngineSpec(rows.first);
+    }
+  }
+
+  void _onEngineSelected(String? engineDisplay) {
+    if (engineDisplay == null) return;
+    final row = _engineRowsForSelectedVariant.firstWhere(
+      (r) => _engineDisplayOf(r) == engineDisplay,
+      orElse: () => const <String, dynamic>{},
+    );
+    if (row.isEmpty) return;
+    _applyEngineSpec(row);
+  }
+
+  /// Auto-fills Cylinder Size / Fuel Type / Drive Train (options) / Body Type /
+  /// Specs from the selected catalog row. Every one of these remains a normal
+  /// editable field afterwards — this only sets an initial value via setState.
+  void _applyEngineSpec(Map<String, dynamic> row) {
+    setState(() {
+      selectedEngineSpec = row;
+
+      final cylinders = row['cylinders'];
+      if (cylinders != null && cylinders.toString().trim().isNotEmpty) {
+        cylinderSizeCtrl.text = cylinders.toString().trim();
+      }
+
+      final fuelType = (row['fuelType'] ?? '').toString().trim();
+      if (fuelType.isNotEmpty) {
+        final match = _fuelTypeOptions.firstWhere(
+          (o) => o.toLowerCase() == fuelType.toLowerCase(),
+          orElse: () => fuelType,
+        );
+        fuelTypeCtrl.text = match;
+      }
+
+      // Narrow Drive Train's OPTIONS to the catalog's driveTypes; leave the
+      // selected value unset so the inspector still actively picks one.
+      final driveTypesRaw = row['driveTypes'];
+      if (driveTypesRaw is List && driveTypesRaw.isNotEmpty) {
+        _driveTrainCatalogOptions = driveTypesRaw.map((e) => e.toString().trim()).where((s) => s.isNotEmpty).toList();
+      } else {
+        _driveTrainCatalogOptions = null;
+      }
+      driveTrainCtrl.text = '';
+      _otherCtrls['driveTrain']?.text = '';
+
+      final bodyType = (row['bodyType'] ?? '').toString().trim();
+      if (bodyType.isNotEmpty) {
+        final match = _bodyTypeOptions.firstWhere(
+          (o) => o.toLowerCase() == bodyType.toLowerCase(),
+          orElse: () => bodyType,
+        );
+        bodyTypeCtrl.text = match;
+      }
+
+      final specs = (row['specs'] ?? '').toString().trim();
+      if (specs.isNotEmpty) {
+        final match = _specsOptions.firstWhere(
+          (o) => o.toLowerCase() == specs.toLowerCase(),
+          orElse: () => specs,
+        );
+        specsCtrl.text = match;
+        _specsIsOther = specsCtrl.text == 'OTHER';
+        if (!_specsIsOther) specsOtherCtrl.clear();
+      }
+    });
   }
 
   Future<void> _syncMakeModelUIFromControllers() async {
@@ -1209,6 +1414,8 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
         'fuelTypeOther': _otherCtrls['fuelType']?.text.trim() ?? '',
         'driveTrain': driveTrainCtrl.text.trim(),
         'driveTrainOther': _otherCtrls['driveTrain']?.text.trim() ?? '',
+        'bodyType': bodyTypeCtrl.text.trim(),
+        'bodyTypeOther': _otherCtrls['bodyType']?.text.trim() ?? '',
         'specs': specsCtrl.text.trim(),
         'specsOther': _specsIsOther ? specsOtherCtrl.text.trim() : '',
         'odometerReading': odometerCtrl.text.trim(),
@@ -1650,16 +1857,30 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
                           _modelIsOther = true;
                           otherModelCtrl.text = '';
                           modelCtrl.text = '';
+                          // Manual entry — no catalog lookup applies.
+                          _vehicleSpecRows = [];
+                          selectedVariant = null;
+                          selectedEngineSpec = null;
+                          _driveTrainCatalogOptions = null;
                         });
                         return;
                       }
 
+                      final modelName = v.toUpperCase();
                       setState(() {
-                        selectedModel = v.toUpperCase();
+                        selectedModel = modelName;
                         _modelIsOther = false;
                         otherModelCtrl.text = '';
-                        modelCtrl.text = v.toUpperCase();
+                        modelCtrl.text = modelName;
                       });
+
+                      // ✅ Kick off the Variant/Engine catalog lookup. This new
+                      // backend endpoint may not exist yet — getVehicleSpecs()
+                      // swallows any failure and returns [], which just hides
+                      // the Variant/Engine dropdowns further down.
+                      if (selectedMake != null && !_makeIsOther) {
+                        _loadVehicleSpecsForMakeModel(selectedMake!, modelName);
+                      }
                     },
               decoration: _dec(
                 label: 'Model',
@@ -1678,6 +1899,49 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
                 decoration: _dec(label: 'Other Model', hint: 'Enter model', icon: Icons.edit_outlined),
                 validator: (v) => _alphaNumValidator(v, fieldName: 'Other Model', min: 2),
               ),
+            ],
+
+            // ✅ Variant/Engine catalog cascade — only shown when the backend
+            // vehicle-specs lookup for this Make/Model actually returned rows.
+            // If it 404s/errors (endpoint not built yet) or the catalog has no
+            // entry, _vehicleSpecRows stays empty and this whole block is
+            // skipped — the rest of the form behaves exactly as it does today.
+            if (_loadingVehicleSpecs) ...[
+              const SizedBox(height: 12),
+              const Row(
+                children: [
+                  SizedBox(
+                    height: 16, width: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  SizedBox(width: 10),
+                  Text('Checking vehicle catalog…', style: TextStyle(fontSize: 12.5, color: Colors.black54)),
+                ],
+              ),
+            ],
+
+            if (!_loadingVehicleSpecs && _vehicleSpecRows.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _dropField(
+                label: 'Variant',
+                value: selectedVariant,
+                options: _variantOptions,
+                icon: Icons.category_outlined,
+                hint: 'Select variant',
+                onChanged: _onVariantSelected,
+              ),
+
+              if (selectedVariant != null && _engineRowsForSelectedVariant.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                _dropField(
+                  label: 'Engine',
+                  value: selectedEngineSpec == null ? null : _engineDisplayOf(selectedEngineSpec!),
+                  options: _engineRowsForSelectedVariant.map(_engineDisplayOf).where((s) => s.isNotEmpty).toList(),
+                  icon: Icons.settings_input_component_outlined,
+                  hint: 'Select engine',
+                  onChanged: _onEngineSelected,
+                ),
+              ],
             ],
 
             if (_isActive('gradeVariant')) ...[
@@ -1720,7 +1984,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
               _dropWithOther(
                 label: 'Cylinder Size',
                 value: cylinderSizeCtrl.text.isEmpty ? null : cylinderSizeCtrl.text,
-                options: _cylinderSizeOptions,
+                options: _optionsWithValue(_cylinderSizeOptions, cylinderSizeCtrl.text),
                 icon: Icons.settings_outlined,
                 hint: 'Select cylinder size',
                 otherCtrl: _otherCtrls['cylinderSize']!,
@@ -1748,7 +2012,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
               _dropWithOther(
                 label: 'Fuel Type',
                 value: fuelTypeCtrl.text.isEmpty ? null : fuelTypeCtrl.text,
-                options: _fuelTypeOptions,
+                options: _optionsWithValue(_fuelTypeOptions, fuelTypeCtrl.text),
                 icon: Icons.local_gas_station_outlined,
                 hint: 'Select fuel type',
                 otherCtrl: _otherCtrls['fuelType']!,
@@ -1762,12 +2026,33 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
               _dropWithOther(
                 label: 'Drive Train',
                 value: driveTrainCtrl.text.isEmpty ? null : driveTrainCtrl.text,
-                options: _driveTrainOptions,
+                // Narrowed to the selected catalog engine's driveTypes when a
+                // Variant/Engine match is active; falls back to the full
+                // admin-configured list otherwise (unchanged legacy behavior).
+                options: _driveTrainCatalogOptions ?? _driveTrainOptions,
                 icon: Icons.grid_on_outlined,
-                hint: 'Select drive train',
+                hint: _driveTrainCatalogOptions != null
+                    ? 'Select drive train (from catalog)'
+                    : 'Select drive train',
                 otherCtrl: _otherCtrls['driveTrain']!,
                 validator: (v) => v == null ? 'Drive Train is required' : null,
                 onChanged: (v) => setState(() => driveTrainCtrl.text = v ?? ''),
+              ),
+            ],
+
+            // Body Type — new admin-configurable field (dropdownConfigService
+            // key 'bodyType'). Auto-filled from the vehicle-specs catalog when
+            // a match is picked, but always remains a normal editable dropdown.
+            if (_isActive('bodyType')) ...[
+              const SizedBox(height: 12),
+              _dropWithOther(
+                label: 'Body Type',
+                value: bodyTypeCtrl.text.isEmpty ? null : bodyTypeCtrl.text,
+                options: _optionsWithValue(_bodyTypeOptions, bodyTypeCtrl.text),
+                icon: Icons.directions_car_filled_outlined,
+                hint: 'Select body type',
+                otherCtrl: _otherCtrls['bodyType']!,
+                onChanged: (v) => setState(() => bodyTypeCtrl.text = v ?? ''),
               ),
             ],
 
@@ -1776,7 +2061,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
               _dropField(
                 label: 'Specs',
                 value: specsCtrl.text.isEmpty ? null : specsCtrl.text,
-                options: [..._specsOptions, 'OTHER'],
+                options: _optionsWithValue([..._specsOptions, 'OTHER'], specsCtrl.text),
                 icon: Icons.public_outlined,
                 hint: 'Select specs',
                 validator: (v) => v == null ? 'Specs is required' : null,
@@ -1966,7 +2251,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
             _dropField(
               label: 'Service History',
               value: serviceHistory,
-              options: const ['Available', 'Not Available'],
+              options: _serviceHistoryOptions,
               icon: Icons.history_outlined,
               hint: 'Select',
               validator: (v) => v == null ? 'Service History is required' : null,
@@ -1998,7 +2283,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
             _dropField(
               label: 'Warranty Available',
               value: warrantyAvailable,
-              options: const ['Yes', 'No'],
+              options: _warrantyAvailableOptions,
               icon: Icons.verified_outlined,
               hint: 'Select',
               validator: (v) => v == null ? 'Warranty Available is required' : null,
@@ -2017,7 +2302,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
             _dropField(
               label: 'Had Accidents',
               value: hadAccidents,
-              options: const ['Yes', 'No'],
+              options: _hadAccidentsOptions,
               icon: Icons.report_problem_outlined,
               hint: 'Select',
               validator: (v) => v == null ? 'Had Accidents is required' : null,
@@ -2094,7 +2379,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
             _dropField(
               label: 'Modification Done',
               value: interiorModificationDone,
-              options: const ['Yes', 'No'],
+              options: _modificationDoneInteriorOptions,
               icon: Icons.construction_outlined,
               hint: 'Select',
               validator: (v) => v == null ? 'Modification Done is required' : null,
@@ -2195,7 +2480,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
             _dropField(
               label: 'Modification Done',
               value: exteriorModificationDone,
-              options: const ['Yes', 'No'],
+              options: _modificationDoneExteriorOptions,
               icon: Icons.construction_outlined,
               hint: 'Select',
               validator: (v) => v == null ? 'Modification Done is required' : null,
@@ -2602,6 +2887,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
       'transmission': _resolveCtrl(transmissionCtrl, 'transmission'),
       'fuelType': _resolveCtrl(fuelTypeCtrl, 'fuelType'),
       'driveTrain': _resolveCtrl(driveTrainCtrl, 'driveTrain'),
+      'bodyType': _resolveCtrl(bodyTypeCtrl, 'bodyType'),
       'specs': _specsIsOther ? specsOtherCtrl.text.trim() : specsCtrl.text.trim(),
       'odometerReading': odometerCtrl.text.trim(),
       'registrationNo': registrationNoCtrl.text.trim(),
@@ -2747,7 +3033,9 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
         'checklistTemplateId': t.id,
         'inspectionRequestId': widget.requestId,
         'inspectionDate': DateTime.now().toIso8601String(),
-        'status': 'draft',
+        // status intentionally omitted — backend assigns the correct initial
+        // status on creation; see "Autoscope Backend Brief" ticket on inspection
+        // status contract (previously hardcoded 'draft' here, which was a bug)
         ..._buildReportPayload(),
         'damaged_coordinates': _buildDamagedCoordinatesPayload(),
         'types': _buildTypesPayload(),

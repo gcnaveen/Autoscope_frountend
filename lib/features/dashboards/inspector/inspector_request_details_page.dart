@@ -25,18 +25,49 @@ class _InspectorRequestDetailsPageState extends State<InspectorRequestDetailsPag
   Future<Map<String, dynamic>> _load() async {
     final res = await inspectionRequestsService.getRequestById(widget.requestId);
 
+    Map<String, dynamic> data;
     if (res is Map && res['data'] is Map) {
-      final data = Map<String, dynamic>.from(res['data']);
-      if (data['request'] is Map) return Map<String, dynamic>.from(data['request']);
-      return data;
+      final d = Map<String, dynamic>.from(res['data']);
+      data = (d['request'] is Map) ? Map<String, dynamic>.from(d['request']) : d;
+    } else {
+      data = res;
     }
 
-    if (res is Map && res['data'] is Map && res['data']['request'] == null) {
-      return Map<String, dynamic>.from(res['data']);
+    // ⚠️ Verified against the live API: unlike the inspector-assigned LIST
+    // endpoint, GET /inspection-requests/:id does NOT embed inspection-level
+    // status/rejection fields on the request document. Those only exist on
+    // GET /checklists/inspections/:id, and under different key names there
+    // (`status`, `adminRejectionReason`) — so we fetch it separately here and
+    // remap into `inspectionStatus`/`rejectionReason` to match what the rest
+    // of this page (and the assigned-list page) already expect. Best-effort:
+    // if this call fails, the page still renders using just the request data.
+    final inspectionId = (data['inspectionId'] ?? '').toString();
+    if (inspectionId.isNotEmpty) {
+      try {
+        final insRes = await inspectionRequestsService.getInspectionById(inspectionId);
+        final insData = (insRes['data'] is Map) ? Map<String, dynamic>.from(insRes['data']) : insRes;
+        final inspection = (insData['inspection'] is Map)
+            ? Map<String, dynamic>.from(insData['inspection'])
+            : insData;
+        data['inspectionStatus'] = inspection['status'];
+        data['rejectionReason'] = inspection['adminRejectionReason'];
+      } catch (_) {
+        // leave inspectionStatus/rejectionReason unset — banner just won't show
+      }
     }
 
-    return res;
+    return data;
   }
+
+  // Inspection-level status (approved/rejected/pending_admin_approval) +
+  // rejection reason, normalized into `data` by `_load()` above.
+  String _inspectionStatusOf(Map<String, dynamic> r) =>
+      (r['inspectionStatus'] ?? '').toString().trim().toLowerCase();
+
+  String _rejectionReasonOf(Map<String, dynamic> r) =>
+      (r['rejectionReason'] ?? '').toString().trim();
+
+  bool _isRejectedRow(Map<String, dynamic> r) => _inspectionStatusOf(r) == 'rejected';
 
   void _reload() {
     setState(() {
@@ -84,6 +115,8 @@ class _InspectorRequestDetailsPageState extends State<InspectorRequestDetailsPag
               final requestId = (r['requestId'] ?? r['_id'] ?? widget.requestId).toString();
               final status = (r['status'] ?? 'pending').toString();
               final type = (r['requestType'] ?? r['type'] ?? 'Inspection').toString();
+              final isRejected = _isRejectedRow(r);
+              final rejectionReason = _rejectionReasonOf(r);
 
               final user = (r['userId'] is Map) ? Map<String, dynamic>.from(r['userId']) : <String, dynamic>{};
               final name = '${(user['firstName'] ?? '').toString()} ${(user['lastName'] ?? '').toString()}'.trim();
@@ -169,6 +202,15 @@ class _InspectorRequestDetailsPageState extends State<InspectorRequestDetailsPag
                 child: Text(notes.isEmpty ? '-' : notes),
               );
 
+              final statusChip = isRejected
+                  ? Chip(
+                      label: const Text('Rejected'),
+                      labelStyle: TextStyle(color: Colors.red.shade800, fontWeight: FontWeight.w800),
+                      backgroundColor: Colors.red.withOpacity(0.15),
+                      side: BorderSide(color: Colors.red.withOpacity(0.45)),
+                    )
+                  : Chip(label: Text(status));
+
               return ListView(
                 padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
                 children: [
@@ -184,7 +226,7 @@ class _InspectorRequestDetailsPageState extends State<InspectorRequestDetailsPag
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                        Chip(label: Text(status)),
+                        statusChip,
                         const SizedBox(width: 10),
                         IconButton(onPressed: _reload, icon: const Icon(Icons.refresh)),
                       ],
@@ -205,7 +247,7 @@ class _InspectorRequestDetailsPageState extends State<InspectorRequestDetailsPag
                           runSpacing: 10,
                           crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
-                            Chip(label: Text(status)),
+                            statusChip,
                             OutlinedButton.icon(
                               onPressed: _reload,
                               icon: const Icon(Icons.refresh, size: 18),
@@ -217,6 +259,11 @@ class _InspectorRequestDetailsPageState extends State<InspectorRequestDetailsPag
                     ),
 
                   const SizedBox(height: 12),
+
+                  if (isRejected) ...[
+                    _RejectedBanner(reason: rejectionReason),
+                    const SizedBox(height: 12),
+                  ],
 
                   // Sections (re-ordered for desktop)
                   LayoutBuilder(
@@ -288,10 +335,13 @@ class _InspectorRequestDetailsPageState extends State<InspectorRequestDetailsPag
                                 const SizedBox(width: 12),
                                 Expanded(
                                   child: FilledButton(
+                                    style: isRejected
+                                        ? FilledButton.styleFrom(backgroundColor: Colors.red.shade700)
+                                        : null,
                                     onPressed: () => context.go(
                                       '/dashboard/inspector/requests/${widget.requestId}/start',
                                     ),
-                                    child: const Text('Start Inspection'),
+                                    child: Text(isRejected ? 'Redo Inspection' : 'Start Inspection'),
                                   ),
                                 ),
                               ],
@@ -302,10 +352,13 @@ class _InspectorRequestDetailsPageState extends State<InspectorRequestDetailsPag
                                 SizedBox(
                                   width: double.infinity,
                                   child: FilledButton(
+                                    style: isRejected
+                                        ? FilledButton.styleFrom(backgroundColor: Colors.red.shade700)
+                                        : null,
                                     onPressed: () => context.go(
                                       '/dashboard/inspector/requests/${widget.requestId}/start',
                                     ),
-                                    child: const Text('Start Inspection'),
+                                    child: Text(isRejected ? 'Redo Inspection' : 'Start Inspection'),
                                   ),
                                 ),
                                 const SizedBox(height: 10),
@@ -364,6 +417,64 @@ class _InspectorRequestDetailsPageState extends State<InspectorRequestDetailsPag
 
   static String _fmt(DateTime d) =>
       '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+}
+
+/// Distinct red/warning banner shown when the admin has rejected the
+/// submitted inspection — styled after the red 'error' variant used by
+/// [showTopSnack] elsewhere in the app, so rejected feedback reads
+/// consistently with other error states.
+class _RejectedBanner extends StatelessWidget {
+  final String reason;
+
+  const _RejectedBanner({required this.reason});
+
+  @override
+  Widget build(BuildContext context) {
+    final hasReason = reason.trim().isNotEmpty;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.red.withOpacity(0.08),
+        border: Border.all(color: Colors.red.withOpacity(0.45)),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.error_outline, color: Colors.red.shade700),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Rejected — needs revision',
+                  style: TextStyle(
+                    color: Colors.red.shade800,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            hasReason
+                ? 'Admin feedback: $reason'
+                : 'Admin feedback: No reason was provided. Please reach out to your admin for details before redoing this inspection.',
+            style: TextStyle(color: Colors.red.shade900, height: 1.35),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Tap "Redo Inspection" below to fix the issues and resubmit. Your previously entered answers will be restored automatically.',
+            style: TextStyle(color: Colors.red.shade900.withOpacity(0.85), fontSize: 12.5),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _SectionCard extends StatelessWidget {

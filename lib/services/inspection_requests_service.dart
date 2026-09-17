@@ -401,6 +401,26 @@ class InspectionRequestsService {
     return out.toSet().toList(); // unique
   }
 
+  /// ✅ GET vehicle-spec catalog rows for a make/model (variant → engine → specs).
+  /// This endpoint does not exist on the backend yet — any failure (404, network
+  /// error, malformed shape, etc.) is swallowed and an empty list is returned so
+  /// the Start Inspection wizard keeps working exactly as it does today.
+  Future<List<Map<String, dynamic>>> getVehicleSpecs({
+    required String make,
+    required String model,
+  }) async {
+    try {
+      final res = await apiClient.getJson(
+        '/admin/vehicle-specs?make=${Uri.encodeQueryComponent(make)}&model=${Uri.encodeQueryComponent(model)}',
+      );
+      final data = (res is Map) ? res['data'] : null;
+      if (data is! List) return [];
+      return data.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
   /// ✅ POST add make
   String? _extractIdFromRes(dynamic res) {
     if (res is! Map) return null;

@@ -138,6 +138,7 @@ class DropdownConfigService {
     'fuelType': ['Petrol', 'Diesel', 'Hybrid', 'Electric'],
     'driveTrain': ['FWD', 'RWD', '4X4'],
     'specs': ['GCC', 'AMERICAN', 'EUROPEAN', 'JAPANESE', 'KOREAN', 'CANADIAN', 'AUSTRALIAN', 'CHINESE'],
+    'bodyType': ['Sedan', 'SUV', 'Hatchback', 'Pickup', 'Coupe', 'Convertible', 'Van', 'Bus', 'Wagon', 'MPV', 'Truck'],
     'seats': ['2', '4', '5', '6', '7', '8', '9'],
     'interiorColor': [
       'WHITE', 'BLACK', 'GRAY / GREY', 'SILVER', 'BLUE', 'RED',
@@ -155,6 +156,12 @@ class DropdownConfigService {
     'wheelSize': ['14"', '15"', '16"', '17"', '18"', '19"', '20"', '21"', '22"', '23"'],
     'wheelType': ['Alloy Wheel', 'Steel Wheel'],
     'servicedWith': ['AGENCY', 'THIRD PARTY'],
+    'ownershipType': ['INDIVIDUAL', 'COMPANY'],
+    'serviceHistory': ['Available', 'Not Available'],
+    'warrantyAvailable': ['Yes', 'No'],
+    'hadAccidents': ['Yes', 'No'],
+    'modificationDoneInterior': ['Yes', 'No'],
+    'modificationDoneExterior': ['Yes', 'No'],
   };
 
   static const Map<String, String> fieldLabels = {
@@ -164,6 +171,7 @@ class DropdownConfigService {
     'fuelType': 'Fuel Type',
     'driveTrain': 'Drive Train',
     'specs': 'Specs',
+    'bodyType': 'Body Type',
     'seats': 'Seats',
     'interiorColor': 'Interior Color',
     'exteriorColor': 'Exterior Color',
@@ -173,6 +181,12 @@ class DropdownConfigService {
     'wheelSize': 'Wheel Size',
     'wheelType': 'Wheel Type',
     'servicedWith': 'Serviced With',
+    'ownershipType': 'Ownership Type',
+    'serviceHistory': 'Service History',
+    'warrantyAvailable': 'Warranty Available',
+    'hadAccidents': 'Had Accidents',
+    'modificationDoneInterior': 'Modification Done (Interior)',
+    'modificationDoneExterior': 'Modification Done (Exterior)',
   };
 
   // ── In-memory cache (cleared on logout) ────────────────────────────────────

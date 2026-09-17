@@ -284,6 +284,38 @@ class ApiClient {
     return decoded;
   }
 
+  /// ✅ MULTIPART POST (for file uploads, e.g. CSV bulk import)
+  /// Web-safe: uses MultipartFile.fromBytes (no dart:io / file paths).
+  Future<dynamic> postMultipart(
+    String path, {
+    required String fieldName,
+    required List<int> bytes,
+    required String filename,
+    Map<String, String>? fields,
+  }) async {
+    final auth = _shouldAttachAuth(path);
+    final req = http.MultipartRequest('POST', _uri(path));
+
+    if (auth && _token != null && _token!.isNotEmpty) {
+      req.headers['Authorization'] = 'Bearer $_token';
+    }
+    req.headers['Accept'] = 'application/json';
+
+    if (fields != null) req.fields.addAll(fields);
+
+    req.files.add(http.MultipartFile.fromBytes(
+      fieldName,
+      bytes,
+      filename: filename,
+    ));
+
+    final streamed = await req.send();
+    final res = await http.Response.fromStream(streamed);
+    final decoded = _decode(res);
+    _throwIfNotOk(res, decoded);
+    return decoded;
+  }
+
   /// ✅ RAW GET (for PDF / binary)
   Future<http.Response> getBytes(
     String path, {

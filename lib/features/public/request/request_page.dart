@@ -1147,28 +1147,81 @@ class _RequestPageState extends State<RequestPage> {
   // -----------------------------
   // ✅ Terms dialog
   // -----------------------------
+  // Static fallback copy — used ONLY if the live /admin/legal-content
+  // fetch fails or comes back empty, so the dialog is never blank.
+  // TODO(legal): placeholder copy — replace with reviewed legal text before launch.
+  static const _fallbackLegalCopy = '''
+Privacy Policy
+
+1. We collect and store the details you submit solely to process your inspection or valuation request.
+2. We do not sell, rent, or share your personal data with third parties for marketing purposes.
+3. Your information is used only to respond to your request and to deliver the related service.
+
+Terms & Conditions
+
+1. By submitting this form, you are requesting Auto Scope to contact you regarding a vehicle inspection or valuation.
+2. Please ensure the information you provide is accurate and complete.
+3. Auto Scope may contact you using the email address or phone number you provide.
+4. Auto Scope reserves the right to disregard submissions that appear to be spam or misuse of this form.
+''';
+
+  List<Widget> _numberedList(List<String> items) {
+    return List<Widget>.generate(
+      items.length,
+      (i) => Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Text('${i + 1}. ${items[i]}', style: const TextStyle(height: 1.5)),
+      ),
+    );
+  }
+
   void _showTermsDialog(String title) {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(title, style: const TextStyle(fontWeight: FontWeight.w900)),
-        content: const SingleChildScrollView(
-          child: Text(
-            '''
-Dummy Privacy Policy
+        content: SizedBox(
+          width: 480,
+          child: SingleChildScrollView(
+            child:
+                FutureBuilder<({List<String> termsAndConditions, List<String> privacyPolicy})>(
+              future: legalContentService.loadLegalContent(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 24),
+                    child: Center(child: CircularProgressIndicator()),
+                  );
+                }
 
-1. We store your submitted details securely.
-2. We do not sell your data to third parties.
-3. Your data is used only to respond to your request.
+                final data = snapshot.data;
+                final terms = data?.termsAndConditions ?? const <String>[];
+                final privacy = data?.privacyPolicy ?? const <String>[];
 
-Dummy Terms & Conditions
+                if (snapshot.hasError || (terms.isEmpty && privacy.isEmpty)) {
+                  return const Text(
+                    _fallbackLegalCopy,
+                    style: TextStyle(height: 1.5),
+                  );
+                }
 
-1. This request is for contacting Auto Scope.
-2. Please provide accurate information.
-3. We may contact you using the email/phone you submit.
-4. Misuse/spam submissions may be ignored.
-''',
-            style: TextStyle(height: 1.5),
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('Privacy Policy',
+                        style: TextStyle(fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 8),
+                    ..._numberedList(privacy),
+                    const SizedBox(height: 20),
+                    const Text('Terms & Conditions',
+                        style: TextStyle(fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 8),
+                    ..._numberedList(terms),
+                  ],
+                );
+              },
+            ),
           ),
         ),
         actions: [

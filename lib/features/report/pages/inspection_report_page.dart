@@ -131,6 +131,38 @@ class _InspectionReportPageState extends State<InspectionReportPage> {
               );
             }
 
+            // Defense in depth: the user dashboard already hides the "View
+            // Report" link for inspections that aren't approved yet, but in
+            // case this route is reached directly, block it here too for
+            // non-admin viewers. Admin's own review flow (isAdminContext)
+            // is left untouched — it already handles these statuses.
+            if (!widget.isAdminContext) {
+              final gateStatus = (inspection['status'] ?? '').toString().toLowerCase().trim();
+              if (gateStatus == 'pending_admin_approval' || gateStatus == 'rejected') {
+                return Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        gateStatus == 'rejected' ? Icons.info_outline : Icons.hourglass_top,
+                        size: 40,
+                        color: gateStatus == 'rejected' ? Colors.red : Colors.orange,
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        gateStatus == 'rejected'
+                            ? "Your inspection is being redone by our team — you'll be notified once it's ready."
+                            : "Your inspection report is being reviewed by our team. You'll be notified once it's approved.",
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ],
+                  ),
+                );
+              }
+            }
+
             // Schedule auto-print once data is ready (print mode only)
             if (widget.printMode) {
               WidgetsBinding.instance.addPostFrameCallback((_) => _scheduleAutoPrint());

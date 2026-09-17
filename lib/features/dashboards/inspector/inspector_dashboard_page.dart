@@ -124,6 +124,41 @@ class _InspectorDashboardPageState extends State<InspectorDashboardPage> {
     return s == 'completed' || s.contains('completed');
   }
 
+  /// The linked inspection (checklist/report) id, if this request already has
+  /// submitted work. Backend returns this as either a plain string id or a
+  /// populated object ({ _id, ... }) depending on the endpoint.
+  String? _inspectionIdOf(Map<String, dynamic> r) {
+    final raw = r['inspectionId'];
+    if (raw is String) {
+      final s = raw.trim();
+      if (s.isEmpty || s.toLowerCase() == 'null') return null;
+      return s;
+    }
+    if (raw is Map) {
+      final id = (raw['_id'] ?? raw['id'] ?? '').toString().trim();
+      return id.isEmpty ? null : id;
+    }
+    return null;
+  }
+
+  /// True when the linked inspection (if any) was rejected by an admin.
+  /// The assigned-jobs list endpoint now embeds `inspectionStatus` (and a
+  /// redundant `inspectionSummary.status`) directly on each row, so this
+  /// reads straight off the row that's already loaded — no extra network
+  /// call needed.
+  bool _isRejected(Map<String, dynamic> r) {
+    if (_inspectionIdOf(r) == null) return false; // nothing submitted yet
+
+    final status = _s(r['inspectionStatus']).trim().toLowerCase();
+    if (status.isNotEmpty) return status == 'rejected';
+
+    final summary = r['inspectionSummary'];
+    if (summary is Map) {
+      return _s(summary['status']).trim().toLowerCase() == 'rejected';
+    }
+    return false;
+  }
+
   Color _statusBg(String s) {
     final v = s.toLowerCase();
     if (v.contains('complete')) return Colors.green.withOpacity(0.15);
@@ -151,6 +186,7 @@ class _InspectorDashboardPageState extends State<InspectorDashboardPage> {
   Widget _buildJobCard(Map<String, dynamic> r, bool isMobile, bool isVeryNarrow) {
     final status = _statusOf(r);
     final isCompleted = _isCompletedStatus(status);
+    final rejected = _isRejected(r);
     final title = _titleOf(r);
     final addr = _formatAddress(r['address']);
     final when = _formatWhen(r);
@@ -158,15 +194,23 @@ class _InspectorDashboardPageState extends State<InspectorDashboardPage> {
     final statusChip = Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: _statusBg(status),
-        border: Border.all(color: _statusBorder(status)),
+        color: rejected ? Colors.red.withOpacity(0.15) : _statusBg(status),
+        border: Border.all(color: rejected ? Colors.red.withOpacity(0.45) : _statusBorder(status)),
         borderRadius: BorderRadius.circular(999),
       ),
-      child: Text(status, style: const TextStyle(fontWeight: FontWeight.w800)),
+      child: Text(
+        rejected ? 'Rejected' : status,
+        style: TextStyle(
+          fontWeight: FontWeight.w800,
+          color: rejected ? Colors.red.shade800 : null,
+        ),
+      ),
     );
 
+    // A rejected inspection must still be openable (to redo it) even though
+    // the underlying request status may already read "completed".
     final openBtn = FilledButton.tonal(
-      onPressed: isCompleted ? null : () => _openRequest(r),
+      onPressed: (isCompleted && !rejected) ? null : () => _openRequest(r),
       child: const Text('Open'),
     );
 

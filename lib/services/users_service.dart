@@ -185,6 +185,32 @@ class UsersService {
     return AppUser.fromJson(raw);
   }
 
+  Future<AppUser?> getUserById(String id) async {
+    if (id.trim().isEmpty) return null;
+
+    final res = await apiClient.getJson('/users/$id');
+
+    Map<String, dynamic>? raw;
+
+    if (res is Map<String, dynamic>) {
+      final data = res['data'];
+      if (data is Map<String, dynamic>) {
+        final u = data['user'];
+        if (u is Map<String, dynamic>) raw = u;
+        raw ??= data;
+      }
+
+      final user = res['user'];
+      if (raw == null && user is Map<String, dynamic>) raw = user;
+
+      raw ??= res;
+    }
+
+    if (raw == null || raw.isEmpty) return null;
+
+    return AppUser.fromJson(raw);
+  }
+
   Future<void> blockUser(String id) async {
     await apiClient.putJson('/users/$id/block', {});
   }

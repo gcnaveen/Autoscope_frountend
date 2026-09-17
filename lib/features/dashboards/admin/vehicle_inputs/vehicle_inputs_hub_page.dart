@@ -51,6 +51,14 @@ class VehicleInputsHubPage extends StatelessWidget {
                 icon: Icons.map_outlined,
                 onTap: () => context.go('/dashboard/admin/emirates'),
               ),
+              const SizedBox(height: 14),
+              _HubCard(
+                title: 'Vehicle Specs (Auto-fill)',
+                subtitle:
+                    'Manage the make/model/variant/engine catalog used to auto-fill vehicle details during inspection.',
+                icon: Icons.settings_suggest_outlined,
+                onTap: () => context.go('/dashboard/admin/vehicle-specs'),
+              ),
             ],
           ),
         ),

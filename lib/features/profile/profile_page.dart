@@ -18,14 +18,42 @@ class _ProfilePageState extends State<ProfilePage> {
   final phoneCtrl = TextEditingController();
 
   bool saving = false;
+  bool loading = true;
 
   @override
   void initState() {
     super.initState();
+    _loadProfile();
+  }
 
+  Future<void> _loadProfile() async {
     final s = authService.session.value;
-    nameCtrl.text = s?.email.split('@').first ?? 'Demo User';
-    phoneCtrl.text = '';
+    final id = s?.id;
+
+    if (id == null || id.trim().isEmpty) {
+      // No id captured on the session (e.g. stale session from before this
+      // field existed) -> fall back to the email prefix so the page is not blank.
+      nameCtrl.text = s?.email.split('@').first ?? '';
+      phoneCtrl.text = '';
+      if (mounted) setState(() => loading = false);
+      return;
+    }
+
+    try {
+      final user = await usersService.getUserById(id);
+      final fullName = '${user?.firstName ?? ''} ${user?.lastName ?? ''}'.trim();
+      nameCtrl.text = fullName.isNotEmpty ? fullName : (s?.email.split('@').first ?? '');
+      phoneCtrl.text = user?.phone ?? '';
+    } catch (e) {
+      // Keep a lightweight fallback rather than pretending the fetch succeeded.
+      nameCtrl.text = s?.email.split('@').first ?? '';
+      phoneCtrl.text = '';
+      if (mounted) {
+        showTopSnack(context, 'Could not load profile details.', variant: 'error');
+      }
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
   }
 
   @override
@@ -64,10 +92,27 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Future<void> _save() async {
+    final s = authService.session.value;
+    final id = s?.id;
+
+    if (id == null || id.trim().isEmpty) {
+      showTopSnack(context, 'Update Failed', variant: 'error');
+      return;
+    }
+
     setState(() => saving = true);
 
     try {
-      // TODO: call API later to update profile
+      final parts = nameCtrl.text.trim().split(RegExp(r'\s+'));
+      final firstName = parts.isNotEmpty ? parts.first : '';
+      final lastName = parts.length > 1 ? parts.sublist(1).join(' ') : '';
+
+      await usersService.updateUser(
+        id: id,
+        firstName: firstName,
+        lastName: lastName,
+        phone: phoneCtrl.text.trim(),
+      );
 
       if (!mounted) return;
       showTopSnack(context, 'Profile updated.', variant: 'success');
@@ -115,6 +160,7 @@ class _ProfilePageState extends State<ProfilePage> {
 
                     TextField(
                       controller: nameCtrl,
+                      enabled: !loading,
                       decoration: const InputDecoration(
                         labelText: 'Name',
                         border: OutlineInputBorder(),
@@ -123,6 +169,7 @@ class _ProfilePageState extends State<ProfilePage> {
                     const SizedBox(height: 12),
                     TextField(
                       controller: phoneCtrl,
+                      enabled: !loading,
                       decoration: const InputDecoration(
                         labelText: 'Phone',
                         border: OutlineInputBorder(),
@@ -133,8 +180,8 @@ class _ProfilePageState extends State<ProfilePage> {
                     SizedBox(
                       width: double.infinity,
                       child: FilledButton(
-                        onPressed: saving ? null : _save,
-                        child: Text(saving ? 'Saving...' : 'Save'),
+                        onPressed: (saving || loading) ? null : _save,
+                        child: Text(saving ? 'Saving...' : (loading ? 'Loading...' : 'Save')),
                       ),
                     ),
                   ],

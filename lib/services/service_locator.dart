@@ -2,7 +2,6 @@ import '../config/api_config.dart';
 import 'api_client.dart';
 import 'auth_service.dart';
 import 'checklist_templates_service.dart';
-import 'upload_service.dart';
 import 'users_service.dart';
 import 'checklists_service.dart';
 import 'admin_dashboard_service.dart';
@@ -13,12 +12,17 @@ import 'reviews_service.dart';
 import 'dropdown_config_service.dart';
 import 'emirates_service.dart';
 import 'report_settings_service.dart';
+import 'vehicle_specs_service.dart';
+import 'legal_content_service.dart';
+import 'rating_scale_service.dart';
 
 
 final apiClient = ApiClient(baseUrl: ApiConfig.apiBaseUrl);
 final dropdownConfigService = DropdownConfigService(apiClient: apiClient);
 final emiratesService = EmiratesService(apiClient: apiClient);
 final reportSettingsService = ReportSettingsService(apiClient: apiClient);
+final legalContentService = LegalContentService(apiClient: apiClient);
+final ratingScaleService = RatingScaleService(apiClient: apiClient);
 
 final authService = AuthService(apiClient: apiClient);
 final usersService = UsersService(apiClient: apiClient);
@@ -28,8 +32,8 @@ final inspectionRequestsService = InspectionRequestsService(apiClient: apiClient
 final contactService = ContactService(apiClient: apiClient);
 final userRequestsService = UserRequestsService(apiClient: apiClient);
 final checklistTemplatesService = ChecklistTemplatesService(apiClient: apiClient);
-final uploadService = UploadService(apiClient: apiClient);
 final reviewsService = ReviewsService(apiClient: apiClient);
+final vehicleSpecsService = VehicleSpecsService(apiClient: apiClient);
 
 
 

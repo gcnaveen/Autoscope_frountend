@@ -19,6 +19,13 @@ class AppUser {
   final bool? isAssigned;
   final bool? otpVerified;
 
+  /// Backend does not return this yet (see Autoscope Backend Brief ticket on
+  /// workload-based inspector assignment ordering). Defaults to null until
+  /// the backend adds support for it; parsed defensively from a couple of
+  /// reasonable key name candidates so it starts working automatically
+  /// (with zero frontend changes) once the backend ships one of them.
+  final int? assignedInspectionsCount;
+
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
@@ -33,6 +40,7 @@ class AppUser {
     this.availableStatus,
     this.isAssigned,
     this.otpVerified,
+    this.assignedInspectionsCount,
     this.createdAt,
     this.updatedAt,
   });
@@ -52,6 +60,12 @@ class AppUser {
       }
     }
 
+    int? assignedCount(dynamic v) {
+      if (v == null) return null;
+      if (v is int) return v;
+      return int.tryParse(v.toString());
+    }
+
     return AppUser(
       id: (j['_id'] ?? j['id'] ?? '').toString(),
       email: (j['email'] ?? '').toString(),
@@ -63,6 +77,9 @@ class AppUser {
       availableStatus: j['availableStatus']?.toString(),
       isAssigned: j['is_assigned'] == true,
       otpVerified: j['otpVerified'] == true,
+      assignedInspectionsCount: assignedCount(
+        j['assignedInspectionsCount'] ?? j['assigned_inspections_count'] ?? j['activeAssignmentsCount'],
+      ),
       createdAt: dt(j['createdAt']),
       updatedAt: dt(j['updatedAt']),
     );
