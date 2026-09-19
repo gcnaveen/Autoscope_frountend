@@ -3,6 +3,7 @@
 import 'dart:html' as html;
 
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui_web' as ui;
 
@@ -365,6 +366,24 @@ class _WebCameraCaptureDialogState extends State<_WebCameraCaptureDialog> {
                 ),
               ),
 
+              // Crop-boundary guide (live preview only — matches _captureVisibleFrame's math)
+              if (_ready && !isReview)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: CustomPaint(
+                      painter: _CropGuidePainter(
+                        videoWidth: (_video?.videoWidth ?? 0) > 0
+                            ? _video!.videoWidth.toDouble()
+                            : 1920.0,
+                        videoHeight: (_video?.videoHeight ?? 0) > 0
+                            ? _video!.videoHeight.toDouble()
+                            : 1080.0,
+                        zoom: _zoom,
+                      ),
+                    ),
+                  ),
+                ),
+
               // Frozen captured preview overlay
               if (_captured != null)
                 Positioned.fill(
@@ -448,8 +467,9 @@ class _WebCameraCaptureDialogState extends State<_WebCameraCaptureDialog> {
                           activeTrackColor: Colors.white,
                           inactiveTrackColor: Colors.white38,
                           overlayColor: Colors.white24,
-                          trackHeight: 2,
-                          thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
+                          trackHeight: 5,
+                          thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 11),
+                          overlayShape: const RoundSliderOverlayShape(overlayRadius: 26),
                         ),
                         child: Slider(
                           value: _zoom,
@@ -523,5 +543,139 @@ class _WebCameraCaptureDialogState extends State<_WebCameraCaptureDialog> {
         ),
       ),
     );
+  }
+}
+
+/// Draws a live crop-boundary guide (dim mask + border + rule-of-thirds grid +
+/// corner brackets) over the camera preview, so what the user frames matches
+/// what `_captureVisibleFrame` actually outputs.
+///
+/// This mirrors `_captureVisibleFrame`'s math exactly:
+///  - The video element is rendered with `object-fit: cover` into the
+///    preview box, then scaled by `zoom` via a CSS `transform: scale(zoom)`
+///    centered on itself. That determines how much of the native video
+///    frame (`videoWidth` x `videoHeight`) is actually visible on screen.
+///  - `_captureVisibleFrame` separately center-crops the native frame to a
+///    fixed 4:3 aspect ratio, shrunk by the same `zoom` factor.
+///  - Mapping that capture-crop rectangle into on-screen coordinates (using
+///    the same center + cover-fit + zoom math as the live preview) gives a
+///    rectangle that is always centered in the preview, whose size relative
+///    to the preview box is `cropSize / visibleNativeSize` on each axis.
+class _CropGuidePainter extends CustomPainter {
+  final double videoWidth;
+  final double videoHeight;
+  final double zoom;
+
+  const _CropGuidePainter({
+    required this.videoWidth,
+    required this.videoHeight,
+    required this.zoom,
+  });
+
+  static const double _kAspect = 4.0 / 3.0;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final containerW = size.width;
+    final containerH = size.height;
+    if (containerW <= 0 || containerH <= 0) return;
+
+    final vw = videoWidth > 0 ? videoWidth : 1920.0;
+    final vh = videoHeight > 0 ? videoHeight : 1080.0;
+    final z = zoom <= 0 ? 1.0 : zoom;
+
+    // Same branch as _captureVisibleFrame: center-crop the raw video frame
+    // to 4:3, then shrink by the zoom factor.
+    double cropW, cropH;
+    if (vw / vh >= _kAspect) {
+      cropH = vh / z;
+      cropW = cropH * _kAspect;
+    } else {
+      cropW = vw / z;
+      cropH = cropW / _kAspect;
+    }
+
+    // Same math the live preview uses: object-fit: cover maps the native
+    // frame onto the container (displayScale), then the CSS zoom transform
+    // shrinks the visible native window further, centered.
+    final displayScale = math.max(containerW / vw, containerH / vh);
+    final visibleNativeW = (containerW / displayScale) / z;
+    final visibleNativeH = (containerH / displayScale) / z;
+
+    // Ratio of the capture crop to what's actually visible on screen —
+    // both are centered on the same point, so this maps directly to a
+    // centered rectangle within the container.
+    final rW = (cropW / visibleNativeW).clamp(0.0, 1.0);
+    final rH = (cropH / visibleNativeH).clamp(0.0, 1.0);
+
+    final rectW = containerW * rW;
+    final rectH = containerH * rH;
+    final left = (containerW - rectW) / 2;
+    final top = (containerH - rectH) / 2;
+    final cropRect = Rect.fromLTWH(left, top, rectW, rectH);
+    final cropRRect = RRect.fromRectAndRadius(cropRect, const Radius.circular(14));
+
+    // 1) Dim everything outside the capture region.
+    final outerPath = Path()..addRect(Rect.fromLTWH(0, 0, containerW, containerH));
+    final innerPath = Path()..addRRect(cropRRect);
+    final dimPath = Path.combine(PathOperation.difference, outerPath, innerPath);
+    canvas.drawPath(dimPath, Paint()..color = Colors.black.withOpacity(0.45));
+
+    // 2) Clear border around the capture region.
+    canvas.drawRRect(
+      cropRRect,
+      Paint()
+        ..color = Colors.white.withOpacity(0.9)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.4,
+    );
+
+    // 3) Rule-of-thirds grid inside the capture region.
+    final gridPaint = Paint()
+      ..color = Colors.white.withOpacity(0.3)
+      ..strokeWidth = 1.0;
+    final thirdW = cropRect.width / 3;
+    final thirdH = cropRect.height / 3;
+    for (var i = 1; i <= 2; i++) {
+      final x = cropRect.left + thirdW * i;
+      canvas.drawLine(Offset(x, cropRect.top), Offset(x, cropRect.bottom), gridPaint);
+      final y = cropRect.top + thirdH * i;
+      canvas.drawLine(Offset(cropRect.left, y), Offset(cropRect.right, y), gridPaint);
+    }
+
+    // 4) Corner brackets for a scanner-style reticle.
+    _drawCornerBrackets(
+      canvas,
+      cropRect,
+      Paint()
+        ..color = Colors.white.withOpacity(0.95)
+        ..strokeWidth = 2.4
+        ..strokeCap = StrokeCap.round,
+    );
+  }
+
+  void _drawCornerBrackets(Canvas canvas, Rect r, Paint paint) {
+    final len = math.min(24.0, math.min(r.width, r.height) / 4);
+    if (len <= 0) return;
+
+    // Top-left
+    canvas.drawLine(r.topLeft, r.topLeft + Offset(len, 0), paint);
+    canvas.drawLine(r.topLeft, r.topLeft + Offset(0, len), paint);
+    // Top-right
+    canvas.drawLine(r.topRight, r.topRight + Offset(-len, 0), paint);
+    canvas.drawLine(r.topRight, r.topRight + Offset(0, len), paint);
+    // Bottom-left
+    canvas.drawLine(r.bottomLeft, r.bottomLeft + Offset(len, 0), paint);
+    canvas.drawLine(r.bottomLeft, r.bottomLeft + Offset(0, -len), paint);
+    // Bottom-right
+    canvas.drawLine(r.bottomRight, r.bottomRight + Offset(-len, 0), paint);
+    canvas.drawLine(r.bottomRight, r.bottomRight + Offset(0, -len), paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _CropGuidePainter oldDelegate) {
+    return oldDelegate.videoWidth != videoWidth ||
+        oldDelegate.videoHeight != videoHeight ||
+        oldDelegate.zoom != zoom;
   }
 }

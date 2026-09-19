@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../shared/utils/responsive.dart';
 import '../widgets/public_navbar.dart';
 
 class ProductsPage extends StatefulWidget {
@@ -69,7 +70,19 @@ class _ProductsPageState extends State<ProductsPage> {
                   padding: const EdgeInsets.fromLTRB(16, 18, 16, 30),
                   child: LayoutBuilder(
                     builder: (context, c) {
-                      final isWide = c.maxWidth >= 980;
+                      // ✅ Only two cards exist here, so a generic
+                      // Responsive.gridColumns() 1/2/3 scale doesn't fit —
+                      // a 3rd column would just be empty. Tablet portrait
+                      // keeps the cards stacked (each one carries 3-5
+                      // bullet points and gets cramped well before ~380px
+                      // of width); tablet landscape and up shows them
+                      // side-by-side, same as desktop. This also fixes the
+                      // old ad-hoc `c.maxWidth >= 980` check, which cut
+                      // through the middle of the shared "expanded" tablet
+                      // tier (840-1199) instead of respecting it.
+                      final screenSize = Responsive.screenSizeOf(context);
+                      final isWide = screenSize != ScreenSize.compact &&
+                          screenSize != ScreenSize.medium;
 
                       final inspectionCard = _ProductCard(
                         selected: _selectedType == 'inspection',
@@ -159,11 +172,17 @@ class _ProductsHero extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final w = MediaQuery.sizeOf(context).width;
-    final isMobile = w < 900;
+    // ✅ Tablet now gets its own in-between height instead of jumping
+    // straight from the phone height to the full desktop height.
+    final heroHeight = Responsive.value<double>(
+      context,
+      mobile: 260,
+      tablet: 290,
+      desktop: 320,
+    );
 
     return Container(
-      height: isMobile ? 260 : 320,
+      height: heroHeight,
       decoration: const BoxDecoration(color: Color(0xFF0B1220)),
       child: Stack(
         children: [

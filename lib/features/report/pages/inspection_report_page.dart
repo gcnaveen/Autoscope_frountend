@@ -15,6 +15,7 @@ import 'package:flutter/services.dart' show rootBundle, Clipboard, ClipboardData
 import '../../shared/app_shell.dart';
 import '../../../services/service_locator.dart';
 import '../../shared/top_snackbar.dart';
+import '../../shared/utils/image_compress.dart';
 import '../../shared/widgets/web_camera_capture_web.dart';
 
 const String kCarTopDamageAsset = 'assets/images/car_views/top.jpg';
@@ -3873,10 +3874,24 @@ class _ApproveDialogState extends State<_ApproveDialog> {
     final reader = html.FileReader();
     reader.readAsArrayBuffer(file);
     await reader.onLoad.first;
+    final rawBytes = Uint8List.fromList(reader.result as List<int>);
+
+    // Resize/compress client-side before upload (signature is always an
+    // image). Falls back to the original bytes unchanged if compression
+    // fails or isn't needed.
+    final bytes = await compressImageBytesForUpload(rawBytes);
+    var fileName = file.name;
+    var contentType = file.type.isNotEmpty ? file.type : 'image/png';
+    if (!identical(bytes, rawBytes)) {
+      // Bytes were actually re-encoded to JPEG — keep filename/contentType consistent.
+      contentType = 'image/jpeg';
+      fileName = withJpegFileName(fileName);
+    }
+
     setState(() {
-      _sigBytes = Uint8List.fromList(reader.result as List<int>);
-      _sigFileName = file.name;
-      _sigContentType = file.type.isNotEmpty ? file.type : 'image/png';
+      _sigBytes = bytes;
+      _sigFileName = fileName;
+      _sigContentType = contentType;
     });
   }
 

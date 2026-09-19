@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import '../top_snackbar.dart';
 
 import '../../../services/service_locator.dart';
+import '../utils/image_compress.dart';
 import 'web_camera_capture_web.dart';
 
 class ImageUploader extends StatefulWidget {
@@ -189,17 +190,28 @@ class _ImageUploaderState extends State<ImageUploader> {
         final f = files[i];
         setState(() => _status = 'Uploading ${i + 1}/${files.length}...');
 
-        final bytes = await _readFileBytes(f);
+        final rawBytes = await _readFileBytes(f);
 
         // Use actual file type (don’t force), but normalize for backend validation
         var ct = normalizeContentType(f.type);
         if (ct.isEmpty) ct = 'image/jpeg';
 
+        var fileName = f.name;
+        // Resize/compress client-side before upload (images only — this
+        // picker only ever handles images). Falls back to the original
+        // bytes unchanged if compression fails or isn't needed.
+        final bytes = await compressImageBytesForUpload(rawBytes);
+        if (!identical(bytes, rawBytes)) {
+          // Bytes were actually re-encoded to JPEG — keep filename/contentType consistent.
+          ct = 'image/jpeg';
+          fileName = withJpegFileName(fileName);
+        }
+
         final url = await inspectionRequestsService.uploadInspectionMedia(
           inspectionRequestId: widget.inspectionRequestId,
           typeName: widget.typeName,
           bytes: bytes,
-          fileName: f.name,
+          fileName: fileName,
           contentType: ct,
           mediaType: widget.mediaType,
         );

@@ -460,6 +460,13 @@ import 'package:flutter/material.dart';
 import 'web_camera_capture_web.dart';
 import 'web_video_capture_web.dart';
 import '../top_snackbar.dart';
+import '../utils/image_compress.dart';
+
+/// Safety-net cap for videos picked via "Upload from Files" — this is a
+/// client-side validation guard, not compression (video re-encoding via
+/// canvas isn't feasible), so oversized picks are rejected outright instead
+/// of silently attempting an upload that will likely fail or hang.
+const int _kMaxVideoUploadBytes = 200 * 1024 * 1024; // 200 MB
 
 typedef UploadFn = Future<String> Function({
   required Uint8List bytes,
@@ -734,9 +741,18 @@ class _MediaUploaderState extends State<MediaUploader> {
         if (isVideo && !widget.allowUploadVideo) continue;
         if (!isVideo && !widget.allowUploadPhoto) continue;
 
+        // Client-side safety net: reject oversized videos up front rather
+        // than attempting an upload that will likely fail or hang. Videos
+        // are never compressed (canvas re-encoding isn't feasible for
+        // video), so this is a hard size cap, not a resize.
+        if (isVideo && f.size > _kMaxVideoUploadBytes) {
+          _toast('Video is too large (max 200MB). Please choose a shorter clip.');
+          continue;
+        }
+
         setState(() => _status = 'Uploading ${i + 1}/${files.length}...');
 
-        final bytes = await _readFileBytes(f);
+        final rawBytes = await _readFileBytes(f);
 
         // ✅ Do NOT force type. Use uploaded file mime, but normalize it.
         var contentType = _normalizeCt(f.type);
@@ -745,9 +761,23 @@ class _MediaUploaderState extends State<MediaUploader> {
           contentType = isVideo ? 'video/mp4' : 'image/jpeg';
         }
 
+        var fileName = f.name;
+        var bytes = rawBytes;
+
+        if (!isVideo) {
+          // Resize/compress images client-side before upload. Falls back to
+          // the original bytes unchanged if compression fails or isn't needed.
+          bytes = await compressImageBytesForUpload(rawBytes);
+          if (!identical(bytes, rawBytes)) {
+            // Bytes were actually re-encoded to JPEG — keep filename/contentType consistent.
+            contentType = 'image/jpeg';
+            fileName = withJpegFileName(fileName);
+          }
+        }
+
         final url = isVideo
-            ? await widget.uploadVideo(bytes: bytes, contentType: contentType, fileName: f.name)
-            : await widget.uploadPhoto(bytes: bytes, contentType: contentType, fileName: f.name);
+            ? await widget.uploadVideo(bytes: bytes, contentType: contentType, fileName: fileName)
+            : await widget.uploadPhoto(bytes: bytes, contentType: contentType, fileName: fileName);
 
         if (isVideo) {
           setState(() => _videos.add(url));

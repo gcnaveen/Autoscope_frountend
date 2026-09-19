@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../shared/app_shell.dart';
 import '../../../shared/widgets/pagination_bar.dart';
+import '../../../shared/utils/responsive.dart';
 import '../../../../models/app_user.dart';
 import '../../../../services/service_locator.dart';
 
@@ -106,8 +107,10 @@ class _InspectorsPageState extends State<InspectorsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final w = MediaQuery.sizeOf(context).width;
-    final isMobile = w < 720;
+    // Same reasoning as users_page.dart: the inline row card (name/email/
+    // phone/two status chips/Manage button) has room to work well below the
+    // old 720px cutoff, so tablets get it instead of the stacked phone card.
+    final isMobile = Responsive.isMobile(context);
 
     return AppShell(
       title: 'Inspectors',
@@ -221,8 +224,7 @@ class _InspectorCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final w = MediaQuery.sizeOf(context).width;
-    final isMobile = w < 720;
+    final isMobile = Responsive.isMobile(context);
 
     final statusRaw = (u.availableStatus ?? u.status).toString();
     final status = statusRaw.isEmpty ? 'unknown' : statusRaw;

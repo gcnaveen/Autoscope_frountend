@@ -958,6 +958,7 @@ import 'package:go_router/go_router.dart';
 import '../../../services/service_locator.dart';
 import '../../../services/emirates_service.dart';
 import '../../shared/top_snackbar.dart';
+import '../../shared/utils/responsive.dart';
 import '../widgets/public_navbar.dart';
 
 /// ✅ Forces ALL user-typed text to UPPERCASE
@@ -1770,13 +1771,22 @@ Terms & Conditions
   @override
   Widget build(BuildContext context) {
     final type = _toUrlType(_productType);
+    // ✅ Desktop keeps the form at its previously-tuned width (1040); tablet
+    // gets its own narrower tier instead of inheriting the desktop width or
+    // being squeezed like a phone; mobile stays full-width as before.
+    final formMaxWidth = Responsive.value<double>(
+      context,
+      mobile: double.infinity,
+      tablet: 760,
+      desktop: 1040,
+    );
 
     return Scaffold(
       appBar: const PublicNavBar(),
       body: SingleChildScrollView(
         child: Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 1040),
+            constraints: BoxConstraints(maxWidth: formMaxWidth),
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
               child: Column(
@@ -1838,15 +1848,17 @@ Terms & Conditions
                       padding: const EdgeInsets.all(18),
                       child: Form(
                         key: _formKey,
-                        child: LayoutBuilder(
-                          builder: (context, c) {
-                            final isWide = c.maxWidth >= 820;
-                            final w = c.maxWidth;
-                            final gap = 14.0;
-                            final fieldW = isWide ? (w - gap) / 2 : w;
+                        child: Builder(
+                          builder: (context) {
+                            const gap = 14.0;
 
+                            // ✅ Full-width wrapper for a standalone field.
+                            // Works whether the field sits alone in the
+                            // Column or as a ResponsiveRow child (Expanded
+                            // there gives it a tight width anyway) — so
+                            // fields no longer need a hand-computed width.
                             Widget field(Widget child) =>
-                                SizedBox(width: fieldW, child: child);
+                                SizedBox(width: double.infinity, child: child);
 
                             return Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1855,13 +1867,15 @@ Terms & Conditions
                                     icon: Icons.shopping_bag_outlined),
                                 const SizedBox(height: 10),
 
-                                // two fields side-by-side on wide screens
-                                Wrap(
+                                // ✅ Stacked on phone; side-by-side from the
+                                // tablet tier up (was a single ad-hoc >=820
+                                // container-width check, which left tablet
+                                // portrait stacked like a phone).
+                                ResponsiveRow(
                                   spacing: gap,
-                                  runSpacing: gap,
                                   children: [
-                                    field(_productTypeDropdown(fieldW)),
-                                    field(_reasonDropdown(fieldW)),
+                                    _productTypeDropdown(double.infinity),
+                                    _reasonDropdown(double.infinity),
                                   ],
                                 ),
 
@@ -1872,9 +1886,12 @@ Terms & Conditions
                                 _sectionTitle('Owner Details',
                                     icon: Icons.person_outline),
                                 const SizedBox(height: 10),
-                                Wrap(
+                                // ✅ Name pair, then contact pair — grouped
+                                // via the shared ResponsiveRow instead of a
+                                // width-driven Wrap, so tablet gets the same
+                                // side-by-side pairing as desktop.
+                                ResponsiveRow(
                                   spacing: gap,
-                                  runSpacing: gap,
                                   children: [
                                     field(
                                       TextFormField(
@@ -1904,6 +1921,12 @@ Terms & Conditions
                                             _nameValidator(v, fieldName: 'Last name'),
                                       ),
                                     ),
+                                  ],
+                                ),
+                                const SizedBox(height: 14),
+                                ResponsiveRow(
+                                  spacing: gap,
+                                  children: [
                                     field(
                                       TextFormField(
                                         controller: phoneCtrl,
@@ -1960,11 +1983,18 @@ Terms & Conditions
                                 _sectionTitle('Vehicle Information',
                                     icon: Icons.directions_car_outlined),
                                 const SizedBox(height: 10),
-                                Wrap(
-                                  spacing: gap,
-                                  runSpacing: gap,
-                                  children: [
-                                    field(
+                                // ✅ Make + Model paired via ResponsiveRow
+                                // from the tablet tier up, with the "Other"
+                                // free-text fields (shown only when
+                                // Make/Model is OTHER) forming their own
+                                // conditional pair below. On phone this is
+                                // built with a plain Builder instead, so the
+                                // field order stays exactly Make → [Other
+                                // Make] → Model → [Other Model] as before —
+                                // unchanged from the pre-ResponsiveRow layout.
+                                Builder(
+                                  builder: (context) {
+                                    final makeField = field(
                                       DropdownButtonFormField<String>(
                                         value: selectedMake,
                                         autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
@@ -2040,29 +2070,8 @@ Terms & Conditions
                                         validator: (v) =>
                                             v == null ? 'Make is required' : null,
                                       ),
-                                    ),
-
-                                    if (_makeIsOther)
-                                      field(
-                                        TextFormField(
-                                          controller: otherMakeCtrl,
-                                          autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
-                                          inputFormatters:
-                                              _vehicleFreeTextFormatters(max: 40),
-                                          decoration: _dec(
-                                            label: 'Other Make',
-                                            hint: 'ENTER MAKE',
-                                            icon: Icons.edit_outlined,
-                                          ),
-                                          validator: (v) => _vehicleTextValidator(
-                                            v,
-                                            fieldName: 'Other Make',
-                                            min: 2,
-                                          ),
-                                        ),
-                                      ),
-
-                                    field(
+                                    );
+                                    final modelField = field(
                                       DropdownButtonFormField<String>(
                                         value: selectedModel,
                                         autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
@@ -2105,28 +2114,96 @@ Terms & Conditions
                                         validator: (v) =>
                                             v == null ? 'Model is required' : null,
                                       ),
-                                    ),
+                                    );
 
-                                    if (_modelIsOther)
-                                      field(
-                                        TextFormField(
-                                          controller: otherModelCtrl,
-                                          autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
-                                          inputFormatters:
-                                              _vehicleFreeTextFormatters(max: 40),
-                                          decoration: _dec(
-                                            label: 'Other Model',
-                                            hint: 'ENTER MODEL',
-                                            icon: Icons.edit_outlined,
-                                          ),
-                                          validator: (v) => _vehicleTextValidator(
-                                            v,
-                                            fieldName: 'Other Model',
-                                            min: 1,
-                                          ),
+                                    final otherMakeField = !_makeIsOther
+                                        ? null
+                                        : field(
+                                            TextFormField(
+                                              controller: otherMakeCtrl,
+                                              autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
+                                              inputFormatters:
+                                                  _vehicleFreeTextFormatters(max: 40),
+                                              decoration: _dec(
+                                                label: 'Other Make',
+                                                hint: 'ENTER MAKE',
+                                                icon: Icons.edit_outlined,
+                                              ),
+                                              validator: (v) => _vehicleTextValidator(
+                                                v,
+                                                fieldName: 'Other Make',
+                                                min: 2,
+                                              ),
+                                            ),
+                                          );
+
+                                    final otherModelField = !_modelIsOther
+                                        ? null
+                                        : field(
+                                            TextFormField(
+                                              controller: otherModelCtrl,
+                                              autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
+                                              inputFormatters:
+                                                  _vehicleFreeTextFormatters(max: 40),
+                                              decoration: _dec(
+                                                label: 'Other Model',
+                                                hint: 'ENTER MODEL',
+                                                icon: Icons.edit_outlined,
+                                              ),
+                                              validator: (v) => _vehicleTextValidator(
+                                                v,
+                                                fieldName: 'Other Model',
+                                                min: 1,
+                                              ),
+                                            ),
+                                          );
+
+                                    // ✅ Phone: exact original order and
+                                    // stacking (Make → [Other Make] →
+                                    // Model → [Other Model]), unchanged.
+                                    if (Responsive.isMobile(context)) {
+                                      return Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          makeField,
+                                          if (otherMakeField != null) ...[
+                                            const SizedBox(height: gap),
+                                            otherMakeField,
+                                          ],
+                                          const SizedBox(height: gap),
+                                          modelField,
+                                          if (otherModelField != null) ...[
+                                            const SizedBox(height: gap),
+                                            otherModelField,
+                                          ],
+                                        ],
+                                      );
+                                    }
+
+                                    // ✅ Tablet/desktop: Make + Model paired,
+                                    // with the "Other" fields forming their
+                                    // own conditional pair below.
+                                    return Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        ResponsiveRow(
+                                          spacing: gap,
+                                          children: [makeField, modelField],
                                         ),
-                                      ),
-                                  ],
+                                        if (otherMakeField != null ||
+                                            otherModelField != null) ...[
+                                          const SizedBox(height: gap),
+                                          ResponsiveRow(
+                                            spacing: gap,
+                                            children: [
+                                              if (otherMakeField != null) otherMakeField,
+                                              if (otherModelField != null) otherModelField,
+                                            ],
+                                          ),
+                                        ],
+                                      ],
+                                    );
+                                  },
                                 ),
 
                                 const SizedBox(height: 18),
@@ -2136,13 +2213,11 @@ Terms & Conditions
                                 _sectionTitle('Preferred Slot',
                                     icon: Icons.event_available_outlined),
                                 const SizedBox(height: 10),
-                                Wrap(
+                                ResponsiveRow(
                                   spacing: gap,
-                                  runSpacing: gap,
                                   children: [
-                                    SizedBox(
-                                      width: fieldW,
-                                      child: InkWell(
+                                    field(
+                                      InkWell(
                                         onTap: _pickDate,
                                         borderRadius: BorderRadius.circular(14),
                                         child: InputDecorator(
@@ -2201,27 +2276,31 @@ Terms & Conditions
                                 _sectionTitle('Location',
                                     icon: Icons.location_on_outlined),
                                 const SizedBox(height: 10),
-                                Wrap(
-                                  spacing: gap,
-                                  runSpacing: gap,
-                                  children: [
-                                    field(
-                                      TextFormField(
-                                        controller: addressCtrl,
-                                        autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
-                                        inputFormatters: [
-                                          LengthLimitingTextInputFormatter(80),
-                                          _upper,
-                                        ],
-                                        decoration: _dec(
-                                          label: 'Address',
-                                          hint: '123 MAIN STREET',
-                                          icon: Icons.home_outlined,
-                                        ),
-                                        validator: (v) =>
-                                            _req(v, msg: 'Address is required'),
-                                      ),
+                                // ✅ Address is free text and reads better at
+                                // full width on every tier, so it stays
+                                // standalone; City + Area are the natural
+                                // pair and go side-by-side from tablet up.
+                                field(
+                                  TextFormField(
+                                    controller: addressCtrl,
+                                    autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
+                                    inputFormatters: [
+                                      LengthLimitingTextInputFormatter(80),
+                                      _upper,
+                                    ],
+                                    decoration: _dec(
+                                      label: 'Address',
+                                      hint: '123 MAIN STREET',
+                                      icon: Icons.home_outlined,
                                     ),
+                                    validator: (v) =>
+                                        _req(v, msg: 'Address is required'),
+                                  ),
+                                ),
+                                const SizedBox(height: 14),
+                                ResponsiveRow(
+                                  spacing: gap,
+                                  children: [
                                     field(
                                       DropdownButtonFormField<String>(
                                         initialValue: selectedEmirate,
@@ -2297,31 +2376,33 @@ Terms & Conditions
                                               v == null ? 'Area is required' : null,
                                         ),
                                       ),
-                                    if (_areaIsOther)
-                                      field(
-                                        TextFormField(
-                                          controller: otherAreaCtrl,
-                                          autovalidateMode: AutovalidateMode.onUserInteraction,
-                                          inputFormatters: [
-                                            LengthLimitingTextInputFormatter(60),
-                                            _upper,
-                                          ],
-                                          decoration: _dec(
-                                            label: 'Other Area',
-                                            hint: 'ENTER AREA NAME',
-                                            icon: Icons.edit_outlined,
-                                          ),
-                                          validator: (v) {
-                                            if (!_areaIsOther) return null;
-                                            if (v == null || v.trim().isEmpty) {
-                                              return 'Area is required';
-                                            }
-                                            return null;
-                                          },
-                                        ),
-                                      ),
                                   ],
                                 ),
+                                if (_areaIsOther) ...[
+                                  const SizedBox(height: 14),
+                                  field(
+                                    TextFormField(
+                                      controller: otherAreaCtrl,
+                                      autovalidateMode: AutovalidateMode.onUserInteraction,
+                                      inputFormatters: [
+                                        LengthLimitingTextInputFormatter(60),
+                                        _upper,
+                                      ],
+                                      decoration: _dec(
+                                        label: 'Other Area',
+                                        hint: 'ENTER AREA NAME',
+                                        icon: Icons.edit_outlined,
+                                      ),
+                                      validator: (v) {
+                                        if (!_areaIsOther) return null;
+                                        if (v == null || v.trim().isEmpty) {
+                                          return 'Area is required';
+                                        }
+                                        return null;
+                                      },
+                                    ),
+                                  ),
+                                ],
 
                                 const SizedBox(height: 18),
                                 Divider(color: Colors.black.withOpacity(0.08)),

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../services/service_locator.dart';
+import '../../shared/utils/responsive.dart';
 import '../widgets/public_navbar.dart';
 
 class LandingPage extends StatelessWidget {
@@ -132,14 +133,25 @@ class _HeroSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final mq = MediaQuery.of(context);
-    final w = mq.size.width;
-    final isMobile = w < 900;
 
     // ✅ Full available height: screen - appbar - statusbar padding
     final fullH = mq.size.height - kToolbarHeight - mq.padding.top;
 
     // ✅ Keep sensible minimum height so content never feels cramped
-    final heroHeight = (isMobile ? fullH : fullH).clamp(560.0, 900.0);
+    final heroHeight = fullH.clamp(560.0, 900.0);
+
+    // ✅ The headline previously used a single fixed 54px size on every
+    // screen (tablet was silently identical to desktop, which is too
+    // large for a 720px-wide text block on a narrower tablet). Mobile and
+    // desktop keep their exact original size (54); tablet now gets a
+    // real in-between step instead of inheriting the desktop value.
+    // Subtitle/body are left untouched — only the headline was oversized.
+    final titleSize = Responsive.value<double>(
+      context,
+      mobile: 54,
+      tablet: 46,
+      desktop: 54,
+    );
 
     return Container(
       height: heroHeight,
@@ -187,11 +199,11 @@ class _HeroSection extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
+                    Text(
                       'Auto Scope',
                       style: TextStyle(
                         color: Colors.white,
-                        fontSize: 54,
+                        fontSize: titleSize,
                         height: 1.04,
                         fontWeight: FontWeight.w900,
                       ),
@@ -232,8 +244,13 @@ class _AboutUsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final w = MediaQuery.sizeOf(context).width;
-    final isMobile = w < 900;
+    // ✅ Routed through the shared tier boundaries instead of an ad-hoc
+    // 900px cutoff: tablet portrait still stacks (an image + 3 text cards
+    // side-by-side gets cramped before ~840px), tablet landscape and up
+    // matches desktop's side-by-side layout.
+    final screenSize = Responsive.screenSizeOf(context);
+    final isMobile =
+        screenSize == ScreenSize.compact || screenSize == ScreenSize.medium;
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 10),
       child: Stack(
@@ -388,8 +405,12 @@ class _ServicesIntroSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final w = MediaQuery.sizeOf(context).width;
-    final isMobile = w < 900;
+    // ✅ Routed through the shared tier boundaries instead of an ad-hoc
+    // 900px cutoff, so the pills' compact sizing matches the same
+    // phone/tablet-portrait grouping used elsewhere on this page.
+    final screenSize = Responsive.screenSizeOf(context);
+    final isMobile =
+        screenSize == ScreenSize.compact || screenSize == ScreenSize.medium;
 
     return _SectionShell(
       bg: Colors.white,
@@ -467,8 +488,13 @@ class _InspectionSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final w = MediaQuery.sizeOf(context).width;
-    final isMobile = w < 900;
+    // ✅ Routed through the shared tier boundaries instead of an ad-hoc
+    // 900px cutoff: tablet portrait still stacks the two pricing cards
+    // (each is bullet-heavy and gets cramped before ~840px), tablet
+    // landscape and up shows them side-by-side like desktop.
+    final screenSize = Responsive.screenSizeOf(context);
+    final isMobile =
+        screenSize == ScreenSize.compact || screenSize == ScreenSize.medium;
 
     final bulletsText1 = const [
       'Exterior body & paint condition',
@@ -620,8 +646,13 @@ class _BookServiceCtaSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final w = MediaQuery.sizeOf(context).width;
-    final isMobile = w < 900;
+    // ✅ Routed through the shared tier boundaries instead of an ad-hoc
+    // 900px cutoff: tablet portrait still stacks the CTA copy above the
+    // button (side-by-side gets cramped before ~840px), tablet landscape
+    // and up shows them side-by-side like desktop.
+    final screenSize = Responsive.screenSizeOf(context);
+    final isMobile =
+        screenSize == ScreenSize.compact || screenSize == ScreenSize.medium;
 
     return _SectionShell(
       bg: Colors.white,
@@ -760,8 +791,22 @@ class _WhyAutoScopeSection extends StatelessWidget {
             builder: (context, c) {
               const spacing = 14.0;
               final maxW = c.maxWidth;
-              final isMobile = maxW < 700;
-              final itemW = isMobile ? maxW : (maxW - spacing) / 2;
+              // ✅ There are exactly 4 cards, so the generic
+              // Responsive.gridColumns() 1/2/3 scale would leave an
+              // unbalanced 3+1 split on desktop. Tablet keeps the 2x2
+              // grid this section already had; desktop gets a single
+              // row of 4 — it previously stayed capped at 2 columns
+              // forever (identical to tablet) even though desktop has
+              // comfortable room for all 4 cards in one row.
+              final columns = Responsive.value<int>(
+                context,
+                mobile: 1,
+                tablet: 2,
+                desktop: 4,
+              );
+              final itemW = columns == 1
+                  ? maxW
+                  : (maxW - spacing * (columns - 1)) / columns;
 
               return Wrap(
                 spacing: spacing,

@@ -4,6 +4,7 @@ import '../../../shared/app_shell.dart';
 import '../../../shared/widgets/pagination_bar.dart';
 import '../../../shared/widgets/web_file_pick_web.dart';
 import '../../../shared/top_snackbar.dart';
+import '../../../shared/utils/responsive.dart';
 import '../../../../services/service_locator.dart';
 
 import 'widgets/vehicle_spec_form_dialog.dart';
@@ -210,8 +211,19 @@ class _VehicleSpecsPageState extends State<VehicleSpecsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final w = MediaQuery.sizeOf(context).width;
-    final isMobile = w < 760;
+    // Header (title/refresh/import/add) is light content — the standard
+    // mobile boundary is fine here, so tablet gets the single-row desktop
+    // header instead of the stacked phone one.
+    final isMobile = Responsive.isMobile(context);
+    // The _SpecCard row below is a 9-column table (make/model/variant/
+    // engine/cylinders/fuel/drive/body/specs + 2 actions) — it needs far
+    // more width than the old 760px threshold gave it. Rather than blindly
+    // aligning that to the shared "compact" boundary (600, which would make
+    // the dense row trigger even earlier and cramp every column on
+    // tablets), we raise it to the true desktop tier: tablets — including
+    // landscape ones — get the same readable stacked card as phones, and
+    // only real desktop/laptop widths get the row.
+    final useStackedCard = !Responsive.isDesktop(context);
 
     return AppShell(
       title: 'Vehicle Specs (Auto-fill)',
@@ -345,7 +357,7 @@ class _VehicleSpecsPageState extends State<VehicleSpecsPage> {
                     ..._items.map(
                       (row) => _SpecCard(
                         row: row,
-                        isMobile: isMobile,
+                        isStacked: useStackedCard,
                         busy: _busy,
                         onEdit: () => _openEditDialog(row),
                         onDelete: () => _deleteRow(row),
@@ -375,14 +387,16 @@ class _VehicleSpecsPageState extends State<VehicleSpecsPage> {
 
 class _SpecCard extends StatelessWidget {
   final _SpecRow row;
-  final bool isMobile;
+  // True for phones AND tablets — this dense 9-column row only fits at true
+  // desktop width, so both get the same stacked card (see build() above).
+  final bool isStacked;
   final bool busy;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
 
   const _SpecCard({
     required this.row,
-    required this.isMobile,
+    required this.isStacked,
     required this.busy,
     required this.onEdit,
     required this.onDelete,
@@ -392,7 +406,7 @@ class _SpecCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final driveTypes = row.driveTypes.isEmpty ? '—' : row.driveTypes.join('/');
 
-    if (!isMobile) {
+    if (!isStacked) {
       return Padding(
         padding: const EdgeInsets.only(bottom: 8),
         child: Card(

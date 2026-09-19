@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../../shared/app_shell.dart';
 import '../../../shared/top_snackbar.dart';
+import '../../../shared/utils/responsive.dart';
 import '../../../../services/service_locator.dart';
 import '../../../../services/dropdown_config_service.dart';
 
@@ -268,8 +269,8 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
 
   @override
   Widget build(BuildContext context) {
-    final w = MediaQuery.sizeOf(context).width;
-    final isMobile = w < 720;
+    final isMobile = Responsive.isMobile(context);
+    final isTablet = Responsive.isTablet(context);
 
     return AppShell(
       title: 'Checklist Templates',
@@ -412,13 +413,17 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
 
                             return _TemplateCard(
                               isMobile: isMobile,
+                              isTablet: isTablet,
                               name: name,
                               desc: desc,
                               isActive: isActive,
                               version: version,
                               itemsCount: itemsCount,
                               typesCount: typesCount,
-                              showActiveLabel: !isMobile, // desktop shows label near switch
+                              // The dense trailing row (switch + edit + 3 icon
+                              // buttons) only gets the ListTile treatment at
+                              // true desktop width — see _TemplateCard.
+                              showActiveLabel: !isMobile && !isTablet,
                               switchValue: switchValue,
                               switchOnChanged: switchOnChanged,
                               onEdit: id.isEmpty ? null : () => _goEdit(id),
@@ -461,6 +466,7 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
 
 class _TemplateCard extends StatelessWidget {
   final bool isMobile;
+  final bool isTablet;
 
   final String name;
   final String desc;
@@ -482,6 +488,7 @@ class _TemplateCard extends StatelessWidget {
 
   const _TemplateCard({
     required this.isMobile,
+    required this.isTablet,
     required this.name,
     required this.desc,
     required this.isActive,
@@ -503,7 +510,13 @@ class _TemplateCard extends StatelessWidget {
     final meta = '$itemsCount items • $typesCount sections • v$version';
     final hasDesc = desc.trim().isNotEmpty;
 
-    if (!isMobile) {
+    // The dense trailing row (label + switch + Edit button + 3 icon
+    // buttons) needs real desktop width to sit on one line without
+    // crowding the title/subtitle — tablet keeps the stacked card below
+    // instead (with fuller, labeled action buttons since it has the room).
+    final useRowLayout = !isMobile && !isTablet;
+
+    if (useRowLayout) {
       return Padding(
         padding: const EdgeInsets.only(bottom: 10),
         child: Card(
@@ -553,14 +566,16 @@ class _TemplateCard extends StatelessWidget {
       );
     }
 
-    // Mobile layout: title stays wide, actions go below (no vertical text)
+    // Stacked layout (phone and tablet): title stays wide, actions go below
+    // (no vertical text). Tablet gets a bit more interior padding since the
+    // card itself is stretched wider.
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Card(
         elevation: 0,
         color: Colors.black.withOpacity(0.02),
         child: Padding(
-          padding: const EdgeInsets.all(12),
+          padding: EdgeInsets.all(isTablet ? 16 : 12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -603,6 +618,8 @@ class _TemplateCard extends StatelessWidget {
               ),
               const SizedBox(height: 6),
 
+              // Tablet has room for labeled buttons (clearer than bare
+              // icons), while phone keeps the compact icon-only actions.
               Wrap(
                 spacing: 10,
                 runSpacing: 10,
@@ -611,21 +628,43 @@ class _TemplateCard extends StatelessWidget {
                     height: 36,
                     child: FilledButton.tonal(onPressed: onEdit, child: const Text('Edit')),
                   ),
-                  IconButton(
-                    tooltip: 'Preview',
-                    onPressed: onPreview,
-                    icon: const Icon(Icons.visibility_outlined),
-                  ),
-                  IconButton(
-                    tooltip: 'Clone',
-                    onPressed: onClone,
-                    icon: const Icon(Icons.copy_outlined),
-                  ),
-                  IconButton(
-                    tooltip: allowDelete ? 'Delete' : 'Cannot delete the last template',
-                    onPressed: allowDelete ? onDelete : null,
-                    icon: const Icon(Icons.delete_outline),
-                  ),
+                  if (isTablet)
+                    OutlinedButton.icon(
+                      onPressed: onPreview,
+                      icon: const Icon(Icons.visibility_outlined, size: 18),
+                      label: const Text('Preview'),
+                    )
+                  else
+                    IconButton(
+                      tooltip: 'Preview',
+                      onPressed: onPreview,
+                      icon: const Icon(Icons.visibility_outlined),
+                    ),
+                  if (isTablet)
+                    OutlinedButton.icon(
+                      onPressed: onClone,
+                      icon: const Icon(Icons.copy_outlined, size: 18),
+                      label: const Text('Clone'),
+                    )
+                  else
+                    IconButton(
+                      tooltip: 'Clone',
+                      onPressed: onClone,
+                      icon: const Icon(Icons.copy_outlined),
+                    ),
+                  if (isTablet)
+                    OutlinedButton.icon(
+                      onPressed: allowDelete ? onDelete : null,
+                      style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
+                      icon: const Icon(Icons.delete_outline, size: 18),
+                      label: const Text('Delete'),
+                    )
+                  else
+                    IconButton(
+                      tooltip: allowDelete ? 'Delete' : 'Cannot delete the last template',
+                      onPressed: allowDelete ? onDelete : null,
+                      icon: const Icon(Icons.delete_outline),
+                    ),
                 ],
               ),
             ],

@@ -14,6 +14,8 @@ import '../../../services/dropdown_config_service.dart';
 import '../../../services/rating_scale_service.dart';
 import '../../shared/app_shell.dart';
 import '../../shared/top_snackbar.dart';
+import '../../shared/utils/image_compress.dart';
+import '../../shared/utils/responsive.dart';
 import '../../shared/widgets/image_uploader.dart';
 import '../../shared/widgets/media_uploader.dart';
 import '../../shared/widgets/web_camera_capture_web.dart';
@@ -628,15 +630,27 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
       reader.onError.listen((_) =>
           bytesCompleter.completeError(reader.error ?? Exception('Read failed')));
       reader.readAsArrayBuffer(file);
-      final bytes = await bytesCompleter.future;
+      final rawBytes = await bytesCompleter.future;
+
+      // Resize/compress client-side before upload (chassis photo is always
+      // an image). Falls back to the original bytes unchanged if
+      // compression fails or isn't needed.
+      final bytes = await compressImageBytesForUpload(rawBytes);
+      var fileName = file.name;
+      var contentType = normalizeContentType(file.type);
+      if (!identical(bytes, rawBytes)) {
+        // Bytes were actually re-encoded to JPEG — keep filename/contentType consistent.
+        contentType = 'image/jpeg';
+        fileName = withJpegFileName(fileName);
+      }
 
       if (!mounted) return;
       final url = await inspectionRequestsService.uploadInspectionMedia(
         inspectionRequestId: widget.requestId,
         typeName: 'vehicle_details',
         bytes: bytes,
-        fileName: file.name,
-        contentType: normalizeContentType(file.type),
+        fileName: fileName,
+        contentType: contentType,
         mediaType: 'photos',
       );
       if (!mounted) return;
@@ -1706,7 +1720,14 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
         ],
       ),
       child: Padding(
-        padding: const EdgeInsets.all(18),
+        // Mobile keeps the exact original padding; tablet/desktop get
+        // slightly more breathing room around each section card.
+        padding: Responsive.value<EdgeInsets>(
+          context,
+          mobile: const EdgeInsets.all(18),
+          tablet: const EdgeInsets.all(22),
+          desktop: const EdgeInsets.all(26),
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1960,85 +1981,98 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
 
             const SizedBox(height: 12),
 
-            TextFormField(
-              controller: engineCapacityCtrl,
-              autovalidateMode: AutovalidateMode.onUserInteraction,
-              inputFormatters: [LengthLimitingTextInputFormatter(12), _upper],
-              decoration: _dec(label: 'Engine Capacity', hint: 'e.g. 2.0L', icon: Icons.speed_outlined),
-              validator: (v) => _alphaNumValidator(v, fieldName: 'Engine Capacity', min: 1),
+            // Engine Capacity + Model Year: both short, always-shown vehicle
+            // identification fields — sit side-by-side on tablet/desktop.
+            ResponsiveRow(
+              spacing: 12,
+              children: [
+                TextFormField(
+                  controller: engineCapacityCtrl,
+                  autovalidateMode: AutovalidateMode.onUserInteraction,
+                  inputFormatters: [LengthLimitingTextInputFormatter(12), _upper],
+                  decoration: _dec(label: 'Engine Capacity', hint: 'e.g. 2.0L', icon: Icons.speed_outlined),
+                  validator: (v) => _alphaNumValidator(v, fieldName: 'Engine Capacity', min: 1),
+                ),
+                TextFormField(
+                  controller: modelYearCtrl,
+                  autovalidateMode: AutovalidateMode.onUserInteraction,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: _yearFormatters(),
+                  decoration: _dec(label: 'Model Year', hint: '2020', icon: Icons.calendar_today_outlined),
+                  validator: _yearValidator,
+                ),
+              ],
             ),
 
-            const SizedBox(height: 12),
-
-            TextFormField(
-              controller: modelYearCtrl,
-              autovalidateMode: AutovalidateMode.onUserInteraction,
-              keyboardType: TextInputType.number,
-              inputFormatters: _yearFormatters(),
-              decoration: _dec(label: 'Model Year', hint: '2020', icon: Icons.calendar_today_outlined),
-              validator: _yearValidator,
-            ),
-
-            if (_isActive('cylinderSize')) ...[
-              const SizedBox(height: 12),
-              _dropWithOther(
-                label: 'Cylinder Size',
-                value: cylinderSizeCtrl.text.isEmpty ? null : cylinderSizeCtrl.text,
-                options: _optionsWithValue(_cylinderSizeOptions, cylinderSizeCtrl.text),
-                icon: Icons.settings_outlined,
-                hint: 'Select cylinder size',
-                otherCtrl: _otherCtrls['cylinderSize']!,
-                validator: (v) => v == null ? 'Cylinder Size is required' : null,
-                onChanged: (v) => setState(() => cylinderSizeCtrl.text = v ?? ''),
+            // Cylinder Size + Transmission: each admin-toggleable independently
+            // via _isActive, so the row (and its leading gap) only appears when
+            // at least one of the pair is active; each dropdown's own inline
+            // "Other" field stays nested inside it, so it moves with its field.
+            if (_isActive('cylinderSize') || _isActive('transmission')) const SizedBox(height: 12),
+            if (_isActive('cylinderSize') || _isActive('transmission'))
+              ResponsiveRow(
+                spacing: 12,
+                children: [
+                  if (_isActive('cylinderSize'))
+                    _dropWithOther(
+                      label: 'Cylinder Size',
+                      value: cylinderSizeCtrl.text.isEmpty ? null : cylinderSizeCtrl.text,
+                      options: _optionsWithValue(_cylinderSizeOptions, cylinderSizeCtrl.text),
+                      icon: Icons.settings_outlined,
+                      hint: 'Select cylinder size',
+                      otherCtrl: _otherCtrls['cylinderSize']!,
+                      validator: (v) => v == null ? 'Cylinder Size is required' : null,
+                      onChanged: (v) => setState(() => cylinderSizeCtrl.text = v ?? ''),
+                    ),
+                  if (_isActive('transmission'))
+                    _dropWithOther(
+                      label: 'Transmission',
+                      value: transmissionCtrl.text.isEmpty ? null : transmissionCtrl.text,
+                      options: _transmissionOptions,
+                      icon: Icons.swap_horiz_outlined,
+                      hint: 'Select transmission',
+                      otherCtrl: _otherCtrls['transmission']!,
+                      validator: (v) => v == null ? 'Transmission is required' : null,
+                      onChanged: (v) => setState(() => transmissionCtrl.text = v ?? ''),
+                    ),
+                ],
               ),
-            ],
 
-            if (_isActive('transmission')) ...[
-              const SizedBox(height: 12),
-              _dropWithOther(
-                label: 'Transmission',
-                value: transmissionCtrl.text.isEmpty ? null : transmissionCtrl.text,
-                options: _transmissionOptions,
-                icon: Icons.swap_horiz_outlined,
-                hint: 'Select transmission',
-                otherCtrl: _otherCtrls['transmission']!,
-                validator: (v) => v == null ? 'Transmission is required' : null,
-                onChanged: (v) => setState(() => transmissionCtrl.text = v ?? ''),
+            // Fuel Type + Drive Train: same reasoning as the pair above.
+            if (_isActive('fuelType') || _isActive('driveTrain')) const SizedBox(height: 12),
+            if (_isActive('fuelType') || _isActive('driveTrain'))
+              ResponsiveRow(
+                spacing: 12,
+                children: [
+                  if (_isActive('fuelType'))
+                    _dropWithOther(
+                      label: 'Fuel Type',
+                      value: fuelTypeCtrl.text.isEmpty ? null : fuelTypeCtrl.text,
+                      options: _optionsWithValue(_fuelTypeOptions, fuelTypeCtrl.text),
+                      icon: Icons.local_gas_station_outlined,
+                      hint: 'Select fuel type',
+                      otherCtrl: _otherCtrls['fuelType']!,
+                      validator: (v) => v == null ? 'Fuel Type is required' : null,
+                      onChanged: (v) => setState(() => fuelTypeCtrl.text = v ?? ''),
+                    ),
+                  if (_isActive('driveTrain'))
+                    _dropWithOther(
+                      label: 'Drive Train',
+                      value: driveTrainCtrl.text.isEmpty ? null : driveTrainCtrl.text,
+                      // Narrowed to the selected catalog engine's driveTypes when a
+                      // Variant/Engine match is active; falls back to the full
+                      // admin-configured list otherwise (unchanged legacy behavior).
+                      options: _driveTrainCatalogOptions ?? _driveTrainOptions,
+                      icon: Icons.grid_on_outlined,
+                      hint: _driveTrainCatalogOptions != null
+                          ? 'Select drive train (from catalog)'
+                          : 'Select drive train',
+                      otherCtrl: _otherCtrls['driveTrain']!,
+                      validator: (v) => v == null ? 'Drive Train is required' : null,
+                      onChanged: (v) => setState(() => driveTrainCtrl.text = v ?? ''),
+                    ),
+                ],
               ),
-            ],
-
-            if (_isActive('fuelType')) ...[
-              const SizedBox(height: 12),
-              _dropWithOther(
-                label: 'Fuel Type',
-                value: fuelTypeCtrl.text.isEmpty ? null : fuelTypeCtrl.text,
-                options: _optionsWithValue(_fuelTypeOptions, fuelTypeCtrl.text),
-                icon: Icons.local_gas_station_outlined,
-                hint: 'Select fuel type',
-                otherCtrl: _otherCtrls['fuelType']!,
-                validator: (v) => v == null ? 'Fuel Type is required' : null,
-                onChanged: (v) => setState(() => fuelTypeCtrl.text = v ?? ''),
-              ),
-            ],
-
-            if (_isActive('driveTrain')) ...[
-              const SizedBox(height: 12),
-              _dropWithOther(
-                label: 'Drive Train',
-                value: driveTrainCtrl.text.isEmpty ? null : driveTrainCtrl.text,
-                // Narrowed to the selected catalog engine's driveTypes when a
-                // Variant/Engine match is active; falls back to the full
-                // admin-configured list otherwise (unchanged legacy behavior).
-                options: _driveTrainCatalogOptions ?? _driveTrainOptions,
-                icon: Icons.grid_on_outlined,
-                hint: _driveTrainCatalogOptions != null
-                    ? 'Select drive train (from catalog)'
-                    : 'Select drive train',
-                otherCtrl: _otherCtrls['driveTrain']!,
-                validator: (v) => v == null ? 'Drive Train is required' : null,
-                onChanged: (v) => setState(() => driveTrainCtrl.text = v ?? ''),
-              ),
-            ],
 
             // Body Type — new admin-configurable field (dropdownConfigService
             // key 'bodyType'). Auto-filled from the vehicle-specs catalog when
@@ -2102,22 +2136,26 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
 
             const SizedBox(height: 12),
 
-            TextFormField(
-              controller: registrationNoCtrl,
-              autovalidateMode: AutovalidateMode.onUserInteraction,
-              inputFormatters: [LengthLimitingTextInputFormatter(20), _upper],
-              decoration: _dec(label: 'Registration Number', hint: 'e.g. ABC123', icon: Icons.confirmation_number_outlined),
-              validator: (v) => _alphaNumValidator(v, fieldName: 'Registration Number', min: 3),
-            ),
-
-            const SizedBox(height: 12),
-
-            TextFormField(
-              controller: emiratesRegAtCtrl,
-              autovalidateMode: AutovalidateMode.onUserInteraction,
-              inputFormatters: [LengthLimitingTextInputFormatter(20), _upper],
-              decoration: _dec(label: 'Emirates Registered At', hint: 'e.g. DUBAI', icon: Icons.location_city_outlined),
-              validator: (v) => _alphaNumValidator(v, fieldName: 'Emirates Registered At', min: 2),
+            // Registration Number + Emirates Registered At: both short,
+            // registration-related fields — pair well side-by-side.
+            ResponsiveRow(
+              spacing: 12,
+              children: [
+                TextFormField(
+                  controller: registrationNoCtrl,
+                  autovalidateMode: AutovalidateMode.onUserInteraction,
+                  inputFormatters: [LengthLimitingTextInputFormatter(20), _upper],
+                  decoration: _dec(label: 'Registration Number', hint: 'e.g. ABC123', icon: Icons.confirmation_number_outlined),
+                  validator: (v) => _alphaNumValidator(v, fieldName: 'Registration Number', min: 3),
+                ),
+                TextFormField(
+                  controller: emiratesRegAtCtrl,
+                  autovalidateMode: AutovalidateMode.onUserInteraction,
+                  inputFormatters: [LengthLimitingTextInputFormatter(20), _upper],
+                  decoration: _dec(label: 'Emirates Registered At', hint: 'e.g. DUBAI', icon: Icons.location_city_outlined),
+                  validator: (v) => _alphaNumValidator(v, fieldName: 'Emirates Registered At', min: 2),
+                ),
+              ],
             ),
 
             const SizedBox(height: 12),
@@ -2248,28 +2286,34 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
         key: _serviceFormKey,
         child: Column(
           children: [
-            _dropField(
-              label: 'Service History',
-              value: serviceHistory,
-              options: _serviceHistoryOptions,
-              icon: Icons.history_outlined,
-              hint: 'Select',
-              validator: (v) => v == null ? 'Service History is required' : null,
-              onChanged: (v) => setState(() => serviceHistory = v),
+            // Service History + Serviced With: Serviced With is admin-
+            // toggleable, so when it's off this row just renders Service
+            // History alone (ResponsiveRow's single-child fallback).
+            ResponsiveRow(
+              spacing: 12,
+              children: [
+                _dropField(
+                  label: 'Service History',
+                  value: serviceHistory,
+                  options: _serviceHistoryOptions,
+                  icon: Icons.history_outlined,
+                  hint: 'Select',
+                  validator: (v) => v == null ? 'Service History is required' : null,
+                  onChanged: (v) => setState(() => serviceHistory = v),
+                ),
+                if (_isActive('servicedWith'))
+                  _dropWithOther(
+                    label: 'Serviced With',
+                    value: servicedWithCtrl.text.isEmpty ? null : servicedWithCtrl.text,
+                    options: _servicedWithOptions,
+                    icon: Icons.build_outlined,
+                    hint: 'Select',
+                    otherCtrl: _otherCtrls['servicedWith']!,
+                    validator: (v) => v == null ? 'Serviced With is required' : null,
+                    onChanged: (v) => setState(() => servicedWithCtrl.text = v ?? ''),
+                  ),
+              ],
             ),
-            if (_isActive('servicedWith')) ...[
-              const SizedBox(height: 12),
-              _dropWithOther(
-                label: 'Serviced With',
-                value: servicedWithCtrl.text.isEmpty ? null : servicedWithCtrl.text,
-                options: _servicedWithOptions,
-                icon: Icons.build_outlined,
-                hint: 'Select',
-                otherCtrl: _otherCtrls['servicedWith']!,
-                validator: (v) => v == null ? 'Serviced With is required' : null,
-                onChanged: (v) => setState(() => servicedWithCtrl.text = v ?? ''),
-              ),
-            ],
             const SizedBox(height: 12),
             TextFormField(
               controller: lastServiceDateCtrl,
@@ -2280,23 +2324,28 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
               validator: (v) => _req(v, msg: 'Last Service Date is required'),
             ),
             const SizedBox(height: 12),
-            _dropField(
-              label: 'Warranty Available',
-              value: warrantyAvailable,
-              options: _warrantyAvailableOptions,
-              icon: Icons.verified_outlined,
-              hint: 'Select',
-              validator: (v) => v == null ? 'Warranty Available is required' : null,
-              onChanged: (v) => setState(() => warrantyAvailable = v),
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: warrantyEndsInCtrl,
-              autovalidateMode: AutovalidateMode.onUserInteraction,
-              readOnly: true,
-              onTap: _pickWarrantyEndsMonthYear,
-              decoration: _dec(label: 'Warranty Ends In (Month/Year)', hint: 'Select month', icon: Icons.event_outlined),
-              validator: (v) => _req(v, msg: 'Warranty Ends In is required'),
+            // Warranty Available + Warranty Ends In: directly related fields.
+            ResponsiveRow(
+              spacing: 12,
+              children: [
+                _dropField(
+                  label: 'Warranty Available',
+                  value: warrantyAvailable,
+                  options: _warrantyAvailableOptions,
+                  icon: Icons.verified_outlined,
+                  hint: 'Select',
+                  validator: (v) => v == null ? 'Warranty Available is required' : null,
+                  onChanged: (v) => setState(() => warrantyAvailable = v),
+                ),
+                TextFormField(
+                  controller: warrantyEndsInCtrl,
+                  autovalidateMode: AutovalidateMode.onUserInteraction,
+                  readOnly: true,
+                  onTap: _pickWarrantyEndsMonthYear,
+                  decoration: _dec(label: 'Warranty Ends In (Month/Year)', hint: 'Select month', icon: Icons.event_outlined),
+                  validator: (v) => _req(v, msg: 'Warranty Ends In is required'),
+                ),
+              ],
             ),
             const SizedBox(height: 12),
             _dropField(
@@ -2323,58 +2372,71 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
         key: _interiorFormKey,
         child: Column(
           children: [
-            if (_isActive('seats')) ...[
-              _dropWithOther(
-                label: 'Seats',
-                value: seatsCtrl.text.isEmpty ? null : seatsCtrl.text,
-                options: _seatsOptions,
-                icon: Icons.event_seat_outlined,
-                hint: 'Select seats',
-                otherCtrl: _otherCtrls['seats']!,
-                validator: (v) => v == null ? 'Seats is required' : null,
-                onChanged: (v) => setState(() => seatsCtrl.text = v ?? ''),
+            // Seats + Interior Color: adjacent fields, each independently
+            // admin-toggleable — the row falls back to a single full-width
+            // field (or disappears entirely) exactly as the old stacked
+            // blocks did when one/both are inactive.
+            if (_isActive('seats') || _isActive('interiorColor'))
+              ResponsiveRow(
+                spacing: 12,
+                children: [
+                  if (_isActive('seats'))
+                    _dropWithOther(
+                      label: 'Seats',
+                      value: seatsCtrl.text.isEmpty ? null : seatsCtrl.text,
+                      options: _seatsOptions,
+                      icon: Icons.event_seat_outlined,
+                      hint: 'Select seats',
+                      otherCtrl: _otherCtrls['seats']!,
+                      validator: (v) => v == null ? 'Seats is required' : null,
+                      onChanged: (v) => setState(() => seatsCtrl.text = v ?? ''),
+                    ),
+                  if (_isActive('interiorColor'))
+                    _dropWithOther(
+                      label: 'Interior Color',
+                      value: interiorColorCtrl.text.isEmpty ? null : interiorColorCtrl.text,
+                      options: _interiorColorOptions,
+                      icon: Icons.palette_outlined,
+                      hint: 'Select color',
+                      otherCtrl: _otherCtrls['interiorColor']!,
+                      validator: (v) => v == null ? 'Interior Color is required' : null,
+                      onChanged: (v) => setState(() => interiorColorCtrl.text = v ?? ''),
+                    ),
+                ],
               ),
-              const SizedBox(height: 12),
-            ],
-            if (_isActive('interiorColor')) ...[
-              _dropWithOther(
-                label: 'Interior Color',
-                value: interiorColorCtrl.text.isEmpty ? null : interiorColorCtrl.text,
-                options: _interiorColorOptions,
-                icon: Icons.palette_outlined,
-                hint: 'Select color',
-                otherCtrl: _otherCtrls['interiorColor']!,
-                validator: (v) => v == null ? 'Interior Color is required' : null,
-                onChanged: (v) => setState(() => interiorColorCtrl.text = v ?? ''),
+            if (_isActive('seats') || _isActive('interiorColor')) const SizedBox(height: 12),
+
+            // Upholstery + Number of Keys: same reasoning as the pair above.
+            if (_isActive('upholstery') || _isActive('numberOfKeys'))
+              ResponsiveRow(
+                spacing: 12,
+                children: [
+                  if (_isActive('upholstery'))
+                    _dropWithOther(
+                      label: 'Upholstery',
+                      value: upholsteryCtrl.text.isEmpty ? null : upholsteryCtrl.text,
+                      options: _upholsteryOptions,
+                      icon: Icons.texture_outlined,
+                      hint: 'Select upholstery',
+                      otherCtrl: _otherCtrls['upholstery']!,
+                      validator: (v) => v == null ? 'Upholstery is required' : null,
+                      onChanged: (v) => setState(() => upholsteryCtrl.text = v ?? ''),
+                    ),
+                  if (_isActive('numberOfKeys'))
+                    _dropWithOther(
+                      label: 'Number of Keys',
+                      value: numberOfKeysCtrl.text.isEmpty ? null : numberOfKeysCtrl.text,
+                      options: _numberOfKeysOptions,
+                      icon: Icons.key_outlined,
+                      hint: 'Select keys count',
+                      otherCtrl: _otherCtrls['numberOfKeys']!,
+                      validator: (v) => v == null ? 'Number of Keys is required' : null,
+                      onChanged: (v) => setState(() => numberOfKeysCtrl.text = v ?? ''),
+                    ),
+                ],
               ),
-              const SizedBox(height: 12),
-            ],
-            if (_isActive('upholstery')) ...[
-              _dropWithOther(
-                label: 'Upholstery',
-                value: upholsteryCtrl.text.isEmpty ? null : upholsteryCtrl.text,
-                options: _upholsteryOptions,
-                icon: Icons.texture_outlined,
-                hint: 'Select upholstery',
-                otherCtrl: _otherCtrls['upholstery']!,
-                validator: (v) => v == null ? 'Upholstery is required' : null,
-                onChanged: (v) => setState(() => upholsteryCtrl.text = v ?? ''),
-              ),
-              const SizedBox(height: 12),
-            ],
-            if (_isActive('numberOfKeys')) ...[
-              _dropWithOther(
-                label: 'Number of Keys',
-                value: numberOfKeysCtrl.text.isEmpty ? null : numberOfKeysCtrl.text,
-                options: _numberOfKeysOptions,
-                icon: Icons.key_outlined,
-                hint: 'Select keys count',
-                otherCtrl: _otherCtrls['numberOfKeys']!,
-                validator: (v) => v == null ? 'Number of Keys is required' : null,
-                onChanged: (v) => setState(() => numberOfKeysCtrl.text = v ?? ''),
-              ),
-              const SizedBox(height: 12),
-            ],
+            if (_isActive('upholstery') || _isActive('numberOfKeys')) const SizedBox(height: 12),
+
             const SizedBox(height: 12),
             _dropField(
               label: 'Modification Done',
@@ -2400,32 +2462,38 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
         key: _exteriorFormKey,
         child: Column(
           children: [
-            if (_isActive('exteriorColor')) ...[
-              _dropWithOther(
-                label: 'Exterior Color',
-                value: exteriorColorCtrl.text.isEmpty ? null : exteriorColorCtrl.text,
-                options: _exteriorColorOptions,
-                icon: Icons.palette_outlined,
-                hint: 'Select color',
-                otherCtrl: _otherCtrls['exteriorColor']!,
-                validator: (v) => v == null ? 'Exterior Color is required' : null,
-                onChanged: (v) => setState(() => exteriorColorCtrl.text = v ?? ''),
+            // Exterior Color + Doors: adjacent fields, each independently
+            // admin-toggleable — falls back to a single field when only one
+            // is active, exactly like the interior pairs above.
+            if (_isActive('exteriorColor') || _isActive('doors'))
+              ResponsiveRow(
+                spacing: 12,
+                children: [
+                  if (_isActive('exteriorColor'))
+                    _dropWithOther(
+                      label: 'Exterior Color',
+                      value: exteriorColorCtrl.text.isEmpty ? null : exteriorColorCtrl.text,
+                      options: _exteriorColorOptions,
+                      icon: Icons.palette_outlined,
+                      hint: 'Select color',
+                      otherCtrl: _otherCtrls['exteriorColor']!,
+                      validator: (v) => v == null ? 'Exterior Color is required' : null,
+                      onChanged: (v) => setState(() => exteriorColorCtrl.text = v ?? ''),
+                    ),
+                  if (_isActive('doors'))
+                    _dropWithOther(
+                      label: 'Doors',
+                      value: doorsCtrl.text.isEmpty ? null : doorsCtrl.text,
+                      options: _doorsOptions,
+                      icon: Icons.door_front_door_outlined,
+                      hint: 'Select doors',
+                      otherCtrl: _otherCtrls['doors']!,
+                      validator: (v) => v == null ? 'Doors is required' : null,
+                      onChanged: (v) => setState(() => doorsCtrl.text = v ?? ''),
+                    ),
+                ],
               ),
-              const SizedBox(height: 12),
-            ],
-            if (_isActive('doors')) ...[
-              _dropWithOther(
-                label: 'Doors',
-                value: doorsCtrl.text.isEmpty ? null : doorsCtrl.text,
-                options: _doorsOptions,
-                icon: Icons.door_front_door_outlined,
-                hint: 'Select doors',
-                otherCtrl: _otherCtrls['doors']!,
-                validator: (v) => v == null ? 'Doors is required' : null,
-                onChanged: (v) => setState(() => doorsCtrl.text = v ?? ''),
-              ),
-              const SizedBox(height: 12),
-            ],
+            if (_isActive('exteriorColor') || _isActive('doors')) const SizedBox(height: 12),
             if (_isActive('wheelSize')) ...[
               _dropField(
                 label: 'Wheel Size',
@@ -2678,7 +2746,17 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
       title: 'Start Inspection',
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1100),
+          // Wider than the shared Responsive.contentMaxWidth default (960 on
+          // desktop) — this wizard now lays out several fields two-per-row,
+          // so it benefits from more breathing room than a plain form.
+          constraints: BoxConstraints(
+            maxWidth: Responsive.value<double>(
+              context,
+              mobile: double.infinity,
+              tablet: 900,
+              desktop: 1200,
+            ),
+          ),
           child: FutureBuilder<List<ChecklistTemplate>>(
             future: _future,
             builder: (context, snap) {
@@ -2714,7 +2792,14 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
 
               return ListView(
                 controller: _scrollCtrl,
-                padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
+                // Mobile keeps the exact original padding; tablet/desktop get
+                // slightly more breathing room, per Responsive conventions.
+                padding: Responsive.value<EdgeInsets>(
+                  context,
+                  mobile: const EdgeInsets.fromLTRB(18, 18, 18, 28),
+                  tablet: const EdgeInsets.fromLTRB(24, 20, 24, 32),
+                  desktop: const EdgeInsets.fromLTRB(32, 24, 32, 36),
+                ),
                 children: [
                   Row(
                     children: [

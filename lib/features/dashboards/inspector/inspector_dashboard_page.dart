@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../shared/app_shell.dart';
 import '../../shared/widgets/pagination_bar.dart';
+import '../../shared/utils/responsive.dart';
 import '../../../services/service_locator.dart';
 
 class InspectorDashboardPage extends StatefulWidget {
@@ -183,7 +184,7 @@ class _InspectorDashboardPageState extends State<InspectorDashboardPage> {
     context.push('/dashboard/inspector/requests/$id');
   }
 
-  Widget _buildJobCard(Map<String, dynamic> r, bool isMobile, bool isVeryNarrow) {
+  Widget _buildJobCard(Map<String, dynamic> r, bool isMobile, bool isTablet, bool isVeryNarrow) {
     final status = _statusOf(r);
     final isCompleted = _isCompletedStatus(status);
     final rejected = _isRejected(r);
@@ -218,7 +219,9 @@ class _InspectorDashboardPageState extends State<InspectorDashboardPage> {
       padding: const EdgeInsets.only(bottom: 12),
       child: Card(
         child: Padding(
-          padding: const EdgeInsets.all(14),
+          // Tablet gets a bit more interior breathing room than a phone,
+          // since the card is stretched wider but not split into columns.
+          padding: EdgeInsets.all(isTablet ? 18 : 14),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -299,9 +302,11 @@ class _InspectorDashboardPageState extends State<InspectorDashboardPage> {
 
   @override
   Widget build(BuildContext context) {
-    final screenW = MediaQuery.sizeOf(context).width;
-    final isMobile = screenW < 700;
-    final isVeryNarrow = screenW < 380;
+    final isMobile = Responsive.isMobile(context);
+    final isTablet = Responsive.isTablet(context);
+    // Sub-mobile tier not covered by Responsive (only phones this narrow
+    // need the extra-compact button treatment) — kept as a raw check.
+    final isVeryNarrow = MediaQuery.sizeOf(context).width < 380;
 
     return AppShell(
       title: 'Inspector Dashboard',
@@ -312,7 +317,12 @@ class _InspectorDashboardPageState extends State<InspectorDashboardPage> {
             children: [
               ListView(
                 controller: _scrollCtrl,
-                padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
+                // Job cards carry a fair bit of info per row (title, address,
+                // schedule, status, action) — at tablet width that's still
+                // more comfortable as a single wide column than squeezed into
+                // a 2-up grid, so we keep the list but give it more breathing
+                // room via the shared tablet/desktop padding scale.
+                padding: Responsive.pagePadding(context).copyWith(bottom: 28),
                 children: [
                   Row(
                     children: [
@@ -355,7 +365,7 @@ class _InspectorDashboardPageState extends State<InspectorDashboardPage> {
                       ),
                     ),
                   ] else ...[
-                    ..._jobs.map((r) => _buildJobCard(r, isMobile, isVeryNarrow)),
+                    ..._jobs.map((r) => _buildJobCard(r, isMobile, isTablet, isVeryNarrow)),
                     if (_totalPages > 1) ...[
                       const SizedBox(height: 8),
                       PaginationBar(

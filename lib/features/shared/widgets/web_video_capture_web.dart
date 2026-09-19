@@ -3,6 +3,7 @@
 import 'dart:html' as html;
 
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui_web' as ui;
 
@@ -524,6 +525,18 @@ class _WebVideoRecorderDialogState extends State<_WebVideoRecorderDialog> {
                 ),
               ),
 
+              // Composition guide (live preview only). Video isn't cropped
+              // to a fixed aspect ratio the way photo capture is — the
+              // MediaRecorder records the raw camera stream as-is — so this
+              // is just a rule-of-thirds grid + corner brackets, with no
+              // dimmed crop mask (there's no crop boundary to indicate).
+              if (_ready && !isReview)
+                const Positioned.fill(
+                  child: IgnorePointer(
+                    child: CustomPaint(painter: _VideoGuidePainter()),
+                  ),
+                ),
+
               // Top bar
               Positioned(
                 top: 0,
@@ -680,4 +693,65 @@ class _WebVideoRecorderDialogState extends State<_WebVideoRecorderDialog> {
       ),
     );
   }
+}
+
+/// Composition guide for the live/recording video preview: a subtle
+/// rule-of-thirds grid plus corner brackets spanning the full preview box.
+///
+/// Unlike photo capture (`_captureVisibleFrame` in web_camera_capture_web.dart),
+/// video recording has no separate crop step — `html.MediaRecorder` records
+/// the raw camera `MediaStream` directly, at whatever aspect ratio the
+/// camera provides — so there is no crop boundary to indicate and no dimmed
+/// mask is drawn here.
+class _VideoGuidePainter extends CustomPainter {
+  const _VideoGuidePainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+    if (w <= 0 || h <= 0) return;
+
+    // Rule-of-thirds grid.
+    final gridPaint = Paint()
+      ..color = Colors.white.withOpacity(0.3)
+      ..strokeWidth = 1.0;
+    final thirdW = w / 3;
+    final thirdH = h / 3;
+    for (var i = 1; i <= 2; i++) {
+      final x = thirdW * i;
+      canvas.drawLine(Offset(x, 0), Offset(x, h), gridPaint);
+      final y = thirdH * i;
+      canvas.drawLine(Offset(0, y), Offset(w, y), gridPaint);
+    }
+
+    // Corner brackets, inset slightly so they don't sit flush on the
+    // screen edge / under the system status bar.
+    final inset = math.min(16.0, math.min(w, h) / 8);
+    final bracketRect = Rect.fromLTWH(
+      inset,
+      inset,
+      w - inset * 2,
+      h - inset * 2,
+    );
+    final len = math.min(24.0, math.min(bracketRect.width, bracketRect.height) / 4);
+    if (len > 0) {
+      final bracketPaint = Paint()
+        ..color = Colors.white.withOpacity(0.85)
+        ..strokeWidth = 2.4
+        ..strokeCap = StrokeCap.round;
+
+      canvas.drawLine(bracketRect.topLeft, bracketRect.topLeft + Offset(len, 0), bracketPaint);
+      canvas.drawLine(bracketRect.topLeft, bracketRect.topLeft + Offset(0, len), bracketPaint);
+      canvas.drawLine(bracketRect.topRight, bracketRect.topRight + Offset(-len, 0), bracketPaint);
+      canvas.drawLine(bracketRect.topRight, bracketRect.topRight + Offset(0, len), bracketPaint);
+      canvas.drawLine(bracketRect.bottomLeft, bracketRect.bottomLeft + Offset(len, 0), bracketPaint);
+      canvas.drawLine(bracketRect.bottomLeft, bracketRect.bottomLeft + Offset(0, -len), bracketPaint);
+      canvas.drawLine(bracketRect.bottomRight, bracketRect.bottomRight + Offset(-len, 0), bracketPaint);
+      canvas.drawLine(bracketRect.bottomRight, bracketRect.bottomRight + Offset(0, -len), bracketPaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _VideoGuidePainter oldDelegate) => false;
 }

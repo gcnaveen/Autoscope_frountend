@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../shared/app_shell.dart';
 import '../../../shared/widgets/pagination_bar.dart';
+import '../../../shared/utils/responsive.dart';
 import '../../../../models/app_user.dart';
 import '../../../../services/service_locator.dart';
 import '../../../shared/top_snackbar.dart';
@@ -86,8 +87,12 @@ class _UsersPageState extends State<UsersPage> {
 
   @override
   Widget build(BuildContext context) {
-    final w = MediaQuery.sizeOf(context).width;
-    final isMobile = w < 720;
+    // Tablets get the same wide, inline row card as desktop (name/email/
+    // phone/status/action all in one line) — that row layout has room to
+    // breathe well before the old 720px cutoff, so tying it to the shared
+    // "compact" boundary (600) gives tablets the denser, more scannable
+    // treatment instead of degrading to stacked phone cards.
+    final isMobile = Responsive.isMobile(context);
 
     return AppShell(
       title: 'Users',
@@ -211,8 +216,7 @@ class _UserCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final w = MediaQuery.sizeOf(context).width;
-    final isMobile = w < 720;
+    final isMobile = Responsive.isMobile(context);
 
     final email = user.email.isEmpty ? '—' : user.email;
     final name = user.fullName;

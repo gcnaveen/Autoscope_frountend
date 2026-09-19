@@ -498,6 +498,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../shared/app_shell.dart';
+import '../../shared/utils/responsive.dart';
 import '../../../models/admin_dashboard_data.dart';
 import '../../../services/service_locator.dart';
 import '../../../services/admin_dashboard_service.dart';
@@ -529,9 +530,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   @override
   Widget build(BuildContext context) {
-    final w = MediaQuery.sizeOf(context).width;
-    final isMobile = w < 720;
-    final isTablet = w >= 720 && w < 1080;
+    final isMobile = Responsive.isMobile(context);
+    final isTablet = Responsive.isTablet(context);
 
     return AppShell(
       title: 'Admin Dashboard',
@@ -592,7 +592,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   const SizedBox(height: 18),
 
                   GridView.count(
-                    crossAxisCount: isMobile ? 1 : isTablet ? 2 : 3,
+                    // 1/2/3 columns for mobile/tablet/desktop — matches
+                    // Responsive.gridColumns exactly, so use it directly.
+                    crossAxisCount: Responsive.gridColumns(context),
                     mainAxisSpacing: 10,
                     crossAxisSpacing: 10,
                     shrinkWrap: true,

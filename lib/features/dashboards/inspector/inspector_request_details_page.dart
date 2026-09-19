@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../shared/app_shell.dart';
+import '../../shared/utils/responsive.dart';
 import '../../../services/service_locator.dart';
 
 class InspectorRequestDetailsPage extends StatefulWidget {
@@ -78,9 +79,10 @@ class _InspectorRequestDetailsPageState extends State<InspectorRequestDetailsPag
 
   @override
   Widget build(BuildContext context) {
-    final screenW = MediaQuery.sizeOf(context).width;
-    final isMobile = screenW < 720;
-    final isVeryNarrow = screenW < 420;
+    final isMobile = Responsive.isMobile(context);
+    // Sub-mobile tier not covered by Responsive — kept as a raw check, only
+    // used to further compact the bottom action buttons on very small phones.
+    final isVeryNarrow = MediaQuery.sizeOf(context).width < 420;
 
     return AppShell(
       title: 'Request Details',
@@ -266,9 +268,21 @@ class _InspectorRequestDetailsPageState extends State<InspectorRequestDetailsPag
                   ],
 
                   // Sections (re-ordered for desktop)
+                  //
+                  // This used its own maxWidth>=900 check, separate from the
+                  // page's isMobile — consolidated onto the shared breakpoint
+                  // scale below. The 2-column card row needs real width (each
+                  // card has a fixed 140px label column plus value text), so
+                  // it isn't turned on for the whole tablet range: portrait
+                  // tablets (the "medium" tier, 600-839) still get the mobile
+                  // stacked order, while landscape tablets/small laptops
+                  // ("expanded", 840-1199, which is where the old >=900
+                  // threshold mostly lived) and desktop get the 2-column
+                  // treatment.
                   LayoutBuilder(
                     builder: (context, c) {
-                      final wide = c.maxWidth >= 900;
+                      final size = Responsive.screenSizeForWidth(c.maxWidth);
+                      final wide = size != ScreenSize.compact && size != ScreenSize.medium;
                       if (!wide) {
                         // Mobile order stays one by one (existing order)
                         return Column(
@@ -385,8 +399,7 @@ class _InspectorRequestDetailsPageState extends State<InspectorRequestDetailsPag
   }
 
   static Widget _kv(BuildContext context, String k, String v) {
-    final w = MediaQuery.sizeOf(context).width;
-    final isMobile = w < 720;
+    final isMobile = Responsive.isMobile(context);
 
     if (!isMobile) {
       return Padding(
