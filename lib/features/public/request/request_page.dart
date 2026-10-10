@@ -1435,6 +1435,19 @@ Terms & Conditions
         if (name.isNotEmpty) _makeIdByName[name] = id;
       }
 
+      // Merge in every make from the vehicle-specs catalog too (comprehensive
+      // list seeded via admin CSV import) so it isn't limited to whatever has
+      // been manually added through /admin/makes. putIfAbsent keeps the real
+      // makeId from /admin/makes when a make exists in both places.
+      try {
+        final catalogMakes = await inspectionRequestsService.listCatalogMakes();
+        for (final name in catalogMakes) {
+          _makeIdByName.putIfAbsent(name, () => '');
+        }
+      } catch (_) {
+        // Catalog merge is best-effort; /admin/makes list still works alone.
+      }
+
       final names = _makeIdByName.keys.toList()
         ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
 
@@ -1452,7 +1465,11 @@ Terms & Conditions
     }
   }
 
-  Future<void> _loadModelsForMakeId(String makeId) async {
+  /// Loads models for [makeName], merging /admin/makes (when [makeId] is
+  /// known) with the vehicle-specs catalog, so a make that only exists in
+  /// the catalog (no /admin/makes entry yet) still offers its real models
+  /// instead of forcing the user into "OTHER".
+  Future<void> _loadModelsForMake(String makeName, String makeId) async {
     setState(() {
       loadingModels = true;
       models = [];
@@ -1462,25 +1479,33 @@ Terms & Conditions
       modelCtrl.text = '';
     });
 
+    final uniqueModels = <String>{};
     try {
-      final list = await inspectionRequestsService.listVehicleModels(makeId);
-
-      if (!mounted) return;
-      setState(() {
-        models = [...list.map((e) => e.toString().trim().toUpperCase()), 'OTHER'];
-        if (models.isEmpty) models = const ['OTHER'];
-      });
+      if (makeId.trim().isNotEmpty) {
+        final list = await inspectionRequestsService.listVehicleModels(makeId);
+        uniqueModels.addAll(list.map((e) => e.toString().trim().toUpperCase()));
+      }
     } catch (e) {
-      if (!mounted) return;
-      showTopSnack(context, 'Failed to load models (API): $e', variant: 'error');
-      setState(() {
-        models = const ['OTHER'];
-        selectedModel = 'OTHER';
-        _modelIsOther = true;
-      });
-    } finally {
-      if (mounted) setState(() => loadingModels = false);
+      if (mounted) {
+        showTopSnack(context, 'Failed to load models (API): $e', variant: 'error');
+      }
     }
+
+    try {
+      final catalogModels =
+          await inspectionRequestsService.listCatalogModelsForMake(makeName);
+      uniqueModels.addAll(catalogModels);
+    } catch (_) {
+      // Catalog merge is best-effort.
+    }
+
+    if (!mounted) return;
+    final sorted = uniqueModels.toList()..sort((a, b) => a.compareTo(b));
+    setState(() {
+      models = [...sorted, 'OTHER'];
+      if (models.isEmpty) models = const ['OTHER'];
+      loadingModels = false;
+    });
   }
 
   Future<void> _loadEmirates() async {
@@ -2047,18 +2072,8 @@ Terms & Conditions
                                                   models = [];
                                                 });
 
-                                                if (mkId.isNotEmpty) {
-                                                  await _loadModelsForMakeId(mkId);
-                                                } else {
-                                                  showTopSnack(context,
-                                                      'makeId missing for selected make',
-                                                      variant: 'error');
-                                                  setState(() {
-                                                    models = const ['OTHER'];
-                                                    selectedModel = 'OTHER';
-                                                    _modelIsOther = true;
-                                                  });
-                                                }
+                                                await _loadModelsForMake(
+                                                    mkName, mkId);
                                               },
                                         decoration: _dec(
                                           label: 'Make',

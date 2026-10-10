@@ -1055,6 +1055,19 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
         if (name.isNotEmpty) _makeIdByName[name] = id;
       }
 
+      // Merge in every make from the vehicle-specs catalog too (comprehensive
+      // list seeded via admin CSV import) so it isn't limited to whatever has
+      // been manually added through /admin/makes. putIfAbsent keeps the real
+      // makeId from /admin/makes when a make exists in both places.
+      try {
+        final catalogMakes = await inspectionRequestsService.listCatalogMakes();
+        for (final name in catalogMakes) {
+          _makeIdByName.putIfAbsent(name, () => '');
+        }
+      } catch (_) {
+        // Catalog merge is best-effort; /admin/makes list still works alone.
+      }
+
       final names = _makeIdByName.keys.toList()
         ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
 
@@ -1072,7 +1085,11 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
     }
   }
 
-  Future<void> _loadModelsForMakeId(String makeId) async {
+  /// Loads models for [makeName], merging /admin/makes (when [makeId] is
+  /// known) with the vehicle-specs catalog, so a make that only exists in
+  /// the catalog (no /admin/makes entry yet) still offers its real models
+  /// instead of forcing the inspector into "OTHER".
+  Future<void> _loadModelsForMake(String makeName, String makeId) async {
     setState(() {
       loadingModels = true;
       models = [];
@@ -1085,27 +1102,31 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
       _driveTrainCatalogOptions = null;
     });
 
+    final uniqueModels = <String>{};
     try {
-      final list = await inspectionRequestsService.listVehicleModels(makeId);
-
-      if (!mounted) return;
-      final uniqueModels = list.map((e) => e.toString().trim().toUpperCase()).toSet().toList()
-        ..sort((a, b) => a.compareTo(b));
-      setState(() {
-        models = [...uniqueModels, 'OTHER'];
-        if (models.isEmpty) models = const ['OTHER'];
-      });
+      if (makeId.trim().isNotEmpty) {
+        final list = await inspectionRequestsService.listVehicleModels(makeId);
+        uniqueModels.addAll(list.map((e) => e.toString().trim().toUpperCase()));
+      }
     } catch (e) {
-      if (!mounted) return;
-      _snack('Failed to load models: $e', 'error');
-      setState(() {
-        models = const ['OTHER'];
-        selectedModel = 'OTHER';
-        _modelIsOther = true;
-      });
-    } finally {
-      if (mounted) setState(() => loadingModels = false);
+      if (mounted) _snack('Failed to load models: $e', 'error');
     }
+
+    try {
+      final catalogModels =
+          await inspectionRequestsService.listCatalogModelsForMake(makeName);
+      uniqueModels.addAll(catalogModels);
+    } catch (_) {
+      // Catalog merge is best-effort.
+    }
+
+    if (!mounted) return;
+    final sorted = uniqueModels.toList()..sort((a, b) => a.compareTo(b));
+    setState(() {
+      models = [...sorted, 'OTHER'];
+      if (models.isEmpty) models = const ['OTHER'];
+      loadingModels = false;
+    });
   }
 
   // ============================
@@ -1261,15 +1282,17 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
       await _loadMakes();
     }
 
-    final mkId = _makeIdByName[make];
-
-    if (mkId != null && mkId.trim().isNotEmpty) {
+    // A make recognized from either /admin/makes or the vehicle-specs
+    // catalog counts as "known" even when it only has a catalog entry
+    // (mkId == '') — only an unrecognized make falls back to "OTHER".
+    if (_makeIdByName.containsKey(make)) {
+      final mkId = _makeIdByName[make] ?? '';
       selectedMake = make;
-      selectedMakeId = mkId;
+      selectedMakeId = mkId.isEmpty ? null : mkId;
       _makeIsOther = false;
       otherMakeCtrl.text = '';
 
-      await _loadModelsForMakeId(mkId);
+      await _loadModelsForMake(make, mkId);
 
       if (model.isNotEmpty && models.contains(model)) {
         selectedModel = model;
@@ -1830,16 +1853,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
                         models = [];
                       });
 
-                      if (mkId.isNotEmpty) {
-                        await _loadModelsForMakeId(mkId);
-                      } else {
-                        _snack('makeId missing for selected make', 'error');
-                        setState(() {
-                          models = const ['OTHER'];
-                          selectedModel = 'OTHER';
-                          _modelIsOther = true;
-                        });
-                      }
+                      await _loadModelsForMake(mkName, mkId);
                     },
               decoration: _dec(
                 label: 'Make',

@@ -402,9 +402,8 @@ class InspectionRequestsService {
   }
 
   /// ✅ GET vehicle-spec catalog rows for a make/model (variant → engine → specs).
-  /// This endpoint does not exist on the backend yet — any failure (404, network
-  /// error, malformed shape, etc.) is swallowed and an empty list is returned so
-  /// the Start Inspection wizard keeps working exactly as it does today.
+  /// Any failure (network error, malformed shape, etc.) is swallowed and an
+  /// empty list is returned so the Start Inspection wizard keeps working.
   Future<List<Map<String, dynamic>>> getVehicleSpecs({
     required String make,
     required String model,
@@ -419,6 +418,79 @@ class InspectionRequestsService {
     } catch (_) {
       return [];
     }
+  }
+
+  /// Full vehicle-specs catalog, paginated through until exhausted and cached
+  /// for the lifetime of this service instance. The Make/Model dropdowns on
+  /// the public request form and the inspector wizard are backed by the much
+  /// smaller, separately-curated /admin/makes list — this catalog (seeded via
+  /// the admin "Vehicle Specs" CSV bulk import) is the comprehensive source,
+  /// so it's merged in alongside /admin/makes rather than replacing it (any
+  /// make/model manually added through the "OTHER" + approval flow still
+  /// shows up too).
+  List<Map<String, dynamic>>? _specsCatalogCache;
+
+  Future<List<Map<String, dynamic>>> _loadFullSpecsCatalog() async {
+    if (_specsCatalogCache != null) return _specsCatalogCache!;
+
+    final out = <Map<String, dynamic>>[];
+    try {
+      const limit = 100;
+      int page = 1;
+      int totalPages = 1;
+
+      do {
+        final res = await apiClient
+            .getJson('/admin/vehicle-specs?page=$page&limit=$limit');
+        final data = (res is Map) ? res['data'] : null;
+        final items = (data is Map) ? data['items'] : null;
+        if (items is List) {
+          out.addAll(
+              items.whereType<Map>().map((e) => Map<String, dynamic>.from(e)));
+        }
+
+        final pag = (data is Map) ? data['pagination'] : null;
+        totalPages = (pag is Map)
+            ? (int.tryParse('${pag['totalPages'] ?? 1}') ?? 1).clamp(1, 1000)
+            : 1;
+        page++;
+      } while (page <= totalPages);
+    } catch (_) {
+      // Keep whatever was collected before the failure; callers treat an
+      // empty/partial catalog as "fall back to /admin/makes only".
+    }
+
+    _specsCatalogCache = out;
+    return out;
+  }
+
+  /// Unique, sorted Make names from the vehicle-specs catalog.
+  Future<List<String>> listCatalogMakes() async {
+    final rows = await _loadFullSpecsCatalog();
+    final set = <String>{};
+    for (final r in rows) {
+      final m = (r['make'] ?? '').toString().trim().toUpperCase();
+      if (m.isNotEmpty) set.add(m);
+    }
+    final list = set.toList()..sort();
+    return list;
+  }
+
+  /// Unique, sorted Model names for [make] from the vehicle-specs catalog.
+  Future<List<String>> listCatalogModelsForMake(String make) async {
+    final target = make.trim().toUpperCase();
+    if (target.isEmpty) return [];
+
+    final rows = await _loadFullSpecsCatalog();
+    final set = <String>{};
+    for (final r in rows) {
+      final m = (r['make'] ?? '').toString().trim().toUpperCase();
+      if (m != target) continue;
+      final model = (r['model'] ?? '').toString().trim().toUpperCase();
+      if (model.isNotEmpty) set.add(model);
+    }
+    final list = set.toList()..sort();
+    return list;
   }
 
   /// ✅ POST add make
