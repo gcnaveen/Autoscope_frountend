@@ -249,25 +249,32 @@ class _UserRequestDetailsPageState extends State<UserRequestDetailsPage> {
               return ListView(
                 padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
                 children: [
-                  Row(
+                  // Wrap: on phones the action buttons drop below the title
+                  // instead of squeezing it to nothing.
+                  Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 8,
+                    runSpacing: 8,
                     children: [
-                      Expanded(
-                        child: Text(
-                          'Request: $requestId',
-                          style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
-                        ),
+                      Text(
+                        'Request: $requestId',
+                        style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
                       ),
+                      Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
                       IconButton(
                         tooltip: 'Refresh',
                         onPressed: _reload,
                         icon: const Icon(Icons.refresh),
                       ),
-                      const SizedBox(width: 8),
                       FilledButton.tonal(
                         onPressed: _saving ? null : _toggleEdit,
                         child: Text(_editing ? 'Cancel' : 'Edit'),
                       ),
-                      const SizedBox(width: 10),
                       if (_editing)
                         FilledButton.icon(
                           onPressed: _saving ? null : _save,
@@ -280,6 +287,8 @@ class _UserRequestDetailsPageState extends State<UserRequestDetailsPage> {
                               : const Icon(Icons.save),
                           label: Text(_saving ? 'Saving…' : 'Save Changes'),
                         ),
+                    ],
+                      ),
                     ],
                   ),
                   const SizedBox(height: 10),

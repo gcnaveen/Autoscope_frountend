@@ -723,7 +723,8 @@ class _HeaderCard extends StatelessWidget {
               child: const Icon(Icons.admin_panel_settings_outlined, color: Color(0xFF1E5EFF), size: 24),
             ),
             const SizedBox(width: 14),
-            Column(
+            Expanded(
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
@@ -741,6 +742,7 @@ class _HeaderCard extends StatelessWidget {
                   style: const TextStyle(fontSize: 13, color: Colors.black45),
                 ),
               ],
+            ),
             ),
           ],
         ),
@@ -789,11 +791,22 @@ class _KpiActionCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(kpiTitle, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
+                    // Grid cells have a fixed aspect ratio, so cap line counts
+                    // to keep narrow cells from overflowing vertically.
+                    Text(kpiTitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
                     const SizedBox(height: 2),
-                    Text(kpiValue, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+                    Text(kpiValue,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
                     const SizedBox(height: 1),
-                    Text(kpiSubtitle, style: const TextStyle(color: Colors.black54, fontSize: 11)),
+                    Text(kpiSubtitle,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: Colors.black54, fontSize: 11)),
                   ],
                 ),
               ),

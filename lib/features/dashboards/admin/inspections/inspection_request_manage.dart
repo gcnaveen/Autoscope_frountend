@@ -519,6 +519,7 @@ class _InspectionRequestManageDialogState extends State<InspectionRequestManageD
                           }
 
                           return DropdownButtonFormField<AppUser>(
+                            isExpanded: true,
                             value: _selected,
                             autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
                             items: list
@@ -780,6 +781,7 @@ class MakeModelPickerState extends State<MakeModelPicker> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         DropdownButtonFormField<String>(
+          isExpanded: true,
           value: _makeId,
           autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
           items: makeItems,
@@ -825,6 +827,7 @@ class MakeModelPickerState extends State<MakeModelPicker> {
           const LinearProgressIndicator()
         else
           DropdownButtonFormField<String>(
+            isExpanded: true,
             value: _modelId,
             autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
             items: modelItems,

@@ -105,7 +105,48 @@ class _InspectorDashboardPageState extends State<InspectorDashboardPage> {
         '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
   }
 
+  /// Customer preferred slot (what the admin sees as "Preferred"), falling
+  /// back to the generic scheduled/created timestamp.
+  String _formatPreferred(Map<String, dynamic> r) {
+    final dt = DateTime.tryParse(_s(r['preferredDate']));
+    if (dt == null) return '';
+    final local = dt.toLocal();
+    final date = '${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}';
+    final time = _s(r['preferredTime']).trim();
+    return time.isEmpty ? date : '$date $time';
+  }
+
+  /// Human-readable request number (e.g. VIR-2026-10-0002B) — the same id
+  /// the admin assigns from, so the inspector can match jobs to it.
+  String _requestNoOf(Map<String, dynamic> r) => _s(r['requestId']).trim();
+
+  String _carOf(Map<String, dynamic> r) {
+    final vi = r['vehicleInfo'];
+    if (vi is! Map) return '';
+    return [_s(vi['make']), _s(vi['model']), _s(vi['year'])]
+        .map((x) => x.trim())
+        .where((x) => x.isNotEmpty)
+        .join(' ');
+  }
+
+  String _customerOf(Map<String, dynamic> r) {
+    final u = r['userId'];
+    if (u is! Map) return '';
+    return [_s(u['firstName']), _s(u['lastName'])]
+        .map((x) => x.trim())
+        .where((x) => x.isNotEmpty)
+        .join(' ');
+  }
+
+  String _cityOf(Map<String, dynamic> r) {
+    final loc = r['location'];
+    if (loc is Map && _s(loc['city']).trim().isNotEmpty) return _s(loc['city']).trim();
+    return _s(r['city']).trim();
+  }
+
   String _titleOf(Map<String, dynamic> r) {
+    final reqNo = _requestNoOf(r);
+    if (reqNo.isNotEmpty) return reqNo;
     final t = _s(r['title']);
     if (t.isNotEmpty) return t;
     final name = _s(r['name']);
@@ -190,7 +231,28 @@ class _InspectorDashboardPageState extends State<InspectorDashboardPage> {
     final rejected = _isRejected(r);
     final title = _titleOf(r);
     final addr = _formatAddress(r['address']);
-    final when = _formatWhen(r);
+    final preferred = _formatPreferred(r);
+    final when = preferred.isNotEmpty ? 'Preferred: $preferred' : _formatWhen(r);
+    final car = _carOf(r);
+    final customer = _customerOf(r);
+    final city = _cityOf(r);
+    final hasRequestNo = _requestNoOf(r).isNotEmpty;
+    final type = _s(r['inspectionType'] ?? r['requestType']).trim();
+
+    Widget meta(IconData icon, String text) => Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: Colors.black54),
+            const SizedBox(width: 4),
+            Flexible(
+              child: Text(
+                text,
+                style: const TextStyle(color: Colors.black87),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        );
 
     final statusChip = Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -243,6 +305,22 @@ class _InspectorDashboardPageState extends State<InspectorDashboardPage> {
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
+                        if (hasRequestNo && type.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(type, style: const TextStyle(color: Colors.black54)),
+                        ],
+                        if (car.isNotEmpty || customer.isNotEmpty || city.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 14,
+                            runSpacing: 4,
+                            children: [
+                              if (car.isNotEmpty) meta(Icons.directions_car_outlined, car.toUpperCase()),
+                              if (customer.isNotEmpty) meta(Icons.person_outline, customer.toUpperCase()),
+                              if (city.isNotEmpty) meta(Icons.location_on_outlined, city.toUpperCase()),
+                            ],
+                          ),
+                        ],
                         const SizedBox(height: 6),
                         if (addr.trim().isNotEmpty)
                           Text(

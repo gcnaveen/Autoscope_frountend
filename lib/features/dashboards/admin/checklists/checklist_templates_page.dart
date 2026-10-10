@@ -900,6 +900,7 @@ class _TemplateListPreviewDialogState extends State<_TemplateListPreviewDialog> 
         padding: const EdgeInsets.only(bottom: 12),
         child: options.isNotEmpty
             ? DropdownButtonFormField<String>(
+              isExpanded: true,
                 decoration: InputDecoration(
                   labelText: label,
                   border: const OutlineInputBorder(),
@@ -927,6 +928,7 @@ class _TemplateListPreviewDialogState extends State<_TemplateListPreviewDialog> 
         padding: const EdgeInsets.only(bottom: 12),
         child: cf.type == 'dropdown' && cf.options.isNotEmpty
             ? DropdownButtonFormField<String>(
+              isExpanded: true,
                 decoration: InputDecoration(
                   labelText: cf.label,
                   border: const OutlineInputBorder(),

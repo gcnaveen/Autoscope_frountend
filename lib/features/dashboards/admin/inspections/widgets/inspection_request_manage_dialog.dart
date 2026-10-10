@@ -206,7 +206,7 @@ class _InspectionRequestManageDialogState extends State<InspectionRequestManageD
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 560),
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(18),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -270,6 +270,7 @@ class _InspectionRequestManageDialogState extends State<InspectionRequestManageD
                   }).toList();
 
                   return DropdownButtonFormField<AppUser>(
+                    isExpanded: true,
                     value: _selected,
                     autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
                     items: options

@@ -179,15 +179,22 @@ class _ManageReviewsPageState extends State<ManageReviewsPage> {
               padding: const EdgeInsets.all(16),
               children: [
                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _StatusButton(label: 'All', selected: _status == 'all', onTap: () => _setStatus('all')),
+                    // Wraps onto a second line on phones instead of overflowing.
+                    Expanded(
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          _StatusButton(label: 'All', selected: _status == 'all', onTap: () => _setStatus('all')),
+                          _StatusButton(label: 'Pending', selected: _status == 'pending', onTap: () => _setStatus('pending')),
+                          _StatusButton(label: 'Approved', selected: _status == 'approved', onTap: () => _setStatus('approved')),
+                          _StatusButton(label: 'Rejected', selected: _status == 'rejected', onTap: () => _setStatus('rejected')),
+                        ],
+                      ),
+                    ),
                     const SizedBox(width: 8),
-                    _StatusButton(label: 'Pending', selected: _status == 'pending', onTap: () => _setStatus('pending')),
-                    const SizedBox(width: 8),
-                    _StatusButton(label: 'Approved', selected: _status == 'approved', onTap: () => _setStatus('approved')),
-                    const SizedBox(width: 8),
-                    _StatusButton(label: 'Rejected', selected: _status == 'rejected', onTap: () => _setStatus('rejected')),
-                    const Spacer(),
                     FilledButton.icon(
                       onPressed: _loading ? null : _load,
                       icon: const Icon(Icons.refresh),
@@ -261,9 +268,18 @@ class _ManageReviewsPageState extends State<ManageReviewsPage> {
                                   ),
                                 ),
                               ),
-                              const Spacer(),
-                              if (id.isNotEmpty)
-                                Text(id, style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: id.isEmpty
+                                    ? const SizedBox.shrink()
+                                    : Text(
+                                        id,
+                                        textAlign: TextAlign.end,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                                      ),
+                              ),
                             ],
                           ),
                           const SizedBox(height: 10),

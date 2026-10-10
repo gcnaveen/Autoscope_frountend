@@ -12,6 +12,7 @@ class StaffLoginPage extends StatelessWidget {
     return Scaffold(
       appBar: const PublicNavBar(),
       body: Center(
+        child: SingleChildScrollView(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 520),
           child: Padding(
@@ -37,6 +38,7 @@ class StaffLoginPage extends StatelessWidget {
               ),
             ),
           ),
+        ),
         ),
       ),
     );

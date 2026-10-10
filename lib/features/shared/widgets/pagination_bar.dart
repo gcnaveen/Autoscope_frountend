@@ -32,9 +32,13 @@ class PaginationBar extends StatelessWidget {
           icon: const Icon(Icons.chevron_left),
         ),
         const SizedBox(width: 4),
-        Text(
-          'Page $currentPage of $totalPages  ($from–$to of $totalItems)',
-          style: Theme.of(context).textTheme.bodyMedium,
+        // Flexible so the label wraps instead of overflowing on narrow phones.
+        Flexible(
+          child: Text(
+            'Page $currentPage of $totalPages  ($from–$to of $totalItems)',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
         ),
         const SizedBox(width: 4),
         IconButton(

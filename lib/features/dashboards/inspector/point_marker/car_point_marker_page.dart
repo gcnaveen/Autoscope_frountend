@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../../models/inspection_point_marker.dart';
+import '../../../shared/utils/responsive.dart';
 
 class CarPointMarkerPage extends StatefulWidget {
   final List<InspectionPointMarker> initialMarkers;
@@ -89,6 +90,7 @@ class _CarPointMarkerPageState extends State<CarPointMarkerPage> {
                   const SizedBox(height: 12),
 
                   DropdownButtonFormField<String>(
+                    isExpanded: true,
                     value: tmp.damageType,
                     autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
                     items: _damageTypes
@@ -163,6 +165,9 @@ class _CarPointMarkerPageState extends State<CarPointMarkerPage> {
   @override
   Widget build(BuildContext context) {
     final activeView = _views.firstWhere((v) => v.key == _view);
+    // Phones: canvas on top, marker list below (a 360px side panel would
+    // leave no room for the canvas).
+    final stacked = Responsive.isMobile(context);
 
     return Scaffold(
       appBar: AppBar(
@@ -176,7 +181,8 @@ class _CarPointMarkerPageState extends State<CarPointMarkerPage> {
           const SizedBox(width: 8),
         ],
       ),
-      body: Row(
+      body: Flex(
+        direction: stacked ? Axis.vertical : Axis.horizontal,
         children: [
           Expanded(
             flex: 3,
@@ -275,11 +281,8 @@ class _CarPointMarkerPageState extends State<CarPointMarkerPage> {
             ),
           ),
 
-          Container(
-            width: 360,
-            decoration: BoxDecoration(
-              border: Border(left: BorderSide(color: Colors.grey.shade300)),
-            ),
+          _sidePanel(
+            stacked: stacked,
             child: Column(
               children: [
                 ListTile(
@@ -309,6 +312,24 @@ class _CarPointMarkerPageState extends State<CarPointMarkerPage> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _sidePanel({required bool stacked, required Widget child}) {
+    final side = BorderSide(color: Colors.grey.shade300);
+    if (stacked) {
+      return Expanded(
+        flex: 2,
+        child: Container(
+          decoration: BoxDecoration(border: Border(top: side)),
+          child: child,
+        ),
+      );
+    }
+    return Container(
+      width: 360,
+      decoration: BoxDecoration(border: Border(left: side)),
+      child: child,
     );
   }
 }

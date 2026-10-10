@@ -128,7 +128,7 @@ class _InspectorManageDialogState extends State<InspectorManageDialog> {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 760),
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(18),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -169,7 +169,9 @@ class _InspectorManageDialogState extends State<InspectorManageDialog> {
               const SizedBox(height: 12),
 
               // Chips row (Assigned + Status)
-              Row(
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
                 children: [
                   Chip(
                     label: Text(assigned ? 'assigned' : 'not assigned'),
@@ -182,7 +184,6 @@ class _InspectorManageDialogState extends State<InspectorManageDialog> {
                           : Colors.grey.withOpacity(0.20),
                     ),
                   ),
-                  const SizedBox(width: 8),
                   Chip(
                     label: Text(u.status),
                     backgroundColor: u.status.toLowerCase() == 'active'
@@ -236,6 +237,7 @@ class _InspectorManageDialogState extends State<InspectorManageDialog> {
                       ),
                       const SizedBox(height: 12),
                       DropdownButtonFormField<String>(
+                        isExpanded: true,
                         value: status,
                         autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
                         decoration: _dec('Status', icon: Icons.toggle_on_outlined),

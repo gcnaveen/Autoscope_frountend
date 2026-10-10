@@ -512,6 +512,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
       mainAxisSize: MainAxisSize.min,
       children: [
         DropdownButtonFormField<String>(
+          isExpanded: true,
           value: safeVal,
           autovalidateMode: AutovalidateMode.onUserInteraction,
           items: opts.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(),
@@ -1219,12 +1220,22 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
     _applyEngineSpec(row);
   }
 
-  /// Auto-fills Cylinder Size / Fuel Type / Drive Train (options) / Body Type /
-  /// Specs from the selected catalog row. Every one of these remains a normal
+  /// Auto-fills Engine Capacity / Cylinder Size / Fuel Type / Drive Train
+  /// (options) / Body Type / Specs from the selected catalog row. Every one of these remains a normal
   /// editable field afterwards — this only sets an initial value via setState.
   void _applyEngineSpec(Map<String, dynamic> row) {
     setState(() {
       selectedEngineSpec = row;
+
+      // Engine (dropdown) shows the catalog's Engine_Display ("5.2L");
+      // Engine Capacity — the field saved on the report — gets Engine_CC
+      // ("5200 CC"), falling back to Engine_Display when the row has no CC.
+      // Same uppercase / 12-char rules the field enforces when typed.
+      final cc = (row['engineCc'] ?? '').toString().trim();
+      final capacity = (cc.isNotEmpty && cc != '0') ? '$cc CC' : _engineDisplayOf(row).toUpperCase();
+      if (capacity.isNotEmpty) {
+        engineCapacityCtrl.text = capacity.length > 12 ? capacity.substring(0, 12).trim() : capacity;
+      }
 
       final cylinders = row['cylinders'];
       if (cylinders != null && cylinders.toString().trim().isNotEmpty) {
@@ -1766,9 +1777,11 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
                   child: Icon(icon, color: Colors.white, size: 18),
                 ),
                 const SizedBox(width: 10),
-                Text(
-                  title,
-                  style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+                Flexible(
+                  child: Text(
+                    title,
+                    style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+                  ),
                 ),
               ],
             ),
@@ -1791,6 +1804,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
   }) {
     final safeValue = (value != null && options.contains(value)) ? value : null;
     return DropdownButtonFormField<String>(
+      isExpanded: true,
       value: safeValue,
       autovalidateMode: AutovalidateMode.onUserInteraction,
       items: options.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(),
@@ -1813,6 +1827,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
           children: [
             // MAKE
             DropdownButtonFormField<String>(
+              isExpanded: true,
               value: (selectedMake != null && makes.contains(selectedMake)) ? selectedMake : null,
               autovalidateMode: AutovalidateMode.onUserInteraction,
               items: makes.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
@@ -1878,6 +1893,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
 
             // MODEL
             DropdownButtonFormField<String>(
+              isExpanded: true,
               value: (selectedModel != null && models.contains(selectedModel)) ? selectedModel : null,
               autovalidateMode: AutovalidateMode.onUserInteraction,
               items: models.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
@@ -2004,7 +2020,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
                   controller: engineCapacityCtrl,
                   autovalidateMode: AutovalidateMode.onUserInteraction,
                   inputFormatters: [LengthLimitingTextInputFormatter(12), _upper],
-                  decoration: _dec(label: 'Engine Capacity', hint: 'e.g. 2.0L', icon: Icons.speed_outlined),
+                  decoration: _dec(label: 'Engine Capacity', hint: 'e.g. 2000 CC', icon: Icons.speed_outlined),
                   validator: (v) => _alphaNumValidator(v, fieldName: 'Engine Capacity', min: 1),
                 ),
                 TextFormField(
@@ -2701,6 +2717,7 @@ class _StartInspectionPageState extends State<StartInspectionPage> {
                       const SizedBox(height: 12),
 
                       DropdownButtonFormField<String>(
+                        isExpanded: true,
                         value: (_grade[key] != null && _gradeOptions.contains(_grade[key])) ? _grade[key] : null,
                         autovalidateMode: AutovalidateMode.onUserInteraction,
                         items: _gradeOptions.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(),

@@ -10,6 +10,7 @@ class ProductValuationPage extends StatelessWidget {
     return Scaffold(
       appBar: const PublicNavBar(),
       body: Center(
+        child: SingleChildScrollView(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 1120),
           child: Padding(
@@ -46,14 +47,16 @@ class ProductValuationPage extends StatelessWidget {
                     ),
 
                     const SizedBox(height: 18),
-                    Row(
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         FilledButton.icon(
                           onPressed: () => context.go('/valuation'),
                           icon: const Icon(Icons.send),
                           label: const Text('Get Valuation'),
                         ),
-                        const SizedBox(width: 12),
                         TextButton(
                           onPressed: () => context.go('/products'),
                           child: const Text('Back to Services'),
@@ -65,6 +68,7 @@ class ProductValuationPage extends StatelessWidget {
               ),
             ),
           ),
+        ),
         ),
       ),
     );

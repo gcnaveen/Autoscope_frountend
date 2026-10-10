@@ -66,6 +66,7 @@ class _WebVideoRecorderDialogState extends State<_WebVideoRecorderDialog> {
   String? _objectUrl;
 
   String? _error;
+  bool _noAudio = false; // recording without mic (permission denied / unavailable)
   bool _ready = false;
   bool _recording = false;
   bool _busy = false;
@@ -99,7 +100,13 @@ class _WebVideoRecorderDialogState extends State<_WebVideoRecorderDialog> {
       }
 
       final devices = html.window.navigator.mediaDevices;
-      if (devices == null) throw Exception('mediaDevices not supported');
+      // Browsers hide mediaDevices entirely on non-secure origins (plain http://
+      // on a LAN IP) — say so instead of a generic 'not supported'.
+      if (devices == null) {
+        throw Exception(html.window.isSecureContext == false
+            ? 'Camera requires a secure connection (HTTPS). Open the site over https:// and try again.'
+            : 'mediaDevices not supported');
+      }
 
       // Live preview element (GPU hint)
       final live = html.VideoElement()
@@ -158,6 +165,7 @@ class _WebVideoRecorderDialogState extends State<_WebVideoRecorderDialog> {
         stream = await devices.getUserMedia(constraints);
       } catch (_) {
         // fallback without audio
+        _noAudio = widget.includeAudio;
         stream = await devices.getUserMedia({
           'video': constraints['video'],
           'audio': false,
@@ -299,7 +307,7 @@ class _WebVideoRecorderDialogState extends State<_WebVideoRecorderDialog> {
       if (pv != null) {
         pv.src = url;
         pv.loop = false;
-        pv.muted = true;
+        pv.muted = false; // review playback is started by a tap, so sound is allowed
         pv.autoplay = false;
         pv.controls = false;
         pv.load();
@@ -569,6 +577,26 @@ class _WebVideoRecorderDialogState extends State<_WebVideoRecorderDialog> {
                   ),
                 ),
               ),
+
+              // Mic unavailable: say so rather than silently recording without sound.
+              if (_noAudio && _error == null)
+                Positioned(
+                  left: 12,
+                  right: 12,
+                  top: 80,
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.orange.withOpacity(0.35)),
+                    ),
+                    child: const Text(
+                      'Microphone unavailable — recording video without sound. Allow microphone access for this site to include audio.',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                  ),
+                ),
 
               if (_error != null)
                 Positioned(

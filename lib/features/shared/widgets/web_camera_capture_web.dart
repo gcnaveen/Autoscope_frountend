@@ -3,11 +3,16 @@
 import 'dart:html' as html;
 
 import 'dart:async';
-import 'dart:math' as math;
+import 'dart:js_interop';
 import 'dart:typed_data';
 import 'dart:ui_web' as ui;
 
 import 'package:flutter/material.dart';
+
+// navigator.vibrate isn't exposed by dart:html — bind it directly. Supported on
+// Android browsers; a no-op / throw elsewhere (callers wrap in try/catch).
+@JS('navigator.vibrate')
+external JSAny? _navigatorVibrate(JSNumber ms);
 
 class CapturedPhotoBytes {
   final Uint8List bytes;
@@ -69,6 +74,12 @@ class _WebCameraCaptureDialogState extends State<_WebCameraCaptureDialog> {
   Uint8List? _captured; // frozen preview bytes
 
   double _zoom = 1.0;
+  double _pinchStartZoom = 1.0;
+  static const double _kMinZoom = 1.0;
+  static const double _kMaxZoom = 4.0;
+
+  bool _flash = false; // shutter flash overlay
+  bool _shutterDown = false; // shutter button pressed state
 
   late final String _viewType;
   static int _seq = 0;
@@ -86,7 +97,13 @@ class _WebCameraCaptureDialogState extends State<_WebCameraCaptureDialog> {
   Future<void> _setup() async {
     try {
       final devices = html.window.navigator.mediaDevices;
-      if (devices == null) throw Exception('mediaDevices not supported');
+      // Browsers hide mediaDevices entirely on non-secure origins (plain http://
+      // on a LAN IP) — say so instead of a generic 'not supported'.
+      if (devices == null) {
+        throw Exception(html.window.isSecureContext == false
+            ? 'Camera requires a secure connection (HTTPS). Open the site over https:// and try again.'
+            : 'mediaDevices not supported');
+      }
 
       final video = html.VideoElement()
         ..autoplay = true
@@ -96,10 +113,21 @@ class _WebCameraCaptureDialogState extends State<_WebCameraCaptureDialog> {
       video.setAttribute('playsinline', 'true');
       video.setAttribute('webkit-playsinline', 'true');
 
-      // make it like native camera: fill screen
+      // The preview box is laid out at the capture aspect (4:3), so
+      // object-fit: cover center-crops the stream exactly like
+      // _captureVisibleFrame does — the viewfinder shows what gets saved.
       video.style.width = '100%';
       video.style.height = '100%';
       video.style.objectFit = 'cover';
+      video.style.pointerEvents = 'none'; // pinch-zoom is handled by Flutter
+
+      // Clip wrapper so the CSS zoom (transform: scale) stays inside the box.
+      final wrapper = html.DivElement()
+        ..style.width = '100%'
+        ..style.height = '100%'
+        ..style.overflow = 'hidden'
+        ..style.backgroundColor = 'black'
+        ..append(video);
 
       _video = video;
 
@@ -120,7 +148,7 @@ class _WebCameraCaptureDialogState extends State<_WebCameraCaptureDialog> {
         video.play();
       } catch (_) {}
 
-      ui.platformViewRegistry.registerViewFactory(_viewType, (int viewId) => video);
+      ui.platformViewRegistry.registerViewFactory(_viewType, (int viewId) => wrapper);
 
       await _waitForVideoReady(video);
 
@@ -260,19 +288,35 @@ class _WebCameraCaptureDialogState extends State<_WebCameraCaptureDialog> {
   Future<void> _onCapturePressed() async {
     if (_busy || !_ready || _video == null) return;
 
-    setState(() => _busy = true);
+    // Instant shutter feedback (like a native camera): freeze the frame,
+    // flash, and a short vibration (Android) — all before the JPEG encode,
+    // which can take a few hundred ms on phones.
+    try {
+      _video?.pause();
+    } catch (_) {}
+    try {
+      _navigatorVibrate(40.toJS);
+    } catch (_) {}
+    setState(() {
+      _busy = true;
+      _flash = true;
+    });
+    Future.delayed(const Duration(milliseconds: 80), () {
+      if (mounted) setState(() => _flash = false);
+    });
 
     try {
+      // Drawing from the paused video captures exactly the frozen frame.
       final bytes = await _captureVisibleFrame();
-
-      // Freeze preview like native camera
-      try {
-        _video?.pause();
-      } catch (_) {}
 
       if (!mounted) return;
       setState(() => _captured = bytes);
     } catch (e) {
+      // Resume the live preview so the user can try again.
+      try {
+        // ignore: discarded_futures
+        _video?.play();
+      } catch (_) {}
       if (!mounted) return;
       setState(() => _error = 'Capture failed: $e');
     } finally {
@@ -321,6 +365,7 @@ class _WebCameraCaptureDialogState extends State<_WebCameraCaptureDialog> {
   }
 
   void _setZoom(double z) {
+    z = z.clamp(_kMinZoom, _kMaxZoom).toDouble();
     setState(() => _zoom = z);
     _video?.style.transform = 'scale($z)';
     _video?.style.transformOrigin = 'center';
@@ -342,200 +387,46 @@ class _WebCameraCaptureDialogState extends State<_WebCameraCaptureDialog> {
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final isReview = _captured != null;
+  /// Capture aspect — must match _captureVisibleFrame (1440 × 1080).
+  static const double _kAspect = 4.0 / 3.0;
 
-    return WillPopScope(
-      onWillPop: _onWillPop,
-      child: Dialog(
-        insetPadding: EdgeInsets.zero,
-        backgroundColor: Colors.black,
-        child: SizedBox(
-          width: double.infinity,
-          height: MediaQuery.sizeOf(context).height,
+  /// The viewfinder: a 4:3 box (letterboxed in black, like a native camera's
+  /// 4:3 mode) showing exactly the region that gets saved. After capture the
+  /// frozen photo is shown in the same box, so review matches the preview.
+  Widget _viewfinder() {
+    return Center(
+      child: AspectRatio(
+        aspectRatio: _kAspect,
+        child: ClipRect(
           child: Stack(
+            fit: StackFit.expand,
             children: [
-              // Live preview
-              Positioned.fill(
-                child: Container(
-                  color: Colors.black,
-                  child: _ready
-                      ? HtmlElementView(viewType: _viewType)
-                      : const Center(child: CircularProgressIndicator()),
-                ),
-              ),
+              if (_ready)
+                HtmlElementView(viewType: _viewType)
+              else if (_error == null)
+                const Center(child: CircularProgressIndicator()),
 
-              // Crop-boundary guide (live preview only — matches _captureVisibleFrame's math)
-              if (_ready && !isReview)
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: CustomPaint(
-                      painter: _CropGuidePainter(
-                        videoWidth: (_video?.videoWidth ?? 0) > 0
-                            ? _video!.videoWidth.toDouble()
-                            : 1920.0,
-                        videoHeight: (_video?.videoHeight ?? 0) > 0
-                            ? _video!.videoHeight.toDouble()
-                            : 1080.0,
-                        zoom: _zoom,
-                      ),
-                    ),
-                  ),
+              if (_ready && _captured == null) ...[
+                // Pinch-to-zoom over the live preview.
+                GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onScaleStart: (_) => _pinchStartZoom = _zoom,
+                  onScaleUpdate: (d) {
+                    if (d.pointerCount >= 2) _setZoom(_pinchStartZoom * d.scale);
+                  },
                 ),
+                const IgnorePointer(child: CustomPaint(painter: _GridPainter())),
+              ],
 
-              // Frozen captured preview overlay
               if (_captured != null)
-                Positioned.fill(
-                  child: Image.memory(
-                    _captured!,
-                    fit: BoxFit.cover,
-                    gaplessPlayback: true,
-                  ),
-                ),
+                Image.memory(_captured!, fit: BoxFit.cover, gaplessPlayback: true),
 
-              // Top bar
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: SafeArea(
-                  bottom: false,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                    child: Row(
-                      children: [
-                        IconButton(
-                          onPressed: _busy ? null : _close,
-                          icon: const Icon(Icons.close, color: Colors.white),
-                        ),
-                        const SizedBox(width: 6),
-                        const Text(
-                          'Camera',
-                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
-                        ),
-                        const Spacer(),
-                        if (_busy)
-                          const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-
-              // Error overlay
-              if (_error != null)
-                Positioned(
-                  left: 12,
-                  right: 12,
-                  top: 80,
-                  child: Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.red.withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.red.withOpacity(0.25)),
-                    ),
-                    child: Text(_error!, style: const TextStyle(color: Colors.white)),
-                  ),
-                ),
-
-              // Zoom slider (only while live preview is active)
-              if (_ready && !isReview)
-                Positioned(
-                  left: 24,
-                  right: 24,
-                  bottom: 120,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        '${_zoom.toStringAsFixed(1)}×',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w800,
-                          shadows: [Shadow(blurRadius: 4)],
-                        ),
-                      ),
-                      SliderTheme(
-                        data: SliderTheme.of(context).copyWith(
-                          thumbColor: Colors.white,
-                          activeTrackColor: Colors.white,
-                          inactiveTrackColor: Colors.white38,
-                          overlayColor: Colors.white24,
-                          trackHeight: 5,
-                          thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 11),
-                          overlayShape: const RoundSliderOverlayShape(overlayRadius: 26),
-                        ),
-                        child: Slider(
-                          value: _zoom,
-                          min: 1.0,
-                          max: 4.0,
-                          divisions: 30,
-                          onChanged: _setZoom,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-              // Bottom controls (native-like)
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                child: SafeArea(
-                  top: false,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 18),
-                    child: isReview
-                        ? Row(
-                            children: [
-                              Expanded(
-                                child: OutlinedButton(
-                                  onPressed: _busy ? null : _retake,
-                                  style: OutlinedButton.styleFrom(
-                                    foregroundColor: Colors.white,
-                                    side: const BorderSide(color: Colors.white54),
-                                    padding: const EdgeInsets.symmetric(vertical: 14),
-                                  ),
-                                  child: const Text('Retake'),
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: ElevatedButton(
-                                  onPressed: _busy ? null : _usePhoto,
-                                  style: ElevatedButton.styleFrom(
-                                    padding: const EdgeInsets.symmetric(vertical: 14),
-                                  ),
-                                  child: const Text('Use Photo'),
-                                ),
-                              ),
-                            ],
-                          )
-                        : Center(
-                            child: GestureDetector(
-                              onTap: (_ready && !_busy) ? _onCapturePressed : null,
-                              child: Container(
-                                width: 74,
-                                height: 74,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: Colors.white.withOpacity(0.15),
-                                  border: Border.all(color: Colors.white, width: 4),
-                                ),
-                                child: const Center(
-                                  child: Icon(Icons.camera_alt_outlined, color: Colors.white, size: 30),
-                                ),
-                              ),
-                            ),
-                          ),
-                  ),
+              // Shutter flash.
+              IgnorePointer(
+                child: AnimatedOpacity(
+                  opacity: _flash ? 0.85 : 0.0,
+                  duration: Duration(milliseconds: _flash ? 0 : 200),
+                  child: const ColoredBox(color: Colors.white),
                 ),
               ),
             ],
@@ -544,138 +435,230 @@ class _WebCameraCaptureDialogState extends State<_WebCameraCaptureDialog> {
       ),
     );
   }
+
+  Widget _zoomChips() {
+    // The preset nearest the current zoom is highlighted; while pinching
+    // between presets it shows the live value (like native "1.4×").
+    final nearest = _zoom < 1.5 ? 1.0 : (_zoom < 3.0 ? 2.0 : 4.0);
+
+    Widget chip(double z) {
+      final active = nearest == z;
+      final exact = (_zoom - z).abs() < 0.05;
+      final label = (active && !exact) ? '${_zoom.toStringAsFixed(1)}×' : '${z.toStringAsFixed(0)}×';
+      return GestureDetector(
+        onTap: () => _setZoom(z),
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 4),
+          width: 44,
+          height: 44,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: Colors.white.withValues(alpha: 0.12),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: active ? Colors.amber : Colors.white,
+              fontWeight: FontWeight.w800,
+              fontSize: 12,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [chip(1), chip(2), chip(4)],
+    );
+  }
+
+  Widget _shutterButton() {
+    final enabled = _ready && !_busy;
+    return GestureDetector(
+      onTapDown: enabled ? (_) => setState(() => _shutterDown = true) : null,
+      onTapCancel: () => setState(() => _shutterDown = false),
+      onTapUp: (_) => setState(() => _shutterDown = false),
+      onTap: enabled ? _onCapturePressed : null,
+      child: Container(
+        width: 78,
+        height: 78,
+        padding: const EdgeInsets.all(5),
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 4),
+        ),
+        child: AnimatedScale(
+          scale: _shutterDown ? 0.85 : 1.0,
+          duration: const Duration(milliseconds: 90),
+          child: Container(
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: (enabled || _busy) ? Colors.white : Colors.white38,
+            ),
+            child: _busy
+                ? const Padding(
+                    padding: EdgeInsets.all(18),
+                    child: CircularProgressIndicator(strokeWidth: 3, color: Colors.black54),
+                  )
+                : null,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _reviewButtons({required bool vertical}) {
+    final retake = OutlinedButton(
+      onPressed: _busy ? null : _retake,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: Colors.white,
+        side: const BorderSide(color: Colors.white54),
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 18),
+      ),
+      child: const Text('Retake'),
+    );
+    final use = ElevatedButton(
+      onPressed: _busy ? null : _usePhoto,
+      style: ElevatedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 18),
+      ),
+      child: const Text('Use Photo'),
+    );
+    if (vertical) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [use, const SizedBox(height: 12), retake],
+      );
+    }
+    return Row(
+      children: [
+        Expanded(child: retake),
+        const SizedBox(width: 12),
+        Expanded(child: use),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isReview = _captured != null;
+    final size = MediaQuery.sizeOf(context);
+    final landscape = size.width > size.height;
+
+    final topBar = Row(
+      children: [
+        IconButton(
+          onPressed: _busy ? null : _close,
+          icon: const Icon(Icons.close, color: Colors.white),
+        ),
+        const SizedBox(width: 6),
+        const Text(
+          'Camera',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+        ),
+      ],
+    );
+
+    final error = _error == null
+        ? const SizedBox.shrink()
+        : Container(
+            margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.red.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.red.withValues(alpha: 0.25)),
+            ),
+            child: Text(_error!, style: const TextStyle(color: Colors.white)),
+          );
+
+    // Portrait: top bar / viewfinder / zoom + shutter below (native layout).
+    // Landscape: viewfinder on the left, controls in a side column so the
+    // preview keeps as much height as possible.
+    final Widget body;
+    if (!landscape) {
+      body = Column(
+        children: [
+          topBar,
+          error,
+          Expanded(child: _viewfinder()),
+          SizedBox(
+            height: 64,
+            child: Center(child: (_ready && !isReview) ? _zoomChips() : null),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
+            child: SizedBox(
+              height: 84,
+              child: Center(child: isReview ? _reviewButtons(vertical: false) : _shutterButton()),
+            ),
+          ),
+        ],
+      );
+    } else {
+      body = Row(
+        children: [
+          Expanded(
+            child: Column(
+              children: [
+                topBar,
+                error,
+                Expanded(child: _viewfinder()),
+              ],
+            ),
+          ),
+          SizedBox(
+            width: 160,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: isReview
+                  ? [Padding(padding: const EdgeInsets.all(12), child: _reviewButtons(vertical: true))]
+                  : [
+                      if (_ready) FittedBox(fit: BoxFit.scaleDown, child: _zoomChips()),
+                      const SizedBox(height: 20),
+                      _shutterButton(),
+                    ],
+            ),
+          ),
+        ],
+      );
+    }
+
+    return WillPopScope(
+      onWillPop: _onWillPop,
+      child: Dialog(
+        insetPadding: EdgeInsets.zero,
+        backgroundColor: Colors.black,
+        child: SizedBox(
+          width: double.infinity,
+          height: size.height,
+          child: SafeArea(child: body),
+        ),
+      ),
+    );
+  }
 }
 
-/// Draws a live crop-boundary guide (dim mask + border + rule-of-thirds grid +
-/// corner brackets) over the camera preview, so what the user frames matches
-/// what `_captureVisibleFrame` actually outputs.
-///
-/// This mirrors `_captureVisibleFrame`'s math exactly:
-///  - The video element is rendered with `object-fit: cover` into the
-///    preview box, then scaled by `zoom` via a CSS `transform: scale(zoom)`
-///    centered on itself. That determines how much of the native video
-///    frame (`videoWidth` x `videoHeight`) is actually visible on screen.
-///  - `_captureVisibleFrame` separately center-crops the native frame to a
-///    fixed 4:3 aspect ratio, shrunk by the same `zoom` factor.
-///  - Mapping that capture-crop rectangle into on-screen coordinates (using
-///    the same center + cover-fit + zoom math as the live preview) gives a
-///    rectangle that is always centered in the preview, whose size relative
-///    to the preview box is `cropSize / visibleNativeSize` on each axis.
-class _CropGuidePainter extends CustomPainter {
-  final double videoWidth;
-  final double videoHeight;
-  final double zoom;
-
-  const _CropGuidePainter({
-    required this.videoWidth,
-    required this.videoHeight,
-    required this.zoom,
-  });
-
-  static const double _kAspect = 4.0 / 3.0;
+/// Rule-of-thirds grid over the viewfinder (as in native camera apps).
+class _GridPainter extends CustomPainter {
+  const _GridPainter();
 
   @override
   void paint(Canvas canvas, Size size) {
-    final containerW = size.width;
-    final containerH = size.height;
-    if (containerW <= 0 || containerH <= 0) return;
-
-    final vw = videoWidth > 0 ? videoWidth : 1920.0;
-    final vh = videoHeight > 0 ? videoHeight : 1080.0;
-    final z = zoom <= 0 ? 1.0 : zoom;
-
-    // Same branch as _captureVisibleFrame: center-crop the raw video frame
-    // to 4:3, then shrink by the zoom factor.
-    double cropW, cropH;
-    if (vw / vh >= _kAspect) {
-      cropH = vh / z;
-      cropW = cropH * _kAspect;
-    } else {
-      cropW = vw / z;
-      cropH = cropW / _kAspect;
-    }
-
-    // Same math the live preview uses: object-fit: cover maps the native
-    // frame onto the container (displayScale), then the CSS zoom transform
-    // shrinks the visible native window further, centered.
-    final displayScale = math.max(containerW / vw, containerH / vh);
-    final visibleNativeW = (containerW / displayScale) / z;
-    final visibleNativeH = (containerH / displayScale) / z;
-
-    // Ratio of the capture crop to what's actually visible on screen —
-    // both are centered on the same point, so this maps directly to a
-    // centered rectangle within the container.
-    final rW = (cropW / visibleNativeW).clamp(0.0, 1.0);
-    final rH = (cropH / visibleNativeH).clamp(0.0, 1.0);
-
-    final rectW = containerW * rW;
-    final rectH = containerH * rH;
-    final left = (containerW - rectW) / 2;
-    final top = (containerH - rectH) / 2;
-    final cropRect = Rect.fromLTWH(left, top, rectW, rectH);
-    final cropRRect = RRect.fromRectAndRadius(cropRect, const Radius.circular(14));
-
-    // 1) Dim everything outside the capture region.
-    final outerPath = Path()..addRect(Rect.fromLTWH(0, 0, containerW, containerH));
-    final innerPath = Path()..addRRect(cropRRect);
-    final dimPath = Path.combine(PathOperation.difference, outerPath, innerPath);
-    canvas.drawPath(dimPath, Paint()..color = Colors.black.withOpacity(0.45));
-
-    // 2) Clear border around the capture region.
-    canvas.drawRRect(
-      cropRRect,
-      Paint()
-        ..color = Colors.white.withOpacity(0.9)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.4,
-    );
-
-    // 3) Rule-of-thirds grid inside the capture region.
-    final gridPaint = Paint()
-      ..color = Colors.white.withOpacity(0.3)
+    final paint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.3)
       ..strokeWidth = 1.0;
-    final thirdW = cropRect.width / 3;
-    final thirdH = cropRect.height / 3;
     for (var i = 1; i <= 2; i++) {
-      final x = cropRect.left + thirdW * i;
-      canvas.drawLine(Offset(x, cropRect.top), Offset(x, cropRect.bottom), gridPaint);
-      final y = cropRect.top + thirdH * i;
-      canvas.drawLine(Offset(cropRect.left, y), Offset(cropRect.right, y), gridPaint);
+      final x = size.width * i / 3;
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
+      final y = size.height * i / 3;
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
     }
-
-    // 4) Corner brackets for a scanner-style reticle.
-    _drawCornerBrackets(
-      canvas,
-      cropRect,
-      Paint()
-        ..color = Colors.white.withOpacity(0.95)
-        ..strokeWidth = 2.4
-        ..strokeCap = StrokeCap.round,
-    );
-  }
-
-  void _drawCornerBrackets(Canvas canvas, Rect r, Paint paint) {
-    final len = math.min(24.0, math.min(r.width, r.height) / 4);
-    if (len <= 0) return;
-
-    // Top-left
-    canvas.drawLine(r.topLeft, r.topLeft + Offset(len, 0), paint);
-    canvas.drawLine(r.topLeft, r.topLeft + Offset(0, len), paint);
-    // Top-right
-    canvas.drawLine(r.topRight, r.topRight + Offset(-len, 0), paint);
-    canvas.drawLine(r.topRight, r.topRight + Offset(0, len), paint);
-    // Bottom-left
-    canvas.drawLine(r.bottomLeft, r.bottomLeft + Offset(len, 0), paint);
-    canvas.drawLine(r.bottomLeft, r.bottomLeft + Offset(0, -len), paint);
-    // Bottom-right
-    canvas.drawLine(r.bottomRight, r.bottomRight + Offset(-len, 0), paint);
-    canvas.drawLine(r.bottomRight, r.bottomRight + Offset(0, -len), paint);
   }
 
   @override
-  bool shouldRepaint(covariant _CropGuidePainter oldDelegate) {
-    return oldDelegate.videoWidth != videoWidth ||
-        oldDelegate.videoHeight != videoHeight ||
-        oldDelegate.zoom != zoom;
-  }
+  bool shouldRepaint(covariant _GridPainter oldDelegate) => false;
 }

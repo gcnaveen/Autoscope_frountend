@@ -186,17 +186,29 @@ class _BreadcrumbBar extends StatelessWidget {
           bottom: BorderSide(color: Colors.black.withValues(alpha: 0.06)),
         ),
       ),
-      child: Row(
-        children: [
-          for (int i = 0; i < crumbs.length; i++) ...[
-            _CrumbWidget(crumb: crumbs[i], onBeforeNavigate: onBeforeNavigate),
-            if (i != crumbs.length - 1)
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 10),
-                child: Icon(Icons.chevron_right, size: 18, color: Colors.black38),
-              ),
-          ],
-        ],
+      // Deep trails don't fit on phones: scroll horizontally, anchored so the
+      // current page (last crumb) stays visible. When the trail fits, the
+      // min-width box keeps it left-aligned as before.
+      child: LayoutBuilder(
+        builder: (context, c) => SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          reverse: true,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minWidth: c.maxWidth),
+            child: Row(
+              children: [
+                for (int i = 0; i < crumbs.length; i++) ...[
+                  _CrumbWidget(crumb: crumbs[i], onBeforeNavigate: onBeforeNavigate),
+                  if (i != crumbs.length - 1)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 10),
+                      child: Icon(Icons.chevron_right, size: 18, color: Colors.black38),
+                    ),
+                ],
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

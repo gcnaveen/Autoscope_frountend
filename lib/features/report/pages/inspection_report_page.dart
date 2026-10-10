@@ -6,10 +6,10 @@ import 'dart:ui_web' as ui;
 import 'dart:typed_data';
 import 'dart:convert' show base64Encode;
 import 'dart:async';
-import 'dart:js' as js;
 
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart' show rootBundle, Clipboard, ClipboardData;
 
 import '../../shared/app_shell.dart';
@@ -546,22 +546,34 @@ class _ReportViewState extends State<_ReportView> {
                   ),
                 );
 
+                // Summary sits under the short Inspector card so this row is
+                // balanced against Report Information (it used to hang under
+                // Overall Rating, leaving empty space beside both).
+                final summaryCard = _QuickSummaryCard(
+                  types: types,
+                  photosCount: _photos.length,
+                  damagesCount: damages.length,
+                );
+
                 if (!wide) {
                   return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       left,
                       const SizedBox(height: 12),
                       right,
+                      const SizedBox(height: 12),
+                      summaryCard,
                     ],
                   );
                 }
 
-                return Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                return _EqualHeightRow(
+                  flex: const [1, 1],
+                  gap: gap,
                   children: [
-                    Expanded(child: left),
-                    SizedBox(width: gap),
-                    Expanded(child: right),
+                    left,
+                    _FillColumn(gap: gap, children: [right, summaryCard]),
                   ],
                 );
               },
@@ -648,9 +660,13 @@ class _ReportViewState extends State<_ReportView> {
                     builder: (context, c2) {
                       final label = _ratingLabel(overallRating ?? 0);
 
+                      // Narrow cards (phones) can't fit a 300px gauge beside
+                      // the details — shrink it and stack the details below.
+                      final stackGauge = c2.maxWidth < 460;
+                      final gaugeW = math.min(300.0, c2.maxWidth);
                       final gauge = SizedBox(
-                        width: 300,
-                        height: 150,
+                        width: gaugeW,
+                        height: gaugeW / 2,
                         child: _OdometerGauge(value: overallRating ?? 0),
                       );
 
@@ -667,6 +683,16 @@ class _ReportViewState extends State<_ReportView> {
                           const Text('Scale: 0 to 5', style: TextStyle(color: Colors.black54)),
                         ],
                       );
+
+                      if (stackGauge) {
+                        return Column(
+                          children: [
+                            gauge,
+                            const SizedBox(height: 12),
+                            Align(alignment: Alignment.centerLeft, child: details),
+                          ],
+                        );
+                      }
 
                       return Row(
                         crossAxisAlignment: CrossAxisAlignment.center,
@@ -688,40 +714,23 @@ class _ReportViewState extends State<_ReportView> {
                   ),
                 );
 
-                final summaryCard = _QuickSummaryCard(
-                  types: types,
-                  photosCount: _photos.length,
-                  damagesCount: damages.length,
-                );
-
                 if (!wide) {
                   return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       sectionOverviewCard,
                       const SizedBox(height: 12),
                       overallCard,
-                      const SizedBox(height: 12),
-                      summaryCard,
                     ],
                   );
                 }
 
-                return Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(flex: 7, child: sectionOverviewCard),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      flex: 5,
-                      child: Column(
-                        children: [
-                          overallCard,
-                          const SizedBox(height: 12),
-                          summaryCard,
-                        ],
-                      ),
-                    ),
-                  ],
+                // Equal heights so neither card leaves a gap under it,
+                // however many sections the checklist has.
+                return _EqualHeightRow(
+                  flex: const [7, 5],
+                  gap: 12,
+                  children: [sectionOverviewCard, overallCard],
                 );
               },
             ),
@@ -1026,6 +1035,7 @@ class _ReportViewState extends State<_ReportView> {
     const contentWidth = 1150.0;
 
     html.IFrameElement? iframe;
+    StreamSubscription<html.MessageEvent>? msgSub;
     try {
       // Load static assets as base64 data URIs so they work in any deployment
       // (handles sub-path base-href builds where origin-only URLs would 404).
@@ -1086,35 +1096,33 @@ class _ReportViewState extends State<_ReportView> {
         loadSub.cancel();
         if (!loaded.isCompleted) loaded.complete();
       });
+      // The iframe's script (loads html2pdf.js, draws the damage-map canvas,
+      // saves the PDF) posts 'reportPdf:<fileName>:done' or ':error:<msg>'
+      // to this window when finished. Listen before loading it so the
+      // message can't be missed. (Polling the iframe's window flags from
+      // Dart never saw them flip, so the button spun until the timeout.)
+      final prefix = 'reportPdf:$fileName:';
+      final finished = Completer<String?>(); // null = success, else error text
+      msgSub = html.window.onMessage.listen((e) {
+        final data = e.data;
+        if (data is! String || !data.startsWith(prefix) || finished.isCompleted) return;
+        final result = data.substring(prefix.length);
+        finished.complete(result == 'done' ? null : result.replaceFirst('error:', ''));
+      });
+
       iframe.srcdoc = content;
       await loaded.future.timeout(const Duration(seconds: 10));
 
-      // Cast to Window fails at runtime — the browser always hands back a
-      // cross-frame WindowProxy (_DOMWindowCrossFrame) for contentWindow,
-      // even for a same-document srcdoc iframe. JsObject.fromBrowserObject
-      // works with that proxy directly, no typed cast needed.
-      final iframeWindow = iframe.contentWindow;
-      if (iframeWindow == null) {
-        throw Exception('Could not render report content.');
-      }
-      final jsWindow = js.JsObject.fromBrowserObject(iframeWindow);
-
-      // Poll for the iframe's own script to report completion — it loads
-      // html2pdf.js, draws the damage-map canvas, then runs the export.
-      final deadline = DateTime.now().add(const Duration(seconds: 45));
-      while (jsWindow['__reportPdfDone'] != true) {
-        if (DateTime.now().isAfter(deadline)) {
-          throw Exception('Timed out generating the PDF.');
-        }
-        await Future.delayed(const Duration(milliseconds: 100));
-      }
-
-      final err = jsWindow['__reportPdfError'];
-      if (err != null) throw Exception(err.toString());
+      final err = await finished.future.timeout(
+        const Duration(seconds: 45),
+        onTimeout: () => throw Exception('Timed out generating the PDF.'),
+      );
+      if (err != null) throw Exception(err);
     } catch (e) {
       if (!mounted) return;
       showTopSnack(context, 'Failed to download report: $e', variant: 'error');
     } finally {
+      await msgSub?.cancel();
       iframe?.remove();
       if (mounted) setState(() => _downloading = false);
     }
@@ -1747,11 +1755,18 @@ class _ReportViewState extends State<_ReportView> {
         jsPDF: { unit: 'pt', format: [$pdfPageWidthPt, $pdfPageHeightPt], orientation: 'portrait' },
         pagebreak: { mode: ['css', 'legacy'] }
       };
+      // Also tell the parent page directly — reading these window flags
+      // across the frame boundary from Dart is unreliable, postMessage isn't.
+      function __notifyParent(result){
+        try { parent.postMessage('reportPdf:$pdfFileName:' + result, '*'); } catch (_) {}
+      }
       html2pdf().set(opts).from(document.body).save().then(function(){
         window.__reportPdfDone = true;
+        __notifyParent('done');
       }).catch(function(e){
         window.__reportPdfError = String(e && e.message ? e.message : e);
         window.__reportPdfDone = true;
+        __notifyParent('error:' + window.__reportPdfError);
       });
     }
 
@@ -1893,7 +1908,15 @@ class _ReviewDialogState extends State<_ReviewDialog> {
               style: TextStyle(color: Colors.black54),
             ),
             const SizedBox(height: 12),
-            Row(children: [_star(1), _star(2), _star(3), _star(4), _star(5)]),
+            // Scales down (only) when the dialog is narrower than 5 buttons.
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [_star(1), _star(2), _star(3), _star(4), _star(5)],
+              ),
+            ),
             const SizedBox(height: 8),
             TextField(
               controller: _ctrl,
@@ -3270,23 +3293,26 @@ class _HeaderRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      alignment: Alignment.center,
-      children: [
-        // Centered title
-        Text(
-          title,
-          textAlign: TextAlign.center,
-          style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
-        ),
+    return LayoutBuilder(builder: (context, c) {
+    // Narrow screens: the floating logo/buttons bar would overlap the
+    // centered title, so the title drops below the bar instead.
+    final narrow = c.maxWidth < 600;
 
-        // Logo left, buttons right — floats above title without affecting its centering
-        Row(
+    final titleText = Text(
+      title,
+      textAlign: TextAlign.center,
+      style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
+    );
+
+    // Logo left, buttons right — floats above title without affecting its centering
+    final bar = Row(
           children: [
-            Image.asset(
-              'assets/logo/autoscope_logo_old.png',
-              height: 104,
-              errorBuilder: (_, _, _) => const SizedBox.shrink(),
+            Flexible(
+              child: Image.asset(
+                'assets/logo/autoscope_logo_old.png',
+                height: narrow ? 64 : 104,
+                errorBuilder: (_, _, _) => const SizedBox.shrink(),
+              ),
             ),
             const Spacer(),
             if (showReview)
@@ -3351,9 +3377,26 @@ class _HeaderRow extends StatelessWidget {
               ),
             ),
           ],
-        ),
+        );
+
+    if (narrow) {
+      return Column(
+        children: [
+          bar,
+          const SizedBox(height: 8),
+          titleText,
+        ],
+      );
+    }
+
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        titleText,
+        bar,
       ],
     );
+    });
   }
 }
 
@@ -3493,6 +3536,119 @@ class _SubSectionMapCard extends StatelessWidget {
           for (final k in keys) _kv(_prettyKey(k), _cleanStr(data[k]).isEmpty ? '-' : _cleanStr(data[k])),
         ],
       ),
+    );
+  }
+}
+
+/// Lays children side by side ([flex] widths, [gap] between) and gives every
+/// child the height of the tallest, so adjacent cards end on the same line
+/// instead of leaving ragged empty space under the shorter one.
+/// Same result as Row + IntrinsicHeight + stretch, but works with children
+/// that use LayoutBuilder (which can't report intrinsic sizes).
+class _EqualHeightRow extends MultiChildRenderObjectWidget {
+  final List<int> flex;
+  final double gap;
+
+  const _EqualHeightRow({required this.flex, this.gap = 12, required super.children});
+
+  @override
+  RenderObject createRenderObject(BuildContext context) => _RenderEqualHeightRow(flex: flex, gap: gap);
+
+  @override
+  void updateRenderObject(BuildContext context, _RenderEqualHeightRow renderObject) {
+    renderObject
+      ..flex = flex
+      ..gap = gap;
+  }
+}
+
+class _EqualHeightParentData extends ContainerBoxParentData<RenderBox> {}
+
+class _RenderEqualHeightRow extends RenderBox
+    with
+        ContainerRenderObjectMixin<RenderBox, _EqualHeightParentData>,
+        RenderBoxContainerDefaultsMixin<RenderBox, _EqualHeightParentData> {
+  _RenderEqualHeightRow({required List<int> flex, required double gap})
+      : _flex = flex,
+        _gap = gap;
+
+  List<int> _flex;
+  set flex(List<int> v) {
+    if (v == _flex) return;
+    _flex = v;
+    markNeedsLayout();
+  }
+
+  double _gap;
+  set gap(double v) {
+    if (v == _gap) return;
+    _gap = v;
+    markNeedsLayout();
+  }
+
+  @override
+  void setupParentData(RenderBox child) {
+    if (child.parentData is! _EqualHeightParentData) child.parentData = _EqualHeightParentData();
+  }
+
+  @override
+  void performLayout() {
+    final kids = getChildrenAsList();
+    if (kids.isEmpty) {
+      size = constraints.smallest;
+      return;
+    }
+    int flexAt(int i) => i < _flex.length && _flex[i] > 0 ? _flex[i] : 1;
+    final totalFlex = List.generate(kids.length, flexAt).reduce((a, b) => a + b);
+    final avail = math.max(0.0, constraints.maxWidth - _gap * (kids.length - 1));
+    final widths = List.generate(kids.length, (i) => avail * flexAt(i) / totalFlex);
+
+    // Pass 1: natural heights.
+    var maxH = 0.0;
+    for (var i = 0; i < kids.length; i++) {
+      kids[i].layout(BoxConstraints.tightFor(width: widths[i]), parentUsesSize: true);
+      maxH = math.max(maxH, kids[i].size.height);
+    }
+
+    // Pass 2: every child at the tallest height.
+    var x = 0.0;
+    for (var i = 0; i < kids.length; i++) {
+      kids[i].layout(BoxConstraints.tightFor(width: widths[i], height: maxH), parentUsesSize: true);
+      (kids[i].parentData! as _EqualHeightParentData).offset = Offset(x, 0);
+      x += widths[i] + _gap;
+    }
+
+    size = constraints.constrain(Size(constraints.maxWidth, maxH));
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) => defaultPaint(context, offset);
+
+  @override
+  bool hitTestChildren(BoxHitTestResult result, {required Offset position}) =>
+      defaultHitTestChildren(result, position: position);
+}
+
+/// Stacks cards vertically; when given a fixed height (inside
+/// [_EqualHeightRow]) the last card stretches to fill it, so the column's
+/// bottom edge lines up with its neighbour.
+class _FillColumn extends StatelessWidget {
+  final List<Widget> children;
+  final double gap;
+  const _FillColumn({required this.children, this.gap = 12});
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, c) {
+        final items = <Widget>[];
+        for (var i = 0; i < children.length; i++) {
+          if (i > 0) items.add(SizedBox(height: gap));
+          final isLast = i == children.length - 1;
+          items.add(isLast && c.hasBoundedHeight ? Expanded(child: children[i]) : children[i]);
+        }
+        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: items);
+      },
     );
   }
 }

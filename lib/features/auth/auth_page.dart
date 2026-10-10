@@ -12,6 +12,7 @@ class AuthPage extends StatelessWidget {
     return Scaffold(
       appBar: const PublicNavBar(),
       body: Center(
+        child: SingleChildScrollView(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 520),
           child: Padding(
@@ -38,6 +39,7 @@ class AuthPage extends StatelessWidget {
             ),
           ),
         ),
+        ),
       ),
     );
   }
@@ -60,7 +62,16 @@ class _LoginHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
+    // Same breakpoint as the staff login header: on narrow phones the switch
+    // button moves below so the title row never gets cramped.
+    final isMobile = MediaQuery.sizeOf(context).width < 420;
+
+    final switchBtn = TextButton(
+      onPressed: onSwitch,
+      child: Text(switchText),
+    );
+
+    final headerRow = Row(
       children: [
         Container(
           height: 44,
@@ -78,7 +89,14 @@ class _LoginHeader extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  Text(title, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+                  Flexible(
+                    child: Text(
+                      title,
+                      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
                   const SizedBox(width: 8),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -99,11 +117,21 @@ class _LoginHeader extends StatelessWidget {
             ],
           ),
         ),
-        const SizedBox(width: 12),
-        TextButton(
-          onPressed: onSwitch,
-          child: Text(switchText),
-        ),
+        if (!isMobile) ...[
+          const SizedBox(width: 12),
+          switchBtn,
+        ],
+      ],
+    );
+
+    if (!isMobile) return headerRow;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        headerRow,
+        const SizedBox(height: 10),
+        Align(alignment: Alignment.centerRight, child: switchBtn),
       ],
     );
   }

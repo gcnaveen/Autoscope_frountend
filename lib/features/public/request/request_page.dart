@@ -1738,8 +1738,10 @@ Terms & Conditions
           Icon(icon, size: 18, color: Colors.black87),
           const SizedBox(width: 8),
         ],
-        Text(title,
-            style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14)),
+        Flexible(
+          child: Text(title,
+              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14)),
+        ),
       ],
     );
   }
@@ -1748,6 +1750,7 @@ Terms & Conditions
     return SizedBox(
       width: width,
       child: DropdownButtonFormField<String>(
+        isExpanded: true,
         value: _productType,
         autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
         decoration: _dec(
@@ -1776,6 +1779,7 @@ Terms & Conditions
     return SizedBox(
       width: width,
       child: DropdownButtonFormField<String>(
+        isExpanded: true,
         value: _reason,
         autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
         decoration: _dec(
@@ -2021,6 +2025,7 @@ Terms & Conditions
                                   builder: (context) {
                                     final makeField = field(
                                       DropdownButtonFormField<String>(
+                                        isExpanded: true,
                                         value: selectedMake,
                                         autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
                                         items: makes
@@ -2088,6 +2093,7 @@ Terms & Conditions
                                     );
                                     final modelField = field(
                                       DropdownButtonFormField<String>(
+                                        isExpanded: true,
                                         value: selectedModel,
                                         autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
                                         items: models
@@ -2251,6 +2257,7 @@ Terms & Conditions
                                     ),
                                     field(
                                       DropdownButtonFormField<String>(
+                                        isExpanded: true,
                                         value: preferredTimeCtrl.text,
                                         autovalidateMode: AutovalidateMode.onUserInteraction, // ✅ only this field
                                         items: const [
@@ -2318,6 +2325,7 @@ Terms & Conditions
                                   children: [
                                     field(
                                       DropdownButtonFormField<String>(
+                                        isExpanded: true,
                                         initialValue: selectedEmirate,
                                         autovalidateMode: AutovalidateMode.onUserInteraction,
                                         decoration: _dec(
@@ -2368,6 +2376,7 @@ Terms & Conditions
                                     if (selectedEmirate != null)
                                       field(
                                         DropdownButtonFormField<String>(
+                                          isExpanded: true,
                                           key: ValueKey(selectedEmirate),
                                           initialValue: selectedArea,
                                           autovalidateMode: AutovalidateMode.onUserInteraction,

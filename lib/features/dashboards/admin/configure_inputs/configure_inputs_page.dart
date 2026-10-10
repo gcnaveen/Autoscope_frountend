@@ -897,6 +897,7 @@ class _FieldFormDialogState extends State<_FieldFormDialog> {
 
                   // Type
                   DropdownButtonFormField<String>(
+                    isExpanded: true,
                     initialValue: _type,
                     decoration: const InputDecoration(
                       labelText: 'Field Type',
@@ -912,6 +913,7 @@ class _FieldFormDialogState extends State<_FieldFormDialog> {
 
                   // Section
                   DropdownButtonFormField<String>(
+                    isExpanded: true,
                     initialValue: _section,
                     decoration: const InputDecoration(
                       labelText: 'Form Section',

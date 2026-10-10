@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../../shared/app_shell.dart';
 import '../../../shared/top_snackbar.dart';
+import '../../../shared/utils/responsive.dart';
 import '../../../../services/service_locator.dart';
 
 
@@ -468,6 +469,9 @@ class _ChecklistEditorPageState extends State<ChecklistEditorPage> {
   @override
   Widget build(BuildContext context) {
     final saveEnabled = !_loading && !_saving && _dirty;
+    // Phones: header actions drop below the name fields, and the sections
+    // panel stacks above the checklist instead of a fixed 300px side column.
+    final stacked = Responsive.isMobile(context);
 
     return PopScope(
       canPop: !_dirty,
@@ -485,11 +489,9 @@ class _ChecklistEditorPageState extends State<ChecklistEditorPage> {
                     // Inline header: editable name + description + save
                     Padding(
                       padding: const EdgeInsets.fromLTRB(18, 14, 18, 8),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          Expanded(
-                            child: Column(
+                      child: _buildHeaderLayout(
+                        stacked: stacked,
+                        fields: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               mainAxisSize: MainAxisSize.min,
                               children: [
@@ -531,14 +533,12 @@ class _ChecklistEditorPageState extends State<ChecklistEditorPage> {
                                 ),
                               ],
                             ),
-                          ),
-                          const SizedBox(width: 16),
+                        actions: [
                           OutlinedButton.icon(
                             onPressed: _sections.isEmpty ? null : _showPreview,
                             icon: const Icon(Icons.visibility_outlined, size: 18),
                             label: const Text('Preview'),
                           ),
-                          const SizedBox(width: 8),
                           Tooltip(
                             message: saveEnabled ? '' : 'Nothing updated',
                             child: FilledButton.icon(
@@ -558,14 +558,28 @@ class _ChecklistEditorPageState extends State<ChecklistEditorPage> {
                         padding: const EdgeInsets.fromLTRB(18, 8, 18, 18),
                         child: Card(
                           clipBehavior: Clip.antiAlias,
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              _buildLeftPanel(),
-                              const VerticalDivider(width: 1),
-                              Expanded(child: _buildChecklistArea()),
-                            ],
-                          ),
+                          child: stacked
+                              ? LayoutBuilder(
+                                  builder: (ctx, c) => Column(
+                                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                                    children: [
+                                      SizedBox(
+                                        height: (c.maxHeight * 0.4).clamp(120.0, 320.0),
+                                        child: _buildLeftPanel(width: double.infinity),
+                                      ),
+                                      const Divider(height: 1),
+                                      Expanded(child: _buildChecklistArea()),
+                                    ],
+                                  ),
+                                )
+                              : Row(
+                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                                  children: [
+                                    _buildLeftPanel(),
+                                    const VerticalDivider(width: 1),
+                                    Expanded(child: _buildChecklistArea()),
+                                  ],
+                                ),
                         ),
                       ),
                     ),
@@ -575,11 +589,34 @@ class _ChecklistEditorPageState extends State<ChecklistEditorPage> {
     );
   }
 
-  Widget _buildLeftPanel() {
+  Widget _buildHeaderLayout({required bool stacked, required Widget fields, required List<Widget> actions}) {
+    final buttons = Wrap(spacing: 8, runSpacing: 8, children: actions);
+    if (stacked) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          fields,
+          const SizedBox(height: 10),
+          Align(alignment: Alignment.centerRight, child: buttons),
+        ],
+      );
+    }
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Expanded(child: fields),
+        const SizedBox(width: 16),
+        buttons,
+      ],
+    );
+  }
+
+  Widget _buildLeftPanel({double width = 300}) {
     final hasSections = _sections.isNotEmpty;
 
     return SizedBox(
-      width: 300,
+      width: width,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

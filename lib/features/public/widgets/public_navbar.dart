@@ -204,13 +204,18 @@ class PublicNavBar extends StatelessWidget implements PreferredSizeWidget {
         onTap: () => context.go('/'), // ✅ click logo -> home
         borderRadius: BorderRadius.circular(12),
         child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Image.asset(
-              'assets/logo/autoscope_logo.png',
-              height: 42, // adjust to fit AppBar height
-              fit: BoxFit.contain,
-              filterQuality: FilterQuality.high,
-              isAntiAlias: true,
+            // Flexible: on narrow phones the logo shrinks (keeping its aspect
+            // ratio) to leave room for the action icons instead of overflowing.
+            Flexible(
+              child: Image.asset(
+                'assets/logo/autoscope_logo.png',
+                height: 42, // adjust to fit AppBar height
+                fit: BoxFit.contain,
+                filterQuality: FilterQuality.high,
+                isAntiAlias: true,
+              ),
             ),
             // const SizedBox(width: 10),
             // const Text(

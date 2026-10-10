@@ -131,6 +131,7 @@ class _ProfilePageState extends State<ProfilePage> {
     return AppShell(
       title: 'My Profile',
       child: Center(
+        child: SingleChildScrollView(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 720),
           child: Padding(
@@ -189,6 +190,7 @@ class _ProfilePageState extends State<ProfilePage> {
               ),
             ),
           ),
+        ),
         ),
       ),
     );
