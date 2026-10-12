@@ -224,7 +224,6 @@ import '../features/dashboards/admin/inspections/inspection_requests_page.dart';
 import '../features/dashboards/admin/checklists/checklist_templates_page.dart';
 import '../features/dashboards/admin/manage_reviews/manage_reviews_page.dart';
 
-import '../features/dashboards/admin/vehicle_catalog_page.dart';
 import '../features/dashboards/admin/configure_inputs/configure_inputs_page.dart';
 import '../features/dashboards/admin/vehicle_inputs/vehicle_inputs_hub_page.dart';
 import '../features/dashboards/admin/vehicle_inputs/vehicle_specs_page.dart';
@@ -305,9 +304,11 @@ GoRouter buildRouter() {
         path: '/dashboard/admin/vehicle-inputs',
         builder: (context, state) => const VehicleInputsHubPage(),
       ),
+      // Makes & Models page removed — vehicle data is managed only in
+      // Vehicle Specs. Old links redirect there.
       GoRoute(
         path: '/dashboard/admin/vehicle-catalog',
-        builder: (context, state) => const VehicleCatalogPage(),
+        redirect: (context, state) => '/dashboard/admin/vehicle-specs',
       ),
       GoRoute(
         path: '/dashboard/admin/vehicle-specs',

@@ -326,81 +326,6 @@ class InspectionRequestsService {
     return uniq;
   }
 
-  /// ✅ Get vehicle makes list from backend
-  Future<List<Map<String, dynamic>>> listVehicleMakesDetailed() async {
-    final res = await apiClient.getJson('/admin/makes');
-
-    dynamic list = res;
-    if (res is Map && res['data'] is List) list = res['data'];
-
-    if (list is! List) return [];
-
-    final out = <Map<String, dynamic>>[];
-
-    for (final x in list) {
-      if (x is String) {
-        // If backend returns only strings, id will be missing.
-        out.add({'_id': '', 'name': x});
-      } else if (x is Map) {
-        final m = Map<String, dynamic>.from(x);
-        final id = (m['_id'] ?? m['id'] ?? '').toString();
-        final name = (m['name'] ?? m['make'] ?? '').toString();
-        out.add({'_id': id, 'name': name});
-      }
-    }
-
-    // clean + unique + sort
-    out.removeWhere((e) => (e['name'] ?? '').toString().trim().isEmpty);
-    final seen = <String>{};
-    final uniq = <Map<String, dynamic>>[];
-    for (final e in out) {
-      final name = (e['name'] ?? '').toString().trim();
-      if (seen.add(name.toUpperCase())) uniq.add(e);
-    }
-    uniq.sort((a, b) => a['name']
-        .toString()
-        .toLowerCase()
-        .compareTo(b['name'].toString().toLowerCase()));
-    return uniq;
-  }
-
-  /// ✅ GET makes (names only) - keeps your old signature working
-  Future<List<String>> listVehicleMakes() async {
-    final detailed = await listVehicleMakesDetailed();
-    return detailed
-        .map((e) => (e['name'] ?? '').toString())
-        .where((s) => s.trim().isNotEmpty)
-        .toList();
-  }
-
-  /// ✅ GET models for a makeId (your endpoint uses /admin/makes/:id and returns models)
-  Future<List<String>> listVehicleModels(String makeId) async {
-    final mk = makeId.trim();
-    if (mk.isEmpty) return [];
-
-    // get vehicle data by make id in this we will get all the model
-    final res = await apiClient.getJson('/admin/makes/${Uri.encodeComponent(mk)}');
-
-    final data = (res is Map) ? res['data'] : null;
-    final models = (data is Map) ? data['models'] : null;
-
-    if (models is! List) return <String>[];
-
-    final out = <String>[];
-    for (final m in models) {
-      if (m is Map && m['name'] != null) {
-        final name = m['name'].toString().trim();
-        if (name.isNotEmpty) out.add(name);
-      } else if (m is String) {
-        final name = m.trim();
-        if (name.isNotEmpty) out.add(name);
-      }
-    }
-
-    out.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-    return out.toSet().toList(); // unique
-  }
-
   /// ✅ GET vehicle-spec catalog rows for a make/model (variant → engine → specs).
   /// Any failure (network error, malformed shape, etc.) is swallowed and an
   /// empty list is returned so the Start Inspection wizard keeps working.
@@ -420,146 +345,86 @@ class InspectionRequestsService {
     }
   }
 
-  /// Full vehicle-specs catalog, paginated through until exhausted and cached
-  /// for the lifetime of this service instance. The Make/Model dropdowns on
-  /// the public request form and the inspector wizard are backed by the much
-  /// smaller, separately-curated /admin/makes list — this catalog (seeded via
-  /// the admin "Vehicle Specs" CSV bulk import) is the comprehensive source,
-  /// so it's merged in alongside /admin/makes rather than replacing it (any
-  /// make/model manually added through the "OTHER" + approval flow still
-  /// shows up too).
-  List<Map<String, dynamic>>? _specsCatalogCache;
+  /// Fetches the FULL vehicle-specs catalog fresh from the API — no caching —
+  /// paging through `/admin/vehicle-specs` until every row is in. Forms call
+  /// this once when they open and derive makes, models and Variant/Engine
+  /// rows from the result locally (see [VehicleCatalog]), so selecting a
+  /// make/model needs no further catalog calls and can't miss rows.
+  ///
+  /// This catalog (admin → Vehicle Specs, incl. its CSV import) is the single
+  /// source of truth for makes, models and all vehicle data.
+  ///
+  /// Never throws: a page that fails twice ends the load and the result is
+  /// returned with `complete == false` so the caller can warn the user.
+  Future<VehicleCatalog> fetchVehicleCatalog() async {
+    const limit = 100;
+    const maxPages = 1000; // hard stop against a misbehaving paginator
 
-  Future<List<Map<String, dynamic>>> _loadFullSpecsCatalog() async {
-    if (_specsCatalogCache != null) return _specsCatalogCache!;
+    final rows = <Map<String, dynamic>>[];
+    final seenIds = <String>{};
+    var fetched = 0; // unique rows received, approved or not
+    int? reportedTotal;
+    var complete = true;
 
-    final out = <Map<String, dynamic>>[];
-    try {
-      const limit = 100;
-      int page = 1;
-      int totalPages = 1;
-
-      do {
-        final res = await apiClient
-            .getJson('/admin/vehicle-specs?page=$page&limit=$limit');
-        final data = (res is Map) ? res['data'] : null;
-        final items = (data is Map) ? data['items'] : null;
-        if (items is List) {
-          out.addAll(
-              items.whereType<Map>().map((e) => Map<String, dynamic>.from(e)));
+    for (var page = 1; page <= maxPages; page++) {
+      dynamic res;
+      try {
+        res = await apiClient.getJson('/admin/vehicle-specs?page=$page&limit=$limit');
+      } catch (_) {
+        // One retry per page before giving up on the rest.
+        try {
+          res = await apiClient.getJson('/admin/vehicle-specs?page=$page&limit=$limit');
+        } catch (_) {
+          complete = false;
+          break;
         }
-
-        final pag = (data is Map) ? data['pagination'] : null;
-        totalPages = (pag is Map)
-            ? (int.tryParse('${pag['totalPages'] ?? 1}') ?? 1).clamp(1, 1000)
-            : 1;
-        page++;
-      } while (page <= totalPages);
-    } catch (_) {
-      // Keep whatever was collected before the failure; callers treat an
-      // empty/partial catalog as "fall back to /admin/makes only".
-    }
-
-    _specsCatalogCache = out;
-    return out;
-  }
-
-  /// Unique, sorted Make names from the vehicle-specs catalog.
-  Future<List<String>> listCatalogMakes() async {
-    final rows = await _loadFullSpecsCatalog();
-    final set = <String>{};
-    for (final r in rows) {
-      final m = (r['make'] ?? '').toString().trim().toUpperCase();
-      if (m.isNotEmpty) set.add(m);
-    }
-    final list = set.toList()..sort();
-    return list;
-  }
-
-  /// Unique, sorted Model names for [make] from the vehicle-specs catalog.
-  Future<List<String>> listCatalogModelsForMake(String make) async {
-    final target = make.trim().toUpperCase();
-    if (target.isEmpty) return [];
-
-    final rows = await _loadFullSpecsCatalog();
-    final set = <String>{};
-    for (final r in rows) {
-      final m = (r['make'] ?? '').toString().trim().toUpperCase();
-      if (m != target) continue;
-      final model = (r['model'] ?? '').toString().trim().toUpperCase();
-      if (model.isNotEmpty) set.add(model);
-    }
-    final list = set.toList()..sort();
-    return list;
-  }
-
-  /// ✅ POST add make
-  String? _extractIdFromRes(dynamic res) {
-    if (res is! Map) return null;
-
-    final data = res['data'];
-
-    // { data: { id/_id/makeId/modelId } }
-    if (data is Map) {
-      final id = (data['id'] ?? data['_id'] ?? data['makeId'] ?? data['modelId'])
-          ?.toString()
-          .trim();
-      if (id != null && id.isNotEmpty) return id;
-
-      // sometimes makeId is object { _id, name }
-      final mk = data['makeId'];
-      if (mk is Map) {
-        final mid = (mk['_id'] ?? mk['id'])?.toString().trim();
-        if (mid != null && mid.isNotEmpty) return mid;
       }
-    }
 
-    // fallback: { id/_id } at root
-    final rootId = (res['id'] ?? res['_id'])?.toString().trim();
-    return (rootId == null || rootId.isEmpty) ? null : rootId;
-  }
-
-  /// returns created makeId (or null if backend doesn't return it)
-  Future<String?> addVehicleMake(String name) async {
-    final n = name.trim();
-    if (n.isEmpty) return null;
-
-    try {
-      final res = await apiClient.postJson('/admin/makes', {'name': n});
-      return _extractIdFromRes(res);
-    } catch (e) {
-      final s = e.toString().toLowerCase();
-      if (s.contains('already') ||
-          s.contains('exists') ||
-          s.contains('duplicate') ||
-          s.contains('409')) {
-        return null; // ignore duplicate
+      // Accept every envelope shape this endpoint is parsed with elsewhere
+      // (VehicleSpecsService.listVehicleSpecsPaged / getVehicleSpecs):
+      // data.{vehicleSpecs|items|rows|data}, data as a plain list, or a
+      // root-level list.
+      final data = (res is Map) ? res['data'] : null;
+      dynamic items;
+      dynamic pag;
+      if (data is Map) {
+        items = data['vehicleSpecs'] ?? data['items'] ?? data['rows'] ?? data['data'];
+        pag = data['pagination'] ?? data;
+      } else if (data is List) {
+        items = data;
+        pag = (res is Map) ? (res['pagination'] ?? res) : null;
+      } else if (res is List) {
+        items = res;
       }
-      rethrow;
-    }
-  }
 
-  /// ✅ POST add model (needs makeId!)
-  Future<void> addVehicleModel({required String makeId, required String name}) async {
-    final mk = makeId.trim();
-    final n = name.trim();
-    if (mk.isEmpty || n.isEmpty) return;
-
-    try {
-      await apiClient.postJson('/admin/models', {
-        'name': n,
-        'makeId': mk,
-      });
-    } catch (e) {
-      final s = e.toString().toLowerCase();
-      if (s.contains('already') ||
-          s.contains('exists') ||
-          s.contains('duplicate') ||
-          s.contains('409')) {
-        return; // ignore duplicate
+      final pageItems = (items is List)
+          ? items.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
+          : <Map<String, dynamic>>[];
+      for (final r in pageItems) {
+        // De-dupe by id in case the backend's page order shifts between calls.
+        final id = (r['id'] ?? r['_id'] ?? '').toString();
+        if (id.isNotEmpty && !seenIds.add(id)) continue;
+        fetched++;
+        // Only approved rows feed the forms; pending "OTHER" suggestions
+        // stay in admin → Vehicle Specs until the admin approves them.
+        if (isApprovedVehicleSpec(r)) rows.add(r);
       }
-      rethrow;
+
+      int? totalPages;
+      if (pag is Map) {
+        totalPages = int.tryParse('${pag['totalPages'] ?? pag['pages'] ?? ''}');
+        reportedTotal ??= int.tryParse('${pag['total'] ?? pag['totalCount'] ?? ''}');
+      }
+
+      // Keep going while the backend says there are more pages, or — when it
+      // doesn't report a page count — while pages keep coming back full.
+      final more = totalPages != null ? page < totalPages : pageItems.length >= limit;
+      if (!more || pageItems.isEmpty) break;
     }
+
+    if (reportedTotal != null && fetched < reportedTotal) complete = false;
+
+    return VehicleCatalog(rows, complete: complete);
   }
 
   /* =========================================================
@@ -965,5 +830,62 @@ class InspectionRequestsService {
     if (res is Map<String, dynamic>) return res;
     if (res is Map) return Map<String, dynamic>.from(res);
     return {'raw': res};
+  }
+}
+
+
+/// Whether a vehicle-specs row is approved (usable in the forms). Rows with
+/// no status — i.e. everything imported before the approval flow existed —
+/// count as approved; 'pending' (an "OTHER" make/model awaiting admin
+/// review) and 'rejected' do not.
+bool isApprovedVehicleSpec(Map<String, dynamic> row) {
+  final s = (row['status'] ?? '').toString().trim().toLowerCase();
+  return s.isEmpty || s == 'approved' || s == 'active';
+}
+
+/// The full vehicle-specs catalog as loaded by
+/// [InspectionRequestsService.fetchVehicleCatalog], with the lookups the
+/// forms need. Make/model matching is case-insensitive (trimmed, upper-cased),
+/// matching how the dropdowns store names.
+class VehicleCatalog {
+  final List<Map<String, dynamic>> rows;
+
+  /// False when some pages couldn't be fetched (or fewer rows came back than
+  /// the backend reported), i.e. makes/models may be missing.
+  final bool complete;
+
+  VehicleCatalog(this.rows, {this.complete = true});
+
+  static String _norm(dynamic v) => (v ?? '').toString().trim().toUpperCase();
+
+  /// Unique, sorted make names.
+  List<String> get makes {
+    final set = <String>{};
+    for (final r in rows) {
+      final m = _norm(r['make']);
+      if (m.isNotEmpty) set.add(m);
+    }
+    return set.toList()..sort();
+  }
+
+  /// Unique, sorted model names for [make].
+  List<String> modelsFor(String make) {
+    final target = _norm(make);
+    if (target.isEmpty) return [];
+    final set = <String>{};
+    for (final r in rows) {
+      if (_norm(r['make']) != target) continue;
+      final model = _norm(r['model']);
+      if (model.isNotEmpty) set.add(model);
+    }
+    return set.toList()..sort();
+  }
+
+  /// All catalog rows (variant / engine / specs) for [make] + [model].
+  List<Map<String, dynamic>> specsFor(String make, String model) {
+    final mk = _norm(make);
+    final md = _norm(model);
+    if (mk.isEmpty || md.isEmpty) return [];
+    return rows.where((r) => _norm(r['make']) == mk && _norm(r['model']) == md).toList();
   }
 }

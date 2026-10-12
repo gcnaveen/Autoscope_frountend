@@ -26,18 +26,23 @@ class VehicleSpecsService {
     return null;
   }
 
-  /// GET /admin/vehicle-specs?page=&limit=&search=
-  /// Defensive parsing mirrors UsersService.listUsersPaged since the backend
-  /// hasn't picked a final pagination envelope shape yet.
+  /// GET /admin/vehicle-specs?page=&limit=&search=&status=
+  /// [status]: 'pending' | 'approved' (null = all). Defensive parsing mirrors
+  /// UsersService.listUsersPaged since the backend hasn't picked a final
+  /// pagination envelope shape yet.
   Future<({List<Map<String, dynamic>> items, int total, int totalPages})>
       listVehicleSpecsPaged({
     int page = 1,
     int limit = 20,
     String? search,
+    String? status,
   }) async {
     final buf = StringBuffer('/admin/vehicle-specs?page=$page&limit=$limit');
     if (search != null && search.trim().isNotEmpty) {
       buf.write('&search=${Uri.encodeQueryComponent(search.trim())}');
+    }
+    if (status != null && status.isNotEmpty) {
+      buf.write('&status=${Uri.encodeQueryComponent(status)}');
     }
 
     final res = await apiClient.getJson(buf.toString());
@@ -122,9 +127,16 @@ class VehicleSpecsService {
     return _extractRow(res) ?? row;
   }
 
-  /// DELETE /admin/vehicle-specs/:id
+  /// DELETE /admin/vehicle-specs/:id (also used to reject a pending entry)
   Future<void> deleteVehicleSpec(String id) async {
     await apiClient.deleteJson('/admin/vehicle-specs/$id');
+  }
+
+  /// PATCH /admin/vehicle-specs/:id/status { status: 'approved' }
+  /// Approves a pending entry (created from an "OTHER" make/model on a
+  /// request or inspection) so it appears in the forms' dropdowns.
+  Future<void> approveVehicleSpec(String id) async {
+    await apiClient.patchJson('/admin/vehicle-specs/$id/status', {'status': 'approved'});
   }
 
   /// POST /admin/vehicle-specs/import (multipart CSV upload)

@@ -41,6 +41,10 @@ class _VehicleSpecsPageState extends State<VehicleSpecsPage> {
 
   int _searchVersion = 0;
 
+  /// 'all' | 'pending' | 'approved'. Pending rows are make/model details
+  /// entered via "OTHER" on a request or inspection, awaiting review.
+  String _statusFilter = 'all';
+
   @override
   void initState() {
     super.initState();
@@ -77,10 +81,15 @@ class _VehicleSpecsPageState extends State<VehicleSpecsPage> {
         page: page,
         limit: _pageSize,
         search: _searchCtrl.text.trim().isEmpty ? null : _searchCtrl.text.trim(),
+        status: _statusFilter == 'all' ? null : _statusFilter,
       );
       if (!mounted) return;
       setState(() {
-        _items = result.items.map(_SpecRow.fromJson).toList();
+        // Filter client-side too, in case the backend ignores ?status=.
+        _items = result.items
+            .map(_SpecRow.fromJson)
+            .where((r) => _statusFilter == 'all' || (_statusFilter == 'pending') == r.isPending)
+            .toList();
         _page = page;
         _totalPages = result.totalPages;
         _totalItems = result.total;
@@ -164,6 +173,22 @@ class _VehicleSpecsPageState extends State<VehicleSpecsPage> {
       ),
     );
     return res == true;
+  }
+
+  /// Approve a pending entry as-is (use Edit first to correct any details).
+  /// Once approved it appears in the request/inspection form dropdowns.
+  Future<void> _approveRow(_SpecRow row) async {
+    await _runBusy(() async {
+      await vehicleSpecsService.approveVehicleSpec(row.id);
+      _safeTopSnack('"${row.make} ${row.model}" approved — now available in the forms.', variant: 'success');
+      await _loadPage(_page, silent: true);
+    });
+  }
+
+  void _setStatusFilter(String v) {
+    if (_statusFilter == v) return;
+    setState(() => _statusFilter = v);
+    _loadPage(1);
   }
 
   Future<void> _deleteRow(_SpecRow row) async {
@@ -321,6 +346,26 @@ class _VehicleSpecsPageState extends State<VehicleSpecsPage> {
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                     ),
                   ),
+                  const SizedBox(height: 10),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final (value, label) in const [
+                          ('all', 'All'),
+                          ('pending', 'Pending review'),
+                          ('approved', 'Approved'),
+                        ])
+                          ChoiceChip(
+                            label: Text(label),
+                            selected: _statusFilter == value,
+                            onSelected: (_) => _setStatusFilter(value),
+                          ),
+                      ],
+                    ),
+                  ),
                   const SizedBox(height: 12),
 
                   if (_refreshing) ...[
@@ -361,6 +406,7 @@ class _VehicleSpecsPageState extends State<VehicleSpecsPage> {
                         busy: _busy,
                         onEdit: () => _openEditDialog(row),
                         onDelete: () => _deleteRow(row),
+                        onApprove: () => _approveRow(row),
                       ),
                     ),
                     if (_totalPages > 1) ...[
@@ -393,6 +439,7 @@ class _SpecCard extends StatelessWidget {
   final bool busy;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
+  final VoidCallback onApprove;
 
   const _SpecCard({
     required this.row,
@@ -400,7 +447,19 @@ class _SpecCard extends StatelessWidget {
     required this.busy,
     required this.onEdit,
     required this.onDelete,
+    required this.onApprove,
   });
+
+  Widget _pendingBadge() => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: Colors.orange.withValues(alpha: 0.15),
+          border: Border.all(color: Colors.orange.withValues(alpha: 0.45)),
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Text('Pending review',
+            style: TextStyle(color: Colors.orange.shade900, fontWeight: FontWeight.w800, fontSize: 11)),
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -411,10 +470,27 @@ class _SpecCard extends StatelessWidget {
         padding: const EdgeInsets.only(bottom: 8),
         child: Card(
           elevation: 0,
-          color: Colors.black.withValues(alpha: 0.02),
+          color: row.isPending ? Colors.orange.withValues(alpha: 0.06) : Colors.black.withValues(alpha: 0.02),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (row.isPending) ...[
+                  Row(
+                    children: [
+                      _pendingBadge(),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(row.sourceLabel,
+                            maxLines: 1, overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(color: Colors.black54, fontSize: 12)),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                Row(
               children: [
                 Expanded(
                   flex: 2,
@@ -460,16 +536,24 @@ class _SpecCard extends StatelessWidget {
                   child: Text(row.specs.isEmpty ? '—' : row.specs,
                       maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.black54)),
                 ),
+                if (row.isPending)
+                  IconButton(
+                    tooltip: 'Approve',
+                    onPressed: busy ? null : onApprove,
+                    icon: const Icon(Icons.check_circle_outline, color: Colors.green),
+                  ),
                 IconButton(
                   tooltip: 'Edit',
                   onPressed: busy ? null : onEdit,
                   icon: const Icon(Icons.edit_outlined),
                 ),
                 IconButton(
-                  tooltip: 'Delete',
+                  tooltip: row.isPending ? 'Reject (delete)' : 'Delete',
                   onPressed: busy ? null : onDelete,
                   icon: const Icon(Icons.delete_outline, color: Colors.red),
                 ),
+              ],
+            ),
               ],
             ),
           ),
@@ -482,12 +566,18 @@ class _SpecCard extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 10),
       child: Card(
         elevation: 0,
-        color: Colors.black.withValues(alpha: 0.02),
+        color: row.isPending ? Colors.orange.withValues(alpha: 0.06) : Colors.black.withValues(alpha: 0.02),
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (row.isPending) ...[
+                _pendingBadge(),
+                const SizedBox(height: 4),
+                Text(row.sourceLabel, style: const TextStyle(color: Colors.black54, fontSize: 12)),
+                const SizedBox(height: 8),
+              ],
               Text(
                 '${row.make.isEmpty ? '—' : row.make} ${row.model} ${row.variant}'.trim(),
                 maxLines: 1,
@@ -512,6 +602,18 @@ class _SpecCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 10),
+              if (row.isPending) ...[
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: busy ? null : onApprove,
+                    style: FilledButton.styleFrom(backgroundColor: Colors.green.shade700),
+                    icon: const Icon(Icons.check_circle_outline, size: 18),
+                    label: const Text('Approve'),
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
               Row(
                 children: [
                   Expanded(
@@ -527,7 +629,7 @@ class _SpecCard extends StatelessWidget {
                       onPressed: busy ? null : onDelete,
                       style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
                       icon: const Icon(Icons.delete_outline, size: 18),
-                      label: const Text('Delete'),
+                      label: Text(row.isPending ? 'Reject' : 'Delete'),
                     ),
                   ),
                 ],
@@ -564,6 +666,16 @@ class _SpecRow {
   final String bodyType;
   final String specs;
 
+  /// 'pending' for make/model details submitted via "OTHER" on a request or
+  /// inspection; empty/'approved' for regular catalog rows.
+  final String status;
+
+  /// Where a pending entry came from: 'request' | 'inspection' (+ its id).
+  final String source;
+  final String sourceRef;
+
+  bool get isPending => status.toLowerCase() == 'pending';
+
   const _SpecRow({
     required this.id,
     required this.make,
@@ -577,6 +689,9 @@ class _SpecRow {
     required this.driveTypes,
     required this.bodyType,
     required this.specs,
+    this.status = '',
+    this.source = '',
+    this.sourceRef = '',
   });
 
   static int? _asInt(dynamic v) {
@@ -603,7 +718,20 @@ class _SpecRow {
           : const [],
       bodyType: (j['bodyType'] ?? '').toString(),
       specs: (j['specs'] ?? '').toString(),
+      status: (j['status'] ?? '').toString(),
+      source: (j['source'] ?? '').toString(),
+      sourceRef: (j['inspectionRequestId'] ?? j['requestId'] ?? '').toString(),
     );
+  }
+
+  /// e.g. "From an inspection · 6aca8a5c…" — shown on pending entries.
+  String get sourceLabel {
+    final what = switch (source) {
+      'request' => 'From a customer request',
+      'inspection' => 'From an inspection',
+      _ => 'Submitted via "Other"',
+    };
+    return sourceRef.isEmpty ? what : '$what · $sourceRef';
   }
 
   Map<String, dynamic> toJson() => {

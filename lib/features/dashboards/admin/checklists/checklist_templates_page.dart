@@ -239,6 +239,7 @@ class _ChecklistTemplatesPageState extends State<ChecklistTemplatesPage> {
   Future<void> _showTemplatePreview(String id, String name) async {
     setState(() => _busy = true);
     try {
+      dropdownConfigService.clearCache(); // preview the current admin config
       final results = await Future.wait([
         checklistTemplatesService.getTemplateById(id),
         dropdownConfigService.load(),

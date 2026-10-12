@@ -28,12 +28,14 @@ class VehicleInputsHubPage extends StatelessWidget {
                 style: TextStyle(color: Colors.black54, fontSize: 14),
               ),
               const SizedBox(height: 28),
+              // Vehicle Specs is the single source of truth for all vehicle
+              // data (makes, models, variants, engines and auto-fill specs).
               _HubCard(
-                title: 'Makes & Models',
+                title: 'Vehicle Specs',
                 subtitle:
-                    'Add, edit, or remove vehicle makes and their model variants. Used in dependent dropdowns on the inspection form.',
+                    'Manage all vehicle data — makes, models, variants, engines and specs. Feeds the Make/Model dropdowns on the request and inspection forms and the inspection auto-fill.',
                 icon: Icons.directions_car_filled_outlined,
-                onTap: () => context.go('/dashboard/admin/vehicle-catalog'),
+                onTap: () => context.go('/dashboard/admin/vehicle-specs'),
               ),
               const SizedBox(height: 14),
               _HubCard(
@@ -50,14 +52,6 @@ class VehicleInputsHubPage extends StatelessWidget {
                     'Add or remove emirates and their areas. Used as interdependent City / Area dropdowns in the inspection request form.',
                 icon: Icons.map_outlined,
                 onTap: () => context.go('/dashboard/admin/emirates'),
-              ),
-              const SizedBox(height: 14),
-              _HubCard(
-                title: 'Vehicle Specs (Auto-fill)',
-                subtitle:
-                    'Manage the make/model/variant/engine catalog used to auto-fill vehicle details during inspection.',
-                icon: Icons.settings_suggest_outlined,
-                onTap: () => context.go('/dashboard/admin/vehicle-specs'),
               ),
             ],
           ),

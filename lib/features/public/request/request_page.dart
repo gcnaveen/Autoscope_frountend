@@ -955,8 +955,10 @@ import 'package:flutter/services.dart'
         TextInputFormatter;
 import 'package:go_router/go_router.dart';
 
+import '../../../services/api_client.dart' show ApiException;
 import '../../../services/service_locator.dart';
 import '../../../services/emirates_service.dart';
+import '../../../services/inspection_requests_service.dart' show VehicleCatalog;
 import '../../shared/top_snackbar.dart';
 import '../../shared/utils/responsive.dart';
 import '../widgets/public_navbar.dart';
@@ -1091,17 +1093,24 @@ class _RequestPageState extends State<RequestPage> {
   List<String> makes = [];
   List<String> models = [];
 
-  String? selectedMake; // MAKE NAME (UPPERCASE)
-  String? selectedMakeId; // MAKE ID (backend)
-  String? selectedModel; // MODEL NAME (UPPERCASE)
+  /// Full vehicle-specs catalog, fetched fresh once when the form opens
+  /// (in _loadMakes); models per make are read from it locally.
+  VehicleCatalog? _catalog;
 
-  // mapping MAKE_NAME -> makeId
-  final Map<String, String> _makeIdByName = {};
+  String? selectedMake; // MAKE NAME (UPPERCASE)
+  String? selectedModel; // MODEL NAME (UPPERCASE)
 
   bool _makeIsOther = false;
   bool _modelIsOther = false;
   final otherMakeCtrl = TextEditingController();
   final otherModelCtrl = TextEditingController();
+
+  // Vehicle registration — sent under vehicleInfo as vehicleRegNo /
+  // vehicleRegAtEmirate / code. The emirate uses the same options as the
+  // Location section's City / Emirate dropdown.
+  final vehicleRegNoCtrl = TextEditingController();
+  final plateCodeCtrl = TextEditingController();
+  String? selectedRegEmirate;
 
   // ✅ Uppercase formatter
   final _upper = UpperCaseTextFormatter();
@@ -1141,6 +1150,9 @@ class _RequestPageState extends State<RequestPage> {
 
     otherMakeCtrl.dispose();
     otherModelCtrl.dispose();
+
+    vehicleRegNoCtrl.dispose();
+    plateCodeCtrl.dispose();
 
     super.dispose();
   }
@@ -1404,6 +1416,9 @@ Terms & Conditions
   // -----------------------------
   // ✅ MAKE / MODEL API (same approach as StartInspection)
   // -----------------------------
+  /// Makes come ONLY from the vehicle-specs catalog (admin → Vehicle Specs),
+  /// the single source of truth for vehicle data. Fetched fresh every time
+  /// the form opens (no cache).
   Future<void> _loadMakes() async {
     setState(() {
       loadingMakes = true;
@@ -1412,10 +1427,7 @@ Terms & Conditions
       models = [];
 
       selectedMake = null;
-      selectedMakeId = null;
       selectedModel = null;
-
-      _makeIdByName.clear();
 
       _makeIsOther = false;
       _modelIsOther = false;
@@ -1427,35 +1439,11 @@ Terms & Conditions
     });
 
     try {
-      final detailed = await inspectionRequestsService.listVehicleMakesDetailed();
-
-      for (final m in detailed) {
-        final name = (m['name'] ?? '').toString().trim().toUpperCase();
-        final id = (m['id'] ?? m['_id'] ?? '').toString().trim();
-        if (name.isNotEmpty) _makeIdByName[name] = id;
-      }
-
-      // Merge in every make from the vehicle-specs catalog too (comprehensive
-      // list seeded via admin CSV import) so it isn't limited to whatever has
-      // been manually added through /admin/makes. putIfAbsent keeps the real
-      // makeId from /admin/makes when a make exists in both places.
-      try {
-        final catalogMakes = await inspectionRequestsService.listCatalogMakes();
-        for (final name in catalogMakes) {
-          _makeIdByName.putIfAbsent(name, () => '');
-        }
-      } catch (_) {
-        // Catalog merge is best-effort; /admin/makes list still works alone.
-      }
-
-      final names = _makeIdByName.keys.toList()
-        ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+      final catalog = await inspectionRequestsService.fetchVehicleCatalog();
+      _catalog = catalog;
 
       if (!mounted) return;
-      setState(() {
-        makes = [...names, 'OTHER'];
-        if (makes.isEmpty) makes = const ['OTHER'];
-      });
+      setState(() => makes = [...catalog.makes, 'OTHER']);
     } catch (e) {
       if (!mounted) return;
       showTopSnack(context, 'Failed to load makes (API): $e', variant: 'error');
@@ -1465,45 +1453,15 @@ Terms & Conditions
     }
   }
 
-  /// Loads models for [makeName], merging /admin/makes (when [makeId] is
-  /// known) with the vehicle-specs catalog, so a make that only exists in
-  /// the catalog (no /admin/makes entry yet) still offers its real models
-  /// instead of forcing the user into "OTHER".
-  Future<void> _loadModelsForMake(String makeName, String makeId) async {
+  /// Models for [makeName], from the catalog already loaded when the form
+  /// opened — no extra request per make.
+  Future<void> _loadModelsForMake(String makeName) async {
     setState(() {
-      loadingModels = true;
-      models = [];
+      models = [...(_catalog?.modelsFor(makeName) ?? const <String>[]), 'OTHER'];
       selectedModel = null;
       _modelIsOther = false;
       otherModelCtrl.text = '';
       modelCtrl.text = '';
-    });
-
-    final uniqueModels = <String>{};
-    try {
-      if (makeId.trim().isNotEmpty) {
-        final list = await inspectionRequestsService.listVehicleModels(makeId);
-        uniqueModels.addAll(list.map((e) => e.toString().trim().toUpperCase()));
-      }
-    } catch (e) {
-      if (mounted) {
-        showTopSnack(context, 'Failed to load models (API): $e', variant: 'error');
-      }
-    }
-
-    try {
-      final catalogModels =
-          await inspectionRequestsService.listCatalogModelsForMake(makeName);
-      uniqueModels.addAll(catalogModels);
-    } catch (_) {
-      // Catalog merge is best-effort.
-    }
-
-    if (!mounted) return;
-    final sorted = uniqueModels.toList()..sort((a, b) => a.compareTo(b));
-    setState(() {
-      models = [...sorted, 'OTHER'];
-      if (models.isEmpty) models = const ['OTHER'];
       loadingModels = false;
     });
   }
@@ -1676,7 +1634,19 @@ Terms & Conditions
         "vehicleInfo": {
           "make": makeCtrl.text.trim(),
           "model": modelCtrl.text.trim(),
+          "vehicleRegNo": vehicleRegNoCtrl.text.trim(),
+          "vehicleRegAtEmirate": selectedRegEmirate ?? '',
+          "code": plateCodeCtrl.text.trim(),
         },
+
+        // Make/model typed via "OTHER": the backend adds these as a PENDING
+        // row in Vehicle Specs for the admin to review, edit and approve.
+        if (_makeIsOther || _modelIsOther)
+          "vehicleSpecSuggestion": {
+            "make": makeCtrl.text.trim(),
+            "model": modelCtrl.text.trim(),
+            "source": "request",
+          },
         "preferredDate": preferredDateIso,
         "preferredTime": preferredTimeCtrl.text.trim(),
         "location": {
@@ -1692,12 +1662,35 @@ Terms & Conditions
       if (!mounted) return;
       showTopSnack(context, 'Request submitted successfully', variant: 'success');
       context.go('/products');
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      // Backend rejects a request whose email belongs to an existing user
+      // with a different first/last name (the check can't be done here
+      // without exposing other users' names to the public form).
+      if (_isEmailNameMismatch(e)) {
+        showTopSnack(
+          context,
+          'This email ID is already registered. Please log in and raise a request.',
+          variant: 'warning',
+        );
+      } else {
+        showTopSnack(context, 'Submit failed: ${e.message}', variant: 'error');
+      }
     } catch (e) {
       if (!mounted) return;
       showTopSnack(context, 'Submit failed: $e', variant: 'error');
     } finally {
       if (mounted) setState(() => loading = false);
     }
+  }
+
+  /// Agreed contract: 409 with code EMAIL_REGISTERED_NAME_MISMATCH. Also
+  /// tolerates a message-only response mentioning "already registered".
+  bool _isEmailNameMismatch(ApiException e) {
+    final body = e.body;
+    final code = (body is Map) ? (body['code'] ?? body['errorCode'])?.toString() : null;
+    if (code == 'EMAIL_REGISTERED_NAME_MISMATCH') return true;
+    return e.statusCode == 409 && e.message.toLowerCase().contains('already registered');
   }
 
   InputDecoration _dec({
@@ -2041,7 +2034,6 @@ Terms & Conditions
                                                 if (v == 'OTHER') {
                                                   setState(() {
                                                     selectedMake = 'OTHER';
-                                                    selectedMakeId = null;
                                                     _makeIsOther = true;
 
                                                     otherMakeCtrl.text = '';
@@ -2059,12 +2051,9 @@ Terms & Conditions
 
                                                 // NORMAL make
                                                 final mkName = v.trim().toUpperCase();
-                                                final mkId =
-                                                    _makeIdByName[mkName] ?? '';
 
                                                 setState(() {
                                                   selectedMake = mkName;
-                                                  selectedMakeId = mkId;
 
                                                   _makeIsOther = false;
                                                   otherMakeCtrl.text = '';
@@ -2077,8 +2066,7 @@ Terms & Conditions
                                                   models = [];
                                                 });
 
-                                                await _loadModelsForMake(
-                                                    mkName, mkId);
+                                                await _loadModelsForMake(mkName);
                                               },
                                         decoration: _dec(
                                           label: 'Make',
@@ -2227,6 +2215,77 @@ Terms & Conditions
                                   },
                                 ),
 
+                                // Registration details — sent under
+                                // vehicleInfo as vehicleRegNo /
+                                // vehicleRegAtEmirate / code.
+                                const SizedBox(height: gap),
+                                ResponsiveRow(
+                                  spacing: gap,
+                                  children: [
+                                    field(
+                                      TextFormField(
+                                        controller: vehicleRegNoCtrl,
+                                        autovalidateMode: AutovalidateMode.onUserInteraction,
+                                        inputFormatters: _vehicleFreeTextFormatters(max: 10),
+                                        decoration: _dec(
+                                          label: 'Vehicle Registration Number',
+                                          hint: 'e.g. 12345',
+                                          icon: Icons.confirmation_number_outlined,
+                                        ),
+                                        validator: (v) => _vehicleTextValidator(
+                                          v,
+                                          fieldName: 'Vehicle Registration Number',
+                                          min: 1,
+                                        ),
+                                      ),
+                                    ),
+                                    field(
+                                      DropdownButtonFormField<String>(
+                                        isExpanded: true,
+                                        initialValue: selectedRegEmirate,
+                                        autovalidateMode: AutovalidateMode.onUserInteraction,
+                                        decoration: _dec(
+                                          label: 'Emirate of Registration',
+                                          hint: _loadingEmirates
+                                              ? 'Loading…'
+                                              : 'Select emirate',
+                                          icon: Icons.location_city_outlined,
+                                        ),
+                                        // Same options as Location → City / Emirate.
+                                        items: (_emirates.isNotEmpty
+                                                ? _emirates.where((e) => e.isActive).map((e) => e.name)
+                                                : _kUaeAreas.keys)
+                                            .map((e) => DropdownMenuItem(
+                                                value: e, child: Text(e)))
+                                            .toList(),
+                                        onChanged: _loadingEmirates
+                                            ? null
+                                            : (v) => setState(() => selectedRegEmirate = v),
+                                        validator: (v) => v == null
+                                            ? 'Emirate of Registration is required'
+                                            : null,
+                                      ),
+                                    ),
+                                    field(
+                                      TextFormField(
+                                        controller: plateCodeCtrl,
+                                        autovalidateMode: AutovalidateMode.onUserInteraction,
+                                        inputFormatters: _vehicleFreeTextFormatters(max: 3),
+                                        decoration: _dec(
+                                          label: 'Code',
+                                          hint: 'e.g. A',
+                                          icon: Icons.tag_outlined,
+                                        ),
+                                        validator: (v) => _vehicleTextValidator(
+                                          v,
+                                          fieldName: 'Code',
+                                          min: 1,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+
                                 const SizedBox(height: 18),
                                 Divider(color: Colors.black.withOpacity(0.08)),
                                 const SizedBox(height: 18),
@@ -2336,7 +2395,7 @@ Terms & Conditions
                                           icon: Icons.location_city_outlined,
                                         ),
                                         items: (_emirates.isNotEmpty
-                                                ? _emirates.map((e) => e.name)
+                                                ? _emirates.where((e) => e.isActive).map((e) => e.name)
                                                 : _kUaeAreas.keys)
                                             .map((e) => DropdownMenuItem(
                                                 value: e, child: Text(e)))

@@ -222,15 +222,25 @@ class DropdownConfigService {
 
   Future<Map<String, List<String>>> load() async {
     if (_dropdownCache != null) return _dropdownCache!;
-    await _fetchFromApi();
+    await _fetchOnce();
     return _dropdownCache!;
   }
 
   Future<List<CustomField>> loadCustomFields() async {
     if (_customFieldsCache != null) return _customFieldsCache!;
-    await _fetchFromApi();
+    await _fetchOnce();
     return _customFieldsCache!;
   }
+
+  // load() and loadCustomFields() are usually called together; share one
+  // request instead of fetching /configured-inputs twice.
+  Future<void>? _inflight;
+  Future<void> _fetchOnce() => _inflight ??= _fetchFromApi().whenComplete(() => _inflight = null);
+
+  /// True when the last fetch failed and the built-in [defaults] are shown
+  /// instead of the admin-configured options. Forms should tell the user
+  /// rather than silently present a different source.
+  bool lastLoadFailed = false;
 
   /// Whether a field (by camelCase key) is active. Defaults to true if unknown.
   bool isActive(String camelKey) =>
@@ -247,6 +257,7 @@ class DropdownConfigService {
   }
 
   Future<void> _fetchFromApi() async {
+    lastLoadFailed = false;
     try {
       final res = await apiClient.getJson(_getPath);
 
@@ -348,6 +359,7 @@ class DropdownConfigService {
         _customFieldsCache = [];
       }
     } catch (_) {
+      lastLoadFailed = true;
       _fieldDefsCache   ??= _buildDefaultFieldDefs();
       _sectionDefsCache ??= Map<String, String>.from(sectionLabels);
       _dropdownCache    ??= _copyDefaults();

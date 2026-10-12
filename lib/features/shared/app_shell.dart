@@ -110,12 +110,12 @@ class _BreadcrumbBar extends StatelessWidget {
         crumbs.add(_Crumb('Vehicle Details Inputs', null, clickable: false));
         return crumbs;
       }
-      if (location == '/dashboard/admin/vehicle-catalog') {
+      if (location == '/dashboard/admin/vehicle-specs') {
         crumbs.add(_Crumb('Admin', '/dashboard/admin', clickable: true));
         crumbs.add(_Crumb('Vehicle Details Inputs',
             '/dashboard/admin/vehicle-inputs',
             clickable: true));
-        crumbs.add(_Crumb('Makes & Models', null, clickable: false));
+        crumbs.add(_Crumb('Vehicle Specs', null, clickable: false));
         return crumbs;
       }
       if (location == '/dashboard/admin/configure-inputs') {
